@@ -6,7 +6,12 @@ use solana_program::{
     msg,
     pubkey::Pubkey,
     sysvar::{Sysvar},
+    instruction::AccountMeta,
 };
+
+// Add CPI imports
+use anchor_lang::solana_program::program::invoke;
+use anchor_lang::solana_program::instruction::Instruction;
 
 // Declare program ID
 declare_id!("9iWg8Fhoh9Z5zo9rhgD3Z2FS46ggUwRnRwdKHtB92w74");
@@ -91,6 +96,75 @@ pub mod hub {
         msg!("Fees collected successfully");
         Ok(())
     }
+
+    pub fn create_trade_with_offer(
+        ctx: Context<CreateTradeWithOffer>,
+        amount: u64,
+        price: u64,
+    ) -> Result<()> {
+        // First verify the offer through CPI to offer program
+        let offer_accounts = vec![
+            AccountMeta::new(ctx.accounts.offer.key(), false),
+        ];
+
+        // Verify offer is valid
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.offer_program.key(),
+                accounts: offer_accounts,
+                data: vec![], // Add proper offer verification instruction data
+            },
+            &[ctx.accounts.offer.to_account_info()],
+        )?;
+
+        // Then create trade through CPI to trade program
+        let trade_accounts = vec![
+            AccountMeta::new(ctx.accounts.trade.key(), true),
+            AccountMeta::new(ctx.accounts.buyer.key(), true),
+            AccountMeta::new_readonly(ctx.accounts.token_mint.key(), false),
+            AccountMeta::new(ctx.accounts.buyer_token_account.key(), false),
+            AccountMeta::new(ctx.accounts.escrow_account.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.token_program.key(), false),
+            AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+        ];
+
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.trade_program.key(),
+                accounts: trade_accounts,
+                data: vec![], // Add proper trade creation instruction data
+            },
+            &[
+                ctx.accounts.trade.to_account_info(),
+                ctx.accounts.buyer.to_account_info(),
+                ctx.accounts.token_mint.to_account_info(),
+                ctx.accounts.buyer_token_account.to_account_info(),
+                ctx.accounts.escrow_account.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+
+        // Update profile stats through CPI to profile program
+        let profile_accounts = vec![
+            AccountMeta::new(ctx.accounts.buyer_profile.key(), false),
+            AccountMeta::new(ctx.accounts.seller_profile.key(), false),
+        ];
+
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.profile_program.key(),
+                accounts: profile_accounts,
+                data: vec![], // Add proper profile update instruction data
+            },
+            &[
+                ctx.accounts.buyer_profile.to_account_info(),
+                ctx.accounts.seller_profile.to_account_info(),
+            ],
+        )?;
+
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -133,6 +207,42 @@ pub struct CollectFees<'info> {
     #[account(mut, constraint = fee_account.key() == config.fee_account)]
     /// CHECK: Fee account validated in constraint
     pub fee_account: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CreateTradeWithOffer<'info> {
+    pub config: Account<'info, HubConfig>,
+    /// CHECK: Trade account that will be initialized by the trade program
+    #[account(mut)]
+    pub trade: AccountInfo<'info>,
+    /// CHECK: Offer account that will be verified by the offer program
+    #[account(mut)]
+    pub offer: AccountInfo<'info>,
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+    /// CHECK: Buyer's profile account that will be updated by the profile program
+    #[account(mut)]
+    pub buyer_profile: AccountInfo<'info>,
+    /// CHECK: Seller's profile account that will be updated by the profile program
+    #[account(mut)]
+    pub seller_profile: AccountInfo<'info>,
+    /// CHECK: Token mint account verified by the token program
+    pub token_mint: AccountInfo<'info>,
+    /// CHECK: Buyer's token account verified by the token program
+    #[account(mut)]
+    pub buyer_token_account: AccountInfo<'info>,
+    /// CHECK: Escrow token account verified by the token program
+    #[account(mut)]
+    pub escrow_account: AccountInfo<'info>,
+    /// CHECK: Token program used for token operations
+    pub token_program: AccountInfo<'info>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Trade program that will handle the trade creation
+    pub trade_program: AccountInfo<'info>,
+    /// CHECK: Offer program that will verify the offer
+    pub offer_program: AccountInfo<'info>,
+    /// CHECK: Profile program that will update user profiles
+    pub profile_program: AccountInfo<'info>,
 }
 
 #[account]

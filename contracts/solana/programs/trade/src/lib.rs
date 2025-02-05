@@ -1,10 +1,11 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token};
-
 use solana_program::{
     msg,
     pubkey::Pubkey,
     sysvar::Sysvar,
+    program::invoke,
+    instruction::{Instruction, AccountMeta},
 };
 
 
@@ -62,16 +63,51 @@ pub mod trade {
         let trade = &mut ctx.accounts.trade;
         require!(trade.status == TradeStatus::InProgress, TradeError::InvalidTradeStatus);
 
+        // First verify price through CPI to price program
+        let price_accounts = vec![
+            AccountMeta::new_readonly(ctx.accounts.price_oracle.key(), false),
+        ];
+
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.price_program.key(),
+                accounts: price_accounts,
+                data: vec![], // Add proper price verification instruction data
+            },
+            &[ctx.accounts.price_oracle.to_account_info()],
+        )?;
+
         // Transfer tokens from escrow to buyer
+        let trade_account_info = trade.to_account_info();
+        
         let transfer_ctx = CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             token::Transfer {
-                from: ctx.accounts.escrow_account.to_account_info(),
-                to: ctx.accounts.buyer_token_account.to_account_info(),
-                authority: ctx.accounts.seller.to_account_info(),
+                from: ctx.accounts.buyer_token_account.to_account_info(),
+                to: ctx.accounts.escrow_account.to_account_info(),
+                authority: trade_account_info,
             },
         );
+
         token::transfer(transfer_ctx, trade.amount)?;
+
+        // Update profiles through CPI
+        let profile_accounts = vec![
+            AccountMeta::new(ctx.accounts.buyer_profile.key(), false),
+            AccountMeta::new(ctx.accounts.seller_profile.key(), false),
+        ];
+
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.profile_program.key(),
+                accounts: profile_accounts,
+                data: vec![], // Add proper profile update instruction data
+            },
+            &[
+                ctx.accounts.buyer_profile.to_account_info(),
+                ctx.accounts.seller_profile.to_account_info(),
+            ],
+        )?;
 
         trade.status = TradeStatus::Completed;
         trade.updated_at = Clock::get()?.unix_timestamp;
@@ -170,6 +206,18 @@ pub struct CompleteTrade<'info> {
     )]
     pub buyer_token_account: Box<Account<'info, token::TokenAccount>>,
     pub token_program: Program<'info, Token>,
+    /// CHECK: Price oracle account from price program
+    pub price_oracle: AccountInfo<'info>,
+    /// CHECK: Price program
+    pub price_program: AccountInfo<'info>,
+    /// CHECK: Profile program
+    pub profile_program: AccountInfo<'info>,
+    /// CHECK: Buyer's profile account
+    #[account(mut)]
+    pub buyer_profile: AccountInfo<'info>,
+    /// CHECK: Seller's profile account
+    #[account(mut)]
+    pub seller_profile: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
@@ -227,6 +275,42 @@ pub enum TradeError {
     InvalidTradeStatus,
     #[msg("Only buyer or seller can dispute a trade")]
     UnauthorizedDisputer,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub enum TradeInstruction {
+    CreateTrade {
+        amount: u64,
+        price: u64,
+    },
+    CompleteTrade,
+    CancelTrade,
+    DisputeTrade,
+}
+
+impl TradeInstruction {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        AnchorSerialize::serialize(self, &mut data)
+            .expect("Failed to serialize trade instruction");
+        data
+    }
+}
+
+// Add this to the trade program module
+pub fn create_trade_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountMeta],
+    amount: u64,
+    price: u64,
+) -> Instruction {
+    let data = TradeInstruction::CreateTrade { amount, price }.serialize();
+    
+    Instruction {
+        program_id: *program_id,
+        accounts: accounts.to_vec(),
+        data,
+    }
 }
 
 #[cfg(test)]

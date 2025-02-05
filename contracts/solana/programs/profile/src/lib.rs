@@ -1,4 +1,8 @@
 use anchor_lang::prelude::*;
+use solana_program::{
+    program::invoke,
+    instruction::{Instruction, AccountMeta},
+};
 
 declare_id!("CfC3efU4b5ppjSBYJwiKrZtz3hmzBBgSM2s6RCFN4nYA");
 
@@ -76,6 +80,31 @@ pub mod profile {
         msg!("Trade dispute recorded successfully");
         Ok(())
     }
+
+    pub fn verify_trade_completion(ctx: Context<VerifyTradeCompletion>) -> Result<()> {
+        // Verify the trade status through CPI
+        let trade_accounts = vec![
+            AccountMeta::new_readonly(ctx.accounts.trade.key(), false),
+        ];
+
+        invoke(
+            &Instruction {
+                program_id: ctx.accounts.trade_program.key(),
+                accounts: trade_accounts,
+                data: vec![], // Add proper trade verification instruction data
+            },
+            &[ctx.accounts.trade.to_account_info()],
+        )?;
+
+        // Update profile statistics
+        let profile = &mut ctx.accounts.profile;
+        profile.trades_completed += 1;
+        profile.reputation_score = profile.reputation_score.saturating_add(1);
+        profile.updated_at = Clock::get()?.unix_timestamp;
+
+        msg!("Trade verification and profile update completed successfully");
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -114,6 +143,16 @@ pub struct RecordTrade<'info> {
     pub profile: Account<'info, Profile>,
     /// CHECK: Trade program account, validated in program logic
     pub trade_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct VerifyTradeCompletion<'info> {
+    #[account(mut)]
+    pub profile: Account<'info, Profile>,
+    /// CHECK: Trade account to verify
+    pub trade: AccountInfo<'info>,
+    /// CHECK: Trade program
+    pub trade_program: AccountInfo<'info>,
 }
 
 #[account]
