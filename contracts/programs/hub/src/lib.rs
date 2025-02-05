@@ -10,10 +10,8 @@ use solana_program::{
     sysvar::{Sysvar},
 };
 
-
 // Declare program ID
 solana_program::declare_id!("9iWg8Fhoh9Z5zo9rhgD3Z2FS46ggUwRnRwdKHtB92w74");
-
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct HubConfig {
     pub admin: Pubkey,
@@ -53,8 +51,8 @@ pub enum HubInstruction {
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
-    _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
     msg!("LocalMoney Hub program entrypoint");
@@ -63,30 +61,50 @@ pub fn process_instruction(
         .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     match instruction {
-        HubInstruction::Initialize { .. } => {
+        HubInstruction::Initialize {
+            price_program,
+            trade_program,
+            profile_program,
+            offer_program,
+            fee_account,
+            fee_basis_points,
+        } => {
             msg!("Instruction: Initialize");
-            Ok(())
+            process_initialize(
+                program_id,
+                accounts,
+                price_program,
+                trade_program,
+                profile_program,
+                offer_program,
+                fee_account,
+                fee_basis_points,
+            )
         }
-        HubInstruction::UpdateConfig { .. } => {
+        HubInstruction::UpdateConfig {
+            fee_basis_points,
+            fee_account,
+        } => {
             msg!("Instruction: UpdateConfig");
-            Ok(())
+            process_update_config(program_id, accounts, fee_basis_points, fee_account)
         }
         HubInstruction::PauseOperations => {
             msg!("Instruction: PauseOperations");
-            Ok(())
+            process_pause_operations(program_id, accounts)
         }
         HubInstruction::ResumeOperations => {
             msg!("Instruction: ResumeOperations");
-            Ok(())
+            process_resume_operations(program_id, accounts)
         }
-        HubInstruction::TransferAdmin { .. } => {
+        HubInstruction::TransferAdmin { new_admin } => {
             msg!("Instruction: TransferAdmin");
-            Ok(())
+            process_transfer_admin(program_id, accounts, new_admin)
         }
     }
 }
 
 fn process_initialize(
+    program_id: &Pubkey,
     accounts: &[AccountInfo],
     price_program: Pubkey,
     trade_program: Pubkey,
@@ -98,6 +116,17 @@ fn process_initialize(
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let admin_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Check if the config account has enough space
+    let config_size = std::mem::size_of::<HubConfig>();
+    if config_account.data_len() < config_size {
+        return Err(ProgramError::AccountDataTooSmall);
+    }
 
     if !admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -122,6 +151,7 @@ fn process_initialize(
 }
 
 fn process_update_config(
+    program_id: &Pubkey,
     accounts: &[AccountInfo],
     fee_basis_points: Option<u16>,
     fee_account: Option<Pubkey>,
@@ -129,6 +159,11 @@ fn process_update_config(
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let admin_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -153,10 +188,18 @@ fn process_update_config(
     Ok(())
 }
 
-fn process_pause_operations(accounts: &[AccountInfo]) -> ProgramResult {
+fn process_pause_operations(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo]
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let admin_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -174,10 +217,18 @@ fn process_pause_operations(accounts: &[AccountInfo]) -> ProgramResult {
     Ok(())
 }
 
-fn process_resume_operations(accounts: &[AccountInfo]) -> ProgramResult {
+fn process_resume_operations(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo]
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let admin_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -195,11 +246,20 @@ fn process_resume_operations(accounts: &[AccountInfo]) -> ProgramResult {
     Ok(())
 }
 
-fn process_transfer_admin(accounts: &[AccountInfo], new_admin: Pubkey) -> ProgramResult {
+fn process_transfer_admin(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    new_admin: Pubkey
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let current_admin_account = next_account_info(account_info_iter)?;
     let new_admin_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !current_admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -221,11 +281,19 @@ fn process_transfer_admin(accounts: &[AccountInfo], new_admin: Pubkey) -> Progra
     Ok(())
 }
 
-fn process_collect_fees(accounts: &[AccountInfo]) -> ProgramResult {
+fn process_collect_fees(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo]
+) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let config_account = next_account_info(account_info_iter)?;
     let admin_account = next_account_info(account_info_iter)?;
     let fee_account = next_account_info(account_info_iter)?;
+
+    // Verify the config account is owned by our program
+    if config_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !admin_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -249,6 +317,5 @@ fn process_collect_fees(accounts: &[AccountInfo]) -> ProgramResult {
 
 #[cfg(test)]
 mod tests {
-    
     // Add tests here
 }

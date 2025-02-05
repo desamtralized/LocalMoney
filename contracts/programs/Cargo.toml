@@ -6,6 +6,7 @@ members = [
     "trade",
     "offer",
 ]
+resolver = "2"
 
 [workspace.dependencies]
 solana-program = "1.18.26"
@@ -14,6 +15,12 @@ thiserror = "1.0.56"
 borsh-derive = "0.10.3"
 num-derive = "0.4"
 num-traits = "0.2"
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+]
 
 [profile.release]
 overflow-checks = true
