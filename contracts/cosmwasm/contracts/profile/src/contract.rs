@@ -1,6 +1,8 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    to_json_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
+};
 use cw2::{get_contract_version, set_contract_version};
 use localmoney_protocol::errors::ContractError;
 use localmoney_protocol::errors::ContractError::HubAlreadyRegistered;
@@ -203,10 +205,10 @@ fn register_hub(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractEr
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Profile { addr } => {
-            to_binary(&ProfileModel::query_profile(deps.storage, addr.clone()))
+            to_json_binary(&ProfileModel::query_profile(deps.storage, addr.clone()))
         }
         QueryMsg::Profiles { limit, start_at } => {
-            to_binary(&ProfileModel::query_profiles(deps, env, limit, start_at)?)
+            to_json_binary(&ProfileModel::query_profiles(deps, env, limit, start_at)?)
         }
     }
 }

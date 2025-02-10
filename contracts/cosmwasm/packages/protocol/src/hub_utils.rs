@@ -1,6 +1,7 @@
 use crate::hub::{Admin, HubConfig, QueryMsg};
 use cosmwasm_std::{
-    to_binary, Addr, CustomQuery, Deps, QueryRequest, Response, Storage, WasmQuery,
+    to_json_binary, Addr, CustomQuery, Deps, QuerierWrapper, QueryRequest, Response, Storage,
+    WasmQuery,
 };
 use cw_storage_plus::Item;
 use schemars::JsonSchema;
@@ -11,7 +12,7 @@ pub fn get_hub_config<T: CustomQuery>(deps: Deps<T>) -> HubConfig {
     deps.querier
         .query(&QueryRequest::Wasm(WasmQuery::Smart {
             contract_addr: hub_addr.addr.to_string(),
-            msg: to_binary(&QueryMsg::Config {}).unwrap(),
+            msg: to_json_binary(&QueryMsg::Config {}).unwrap(),
         }))
         .unwrap()
 }
@@ -21,7 +22,7 @@ pub fn get_hub_admin<T: CustomQuery>(deps: Deps<T>) -> Admin {
     deps.querier
         .query(&QueryRequest::Wasm(WasmQuery::Smart {
             contract_addr: hub_addr.addr.to_string(),
-            msg: to_binary(&QueryMsg::Admin {}).unwrap(),
+            msg: to_json_binary(&QueryMsg::Admin {}).unwrap(),
         }))
         .unwrap()
 }
@@ -60,4 +61,27 @@ pub fn register_hub_internal<T, E>(
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct HubAddr {
     pub addr: Addr,
+}
+
+pub fn query_hub_config<T: CustomQuery>(
+    querier: &QuerierWrapper<T>,
+    hub_addr: String,
+) -> HubConfig {
+    let res: HubConfig = querier
+        .query(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: hub_addr,
+            msg: to_json_binary(&QueryMsg::Config {}).unwrap(),
+        }))
+        .unwrap();
+    res
+}
+
+pub fn query_hub_admin<T: CustomQuery>(querier: &QuerierWrapper<T>, hub_addr: String) -> Admin {
+    let res: Admin = querier
+        .query(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: hub_addr,
+            msg: to_json_binary(&QueryMsg::Admin {}).unwrap(),
+        }))
+        .unwrap();
+    res
 }

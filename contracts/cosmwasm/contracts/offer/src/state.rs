@@ -1,13 +1,17 @@
-use cosmwasm_std::{Addr, Storage};
-use cosmwasm_storage::{singleton, singleton_read, ReadonlySingleton, Singleton};
-use cw_storage_plus::{Index, IndexList, IndexedMap, MultiIndex};
+use cosmwasm_std::Addr;
+use cw_storage_plus::{Index, IndexList, IndexedMap, Item, MultiIndex};
 
 use localmoney_protocol::offer::{OffersCount, TradeAddr};
 
-pub static OFFERS_COUNT_KEY: &[u8] = b"offers_count_v0_4_1";
+/// The storage key for offers count; note that cw-storage-plus items use &str keys.
+pub const OFFERS_COUNT: Item<OffersCount> = Item::new("offers_count_v0_4_1");
 
+/// TradeIndexes now uses the new generic ordering:
+///   MultiIndex<'a, T, K, P> where:
+///   - T is the main data type (TradeAddr),
+///   - K is the index key type (Addr, in this case),
+///   - P is the primary key type (here a Vec<u8>).
 pub struct TradeIndexes<'a> {
-    // pk goes to second tuple element
     pub seller: MultiIndex<'a, Addr, TradeAddr, Vec<u8>>,
     pub buyer: MultiIndex<'a, Addr, TradeAddr, Vec<u8>>,
     pub arbitrator: MultiIndex<'a, Addr, TradeAddr, Vec<u8>>,
@@ -20,23 +24,26 @@ impl<'a> IndexList<TradeAddr> for TradeIndexes<'a> {
     }
 }
 
-pub fn trades<'a>() -> IndexedMap<'a, &'a str, TradeAddr, TradeIndexes<'a>> {
+/// Returns an IndexedMap for TradeAddr objects with the new index types.
+/// The primary map key is a &str (typically a unique identifier), and
+/// the indexes extract the seller, buyer, and arbitrator fields.
+pub fn trades() -> IndexedMap<&'static str, TradeAddr, TradeIndexes<'static>> {
     let indexes = TradeIndexes {
-        seller: MultiIndex::new(|d: &TradeAddr| d.seller.clone(), "trades", "trades__seller"),
-        buyer: MultiIndex::new(|d: &TradeAddr| d.buyer.clone(), "trades", "trades__buyer"),
+        seller: MultiIndex::new(
+            |_pk, d: &TradeAddr| d.seller.clone(),
+            "trades",
+            "trades__seller",
+        ),
+        buyer: MultiIndex::new(
+            |_pk, d: &TradeAddr| d.buyer.clone(),
+            "trades",
+            "trades__buyer",
+        ),
         arbitrator: MultiIndex::new(
-            |d: &TradeAddr| d.arbitrator.clone(),
+            |_pk, d: &TradeAddr| d.arbitrator.clone(),
             "trades",
             "trades__arbitrator",
         ),
     };
     IndexedMap::new("trades", indexes)
-}
-
-pub fn offers_count_storage(storage: &mut dyn Storage) -> Singleton<OffersCount> {
-    singleton(storage, OFFERS_COUNT_KEY)
-}
-
-pub fn offers_count_read(storage: &dyn Storage) -> ReadonlySingleton<OffersCount> {
-    singleton_read(storage, OFFERS_COUNT_KEY)
 }

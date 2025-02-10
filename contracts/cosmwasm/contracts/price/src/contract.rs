@@ -3,8 +3,8 @@ use std::ops::{Div, Mul};
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError, StdResult, Uint128,
-    Uint256,
+    to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError, StdResult,
+    Uint128, Uint256,
 };
 use cw2::{get_contract_version, set_contract_version};
 use cw20::Denom;
@@ -16,8 +16,7 @@ use localmoney_protocol::guards::{assert_migration_parameters, assert_ownership}
 use localmoney_protocol::hub_utils::{get_hub_admin, get_hub_config, register_hub_internal};
 use localmoney_protocol::price::{
     AssetInfo, CurrencyPrice, DenomFiatPrice, ExecuteMsg, NativeToken, OfferAsset, PriceRoute,
-    QueryMsg, Simulation, SimulationResponse, SimulationResponseData, SwapSimulation,
-    DENOM_PRICE_ROUTE, FIAT_PRICE,
+    QueryMsg, Simulation, SimulationResponseData, SwapSimulation, DENOM_PRICE_ROUTE, FIAT_PRICE,
 };
 use localmoney_protocol::profile::{InstantiateMsg, MigrateMsg};
 
@@ -57,7 +56,7 @@ pub fn execute(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Price { fiat, denom } => {
-            to_binary(&query_fiat_price_for_denom(deps, fiat, denom)?)
+            to_json_binary(&query_fiat_price_for_denom(deps, fiat, denom)?)
         }
     }
 }
@@ -135,7 +134,7 @@ pub fn query_fiat_price_for_denom(
             }
             route
         }
-        Err(e) => return Err(StdError::generic_err("No price route for LUNA")),
+        Err(_e) => return Err(StdError::generic_err("No price route for LUNA")),
     };
 
     // Query the price of LUNA in USDC

@@ -1,7 +1,7 @@
 use crate::{offer::OfferState, trade::TradeState};
 use cosmwasm_std::{
-    to_binary, Addr, CosmosMsg, CustomQuery, Deps, Env, Order, QuerierWrapper, StdResult, Storage,
-    SubMsg, WasmMsg,
+    to_json_binary, Addr, CosmosMsg, CustomQuery, Deps, Env, Order, QuerierWrapper, StdResult,
+    Storage, SubMsg, WasmMsg,
 };
 use cw_storage_plus::{Index, IndexList, IndexedMap, MultiIndex};
 use schemars::JsonSchema;
@@ -50,7 +50,7 @@ pub fn update_profile_contact_msg(
 ) -> SubMsg {
     SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: profile_contract,
-        msg: to_binary(&ExecuteMsg::UpdateContact {
+        msg: to_json_binary(&ExecuteMsg::UpdateContact {
             profile_addr,
             contact,
             encryption_key,
@@ -67,7 +67,7 @@ pub fn update_profile_trades_count_msg(
 ) -> SubMsg {
     SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr,
-        msg: to_binary(&ExecuteMsg::UpdateTradesCount {
+        msg: to_json_binary(&ExecuteMsg::UpdateTradesCount {
             profile_addr,
             trade_state,
         })
@@ -83,7 +83,7 @@ pub fn update_profile_active_offers_msg(
 ) -> SubMsg {
     SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr,
-        msg: to_binary(&ExecuteMsg::UpdateActiveOffers {
+        msg: to_json_binary(&ExecuteMsg::UpdateActiveOffers {
             profile_addr,
             offer_state,
         })
@@ -190,7 +190,7 @@ impl ProfileModel<'_> {
     ) -> StdResult<Vec<Profile>> {
         let result = profiles()
             .idx
-            .trades_count
+            .owner
             .range(deps.storage, None, None, Order::Descending)
             .take(limit as usize)
             .flat_map(|item| item.and_then(|(_, profile)| Ok(profile)))
@@ -200,36 +200,23 @@ impl ProfileModel<'_> {
 }
 
 pub struct ProfileIndexes<'a> {
-    pub address: MultiIndex<'a, String, Profile, String>,
-    pub trades_count: MultiIndex<'a, u64, Profile, String>,
-    pub last_trade: MultiIndex<'a, u64, Profile, String>,
+    pub owner: MultiIndex<'a, Addr, Profile, String>,
 }
 
 impl<'a> IndexList<Profile> for ProfileIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Profile>> + '_> {
-        let v: Vec<&dyn Index<Profile>> = vec![&self.address, &self.trades_count, &self.last_trade];
+        let v: Vec<&dyn Index<Profile>> = vec![&self.owner];
         Box::new(v.into_iter())
     }
 }
 
-const PROFILES_PK: &str = "profiles_v0_4_0";
-pub fn profiles<'a>() -> IndexedMap<'a, String, Profile, ProfileIndexes<'a>> {
+pub fn profiles() -> IndexedMap<String, Profile, ProfileIndexes<'static>> {
     let indexes = ProfileIndexes {
-        address: MultiIndex::new(
-            |p: &Profile| p.addr.to_string(),
-            PROFILES_PK,
-            "profiles__address",
-        ),
-        trades_count: MultiIndex::new(
-            |p: &Profile| p.released_trades_count,
-            PROFILES_PK,
-            "profiles__trades_count",
-        ),
-        last_trade: MultiIndex::new(
-            |p: &Profile| p.last_trade,
-            PROFILES_PK,
-            "profiles__last_trade",
+        owner: MultiIndex::new(
+            |_, d: &Profile| d.addr.clone(),
+            "profiles",
+            "profiles__owner",
         ),
     };
-    IndexedMap::new(PROFILES_PK, indexes)
+    IndexedMap::new("profiles", indexes)
 }

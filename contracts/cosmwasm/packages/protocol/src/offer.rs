@@ -10,7 +10,7 @@ use cw_storage_plus::{Bound, Index, IndexList, IndexedMap, MultiIndex};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
-use std::ops::Add;
+
 
 pub static CONFIG_KEY: &[u8] = b"config";
 
@@ -18,33 +18,39 @@ pub struct OfferIndexes<'a> {
     // pk goes to second tuple element
     pub owner: MultiIndex<'a, Addr, Offer, u64>,
     pub filter: MultiIndex<'a, String, Offer, u64>,
+    pub state: MultiIndex<'a, String, Offer, u64>,
 }
 
 impl<'a> IndexList<Offer> for OfferIndexes<'a> {
     fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<Offer>> + '_> {
-        let v: Vec<&dyn Index<Offer>> = vec![&self.owner, &self.filter];
+        let v: Vec<&dyn Index<Offer>> = vec![&self.owner, &self.filter, &self.state];
         Box::new(v.into_iter())
     }
 }
 
-pub fn offers<'a>() -> IndexedMap<'a, u64, Offer, OfferIndexes<'a>> {
-    let offers_pk_namespace = "offers";
+pub fn offers() -> IndexedMap<u64, Offer, OfferIndexes<'static>> {
     let indexes = OfferIndexes {
-        owner: MultiIndex::new(|d| d.owner.clone(), offers_pk_namespace, "offers__owner"),
+        owner: MultiIndex::new(|_, d: &Offer| d.owner.clone(), "offers", "offers__owner"),
         filter: MultiIndex::new(
-            |offer: &Offer| {
-                offer
-                    .fiat_currency
-                    .to_string()
-                    .add(offer.offer_type.to_string().as_str())
-                    .add(denom_to_string(&offer.denom).as_str())
-                    .add(&offer.state.to_string())
+            |_, offer: &Offer| {
+                format!(
+                    "{}{}{}{}",
+                    offer.offer_type.to_string(),
+                    &offer.fiat_currency.to_string(),
+                    &denom_to_string(&offer.denom),
+                    &offer.state.to_string()
+                )
             },
-            offers_pk_namespace,
+            "offers",
             "offers__filter",
         ),
+        state: MultiIndex::new(
+            |_, d: &Offer| d.state.to_string(),
+            "offers",
+            "offers__state",
+        ),
     };
-    IndexedMap::new(offers_pk_namespace, indexes)
+    IndexedMap::new("offers", indexes)
 }
 
 ///Messages
@@ -138,12 +144,12 @@ pub struct OfferModel<'a> {
     pub storage: &'a mut dyn Storage,
 }
 
-impl OfferModel<'_> {
+impl<'a> OfferModel<'a> {
     pub fn store(storage: &mut dyn Storage, offer: &Offer) -> StdResult<()> {
         offers().save(storage, offer.id, &offer)
     }
 
-    pub fn from_store(storage: &mut dyn Storage, id: u64) -> Offer {
+    pub fn from_store(storage: &dyn Storage, id: u64) -> Offer {
         offers().may_load(storage, id).unwrap_or_default().unwrap()
     }
 
@@ -152,12 +158,12 @@ impl OfferModel<'_> {
         OfferModel { offer, storage }
     }
 
-    pub fn save<'a>(self) -> Offer {
+    pub fn save(self) -> Offer {
         OfferModel::store(self.storage, &self.offer).unwrap();
         self.offer
     }
 
-    pub fn may_load<'a>(storage: &'a mut dyn Storage, id: u64) -> OfferModel<'a> {
+    pub fn may_load(storage: &'a mut dyn Storage, id: u64) -> OfferModel<'a> {
         let offer_model = OfferModel {
             offer: OfferModel::from_store(storage, id),
             storage,
