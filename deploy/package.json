@@ -1,10 +1,10 @@
 {
   "name": "node_integration_test",
   "version": "0.0.1",
-  "description": "LocalMoney intergation tests.",
+  "description": "LocalMoney integration tests.",
   "main": "index.js",
   "scripts": {
-    "deploy:all": "DEPLOY=all CONTRACTS=../contracts/artifacts ./node_modules/node/bin/node index.js"
+    "deploy:all": "DEPLOY=all CONTRACTS=../contracts/artifacts node index.js"
   },
   "repository": "https://github.com/Local-Money/localmoney",
   "author": "Local Team",
@@ -12,12 +12,9 @@
   "type": "module",
   "license": "GPL v3.0",
   "dependencies": {
-    "@cosmjs/cosmwasm-stargate": "^0.28.4",
-    "@cosmjs/proto-signing": "^0.28.4",
-    "@cosmjs/stargate": "^0.28.4",
+    "@cosmjs/cosmwasm-stargate": "^0.33.0",
+    "@cosmjs/proto-signing": "^0.33.0",
+    "@cosmjs/stargate": "^0.33.0",
     "dotenv": "^16.0.1"
-  },
-  "devDependencies": {
-    "node": "^16.13.0"
   }
 }
