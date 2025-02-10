@@ -119,5 +119,6 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# LocalTerra
+# LocalTerra(Classic)
 codeIds.json
+.env.sample
