@@ -1,10 +1,10 @@
 use cosmwasm_std::{
-    coin, entry_point, to_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, CustomQuery, Deps,
-    DepsMut, Env, MessageInfo, Reply, ReplyOn, Response, StdResult, SubMsg, Uint128, Uint256,
-    WasmMsg,
+    coin, entry_point, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, CustomQuery,
+    Decimal, Deps, DepsMut, Env, MessageInfo, Reply, ReplyOn, Response, StdResult, SubMsg, Uint128,
+    Uint256, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version};
-use std::ops::{Mul, Sub};
+use std::ops::Sub;
 
 use cw20::Denom;
 use localmoney_protocol::currencies::FiatCurrency;
@@ -169,8 +169,8 @@ fn create_trade(
         .unwrap_or(Uint256::zero());
 
     // The min amount
-    let min_amount = Uint256::from_u128(hub_cfg.trade_limit_min);
-    let max_amount = Uint256::from_u128(hub_cfg.trade_limit_max);
+    let min_amount = Uint256::from_u128(hub_cfg.trade_limit_min.u128());
+    let max_amount = Uint256::from_u128(hub_cfg.trade_limit_max.u128());
 
     // Check that usd_trade_amount is lower or equal than the trade limit and return error if not.
     if usd_trade_amount < min_amount || usd_trade_amount > max_amount {
@@ -295,22 +295,23 @@ fn create_trade(
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::Trade { id } => to_binary(&query_trade(env, deps, id)?),
+        QueryMsg::Trade { id } => to_json_binary(&query_trade(env, deps, id)?),
         QueryMsg::Trades {
             user,
             role,
             limit,
             last,
-        } => to_binary(&query_trades(env, deps, user, role, limit, last)?),
-        QueryMsg::Arbitrator { arbitrator } => to_binary(&ArbitratorModel::query_arbitrator(
+        } => to_json_binary(&query_trades(env, deps, user, role, limit, last)?),
+        QueryMsg::Arbitrator { arbitrator } => to_json_binary(&ArbitratorModel::query_arbitrator(
             deps.storage,
             arbitrator,
         )?),
-        QueryMsg::Arbitrators {} => to_binary(&ArbitratorModel::query_arbitrators(deps.storage)?),
-        QueryMsg::ArbitratorsFiat { fiat } => to_binary(&ArbitratorModel::query_arbitrators_fiat(
-            deps.storage,
-            fiat,
-        )?),
+        QueryMsg::Arbitrators {} => {
+            to_json_binary(&ArbitratorModel::query_arbitrators(deps.storage)?)
+        }
+        QueryMsg::ArbitratorsFiat { fiat } => to_json_binary(
+            &ArbitratorModel::query_arbitrators_fiat(deps.storage, fiat)?,
+        ),
     }
 }
 
@@ -970,8 +971,10 @@ fn settle_dispute(
     );
 
     // Pay arbitration fee
-    let arbitration_fee_amount = trade.amount.mul(hub_config.arbitration_fee_pct);
-    let mut release_amount = trade.amount.sub(arbitration_fee_amount);
+    let arbitration_fee_amount = (hub_config.arbitration_fee_pct
+        * Decimal::from_ratio(trade.amount.u128(), 1u128))
+    .atomics();
+    let mut release_amount = trade.amount.sub(Uint128::from(arbitration_fee_amount));
 
     // Only deducts fees from the release_amount if the maker (offer owner) is the buyer
     if trade.buyer.eq(&offer.owner) {
@@ -1131,14 +1134,15 @@ fn handle_swap_reply(deps: DepsMut, _msg: Reply) -> Result<Response, ContractErr
                 ("received_denom", received_asset_balance.denom.clone()),
             ])
             .add_submessage(SubMsg {
-                id: SWAP_REPLY_ID,
+                id: 0,
                 msg: CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: route_step.pool.to_string(),
-                    msg: to_binary(&SwapMsg { swap: Swap {} }).unwrap(),
+                    msg: to_json_binary(&SwapMsg { swap: Swap {} }).unwrap(),
                     funds: vec![received_asset_balance],
                 }),
                 gas_limit: None,
                 reply_on: ReplyOn::Success,
+                payload: Binary::default(),
             });
         Ok(res)
     } else {
@@ -1173,14 +1177,17 @@ fn create_send_msg(to_address: Addr, amount: Vec<Coin>) -> CosmosMsg {
 
 /// Returns a FeeInfo struct containing the calculated fees and the final release amount.
 fn calculate_fees(hub_config: &HubConfig, amount: Uint128) -> FeeInfo {
-    let burn_amount = amount.mul(hub_config.burn_fee_pct);
-    let chain_amount = amount.mul(hub_config.chain_fee_pct);
-    let warchest_amount = amount.mul(hub_config.warchest_fee_pct);
+    let amount_u128 = amount.u128();
+    let burn_amount = (hub_config.burn_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
+    let chain_amount =
+        (hub_config.chain_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
+    let warchest_amount =
+        (hub_config.warchest_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
 
     FeeInfo {
-        burn_amount,
-        chain_amount,
-        warchest_amount,
+        burn_amount: Uint128::from(burn_amount),
+        chain_amount: Uint128::from(chain_amount),
+        warchest_amount: Uint128::from(warchest_amount),
     }
 }
 
@@ -1237,11 +1244,12 @@ fn add_protocol_fees_msgs(
                 id: SWAP_REPLY_ID,
                 msg: CosmosMsg::Wasm(WasmMsg::Execute {
                     contract_addr: conversion_route.pool.to_string(),
-                    msg: to_binary(&SwapMsg { swap: Swap {} }).unwrap(),
+                    msg: to_json_binary(&SwapMsg { swap: Swap {} }).unwrap(),
                     funds: vec![coin(fee_info.burn_amount.u128(), trade_denom.clone())],
                 }),
                 gas_limit: None,
                 reply_on: ReplyOn::Success,
+                payload: Binary::default(),
             });
         } else {
             //If coin being traded is $LOCAL, add message burning the local_burn amount

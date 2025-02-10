@@ -1,5 +1,7 @@
 use cosmwasm_std::{entry_point, Addr, Binary, Decimal, Deps, StdResult, Storage, Uint64};
-use cosmwasm_std::{to_binary, CosmosMsg, DepsMut, Env, MessageInfo, Response, SubMsg, WasmMsg};
+use cosmwasm_std::{
+    to_json_binary, CosmosMsg, DepsMut, Env, MessageInfo, Response, SubMsg, WasmMsg,
+};
 use cw2::{get_contract_version, set_contract_version};
 use localmoney_protocol::constants::{
     MAX_PLATFORM_FEE, MAX_TRADE_DISPUTE_TIMER, MAX_TRADE_EXPIRATION_TIMER,
@@ -70,25 +72,25 @@ fn update_config(
 
     let offer_register_hub = SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.offer_addr.to_string(),
-        msg: to_binary(&OfferRegisterHub {}).unwrap(),
+        msg: to_json_binary(&OfferRegisterHub {}).unwrap(),
         funds: info.funds.clone(),
     }));
 
     let price_register_hub = SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.price_addr.to_string(),
-        msg: to_binary(&PriceRegisterHub {}).unwrap(),
+        msg: to_json_binary(&PriceRegisterHub {}).unwrap(),
         funds: info.funds.clone(),
     }));
 
     let profile_register_hub = SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.profile_addr.to_string(),
-        msg: to_binary(&ProfileRegisterHub {}).unwrap(),
+        msg: to_json_binary(&ProfileRegisterHub {}).unwrap(),
         funds: info.funds.clone(),
     }));
 
     let trade_register_hub = SubMsg::new(CosmosMsg::Wasm(WasmMsg::Execute {
         contract_addr: config.trade_addr.to_string(),
-        msg: to_binary(&TradeRegisterHub {}).unwrap(),
+        msg: to_json_binary(&TradeRegisterHub {}).unwrap(),
         funds: info.funds.clone(),
     }));
 
@@ -172,8 +174,8 @@ fn update_admin(
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::Config {} => to_binary(&CONFIG.load(deps.storage).unwrap()),
-        QueryMsg::Admin {} => to_binary(&ADMIN.load(deps.storage).unwrap()),
+        QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage).unwrap()),
+        QueryMsg::Admin {} => to_json_binary(&ADMIN.load(deps.storage).unwrap()),
     }
 }
 

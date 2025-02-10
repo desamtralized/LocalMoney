@@ -1,8 +1,8 @@
 use std::fmt::{self, Display};
-use std::ops::{Add, Mul};
+use std::ops::{Add};
 
 use cosmwasm_std::{
-    Addr, BlockInfo, Coin, CustomQuery, Decimal, Deps, Env, MessageInfo, Order, StdResult, Storage,
+    Addr, BlockInfo, Coin, CustomQuery, Deps, Env, MessageInfo, Order, StdResult, Storage,
     Uint128, Uint256,
 };
 use cw20::Denom;
@@ -425,6 +425,7 @@ impl TradeModel<'_> {
         last: Option<u64>,
     ) -> StdResult<Vec<Trade>> {
         let range_from = last.map(Bound::exclusive);
+        let trader_addr = Addr::unchecked(trader);
 
         let result = trades()
             .idx
@@ -432,7 +433,7 @@ impl TradeModel<'_> {
             .range(storage, None, range_from, Order::Descending)
             .filter_map(|item| {
                 item.and_then(|(_, trade)| {
-                    if trade.seller.eq(&trader) || trade.buyer.eq(&trader) {
+                    if trade.seller.eq(&trader_addr) || trade.buyer.eq(&trader_addr) {
                         Ok(Some(trade))
                     } else {
                         Ok(None)
@@ -495,12 +496,12 @@ impl<'a> IndexList<Trade> for TradeIndexes<'a> {
     }
 }
 
-pub fn trades<'a>() -> IndexedMap<'a, u64, Trade, TradeIndexes<'a>> {
+pub fn trades() -> IndexedMap<u64, Trade, TradeIndexes<'static>> {
     let pk_namespace = "trades_v0_4_2";
     let indexes = TradeIndexes {
         collection: UniqueIndex::new(|t| t.id, "trades__collection"),
         arbitrator: MultiIndex::new(
-            |t| t.arbitrator.to_string(),
+            |_, t| t.arbitrator.to_string(),
             pk_namespace,
             "trades__arbitrator",
         ),
@@ -605,21 +606,21 @@ impl ArbitratorModel {
     }
 }
 
-pub fn arbitrators<'a>() -> IndexedMap<'a, &'a str, Arbitrator, ArbitratorIndexes<'a>> {
+pub fn arbitrators() -> IndexedMap<&'static str, Arbitrator, ArbitratorIndexes<'static>> {
     let arbitrators_pk_namespace = "arbitrators_v0_3_0";
     let indexes = ArbitratorIndexes {
         arbitrator: MultiIndex::new(
-            |d: &Arbitrator| d.arbitrator.clone(),
+            |_, d: &Arbitrator| d.arbitrator.clone(),
             arbitrators_pk_namespace,
             "arbitrators__arbitrator",
         ),
         fiat: MultiIndex::new(
-            |d: &Arbitrator| d.fiat.clone().to_string(),
+            |_, d: &Arbitrator| d.fiat.clone().to_string(),
             arbitrators_pk_namespace,
             "arbitrators__asset",
         ),
     };
-    IndexedMap::new(&arbitrators_pk_namespace, indexes)
+    IndexedMap::new(arbitrators_pk_namespace, indexes)
 }
 
 pub struct ArbitratorIndexes<'a> {
@@ -637,11 +638,8 @@ impl<'a> IndexList<Arbitrator> for ArbitratorIndexes<'a> {
 
 pub fn calc_denom_fiat_price(offer_rate: Uint128, denom_fiat_price: Uint256) -> Uint256 {
     let hundred = Uint128::new(100u128);
-    let offer_rate = Decimal::from_ratio(offer_rate.clone(), hundred);
-    let offer_rate = Uint256::from(hundred.mul(offer_rate)); //% 100
-    denom_fiat_price
-        .checked_mul(offer_rate)
-        .unwrap_or(Uint256::zero())
-        .checked_div(Uint256::from(hundred))
-        .unwrap_or(Uint256::zero())
+    let offer_rate = Uint256::from(offer_rate)
+        .checked_mul(Uint256::from(hundred))
+        .unwrap_or_default(); //% 100
+    offer_rate.checked_mul(denom_fiat_price).unwrap_or_default()
 }

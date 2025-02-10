@@ -1,6 +1,6 @@
 use crate::offer::OfferState;
 use crate::trade::TradeState;
-use cosmwasm_std::{Addr, Uint128, Uint256, Uint64};
+use cosmwasm_std::{Addr, StdError, Uint128, Uint256, Uint64};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -15,6 +15,8 @@ pub enum ContractError {
         parameter: String,
         message: Option<String>,
     },
+    #[error("{0}")]
+    Std(#[from] StdError),
     /// Hub Errors
     #[error("Hub already registered.")]
     HubAlreadyRegistered {},

@@ -1,6 +1,7 @@
-use crate::state::{offers_count_read, offers_count_storage};
+use crate::state::OFFERS_COUNT;
 use cosmwasm_std::{
-    entry_point, to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult, SubMsg,
+    entry_point, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError,
+    StdResult, SubMsg,
 };
 use cw2::{get_contract_version, set_contract_version};
 use localmoney_protocol::errors::ContractError;
@@ -27,14 +28,15 @@ pub fn instantiate(
     _info: MessageInfo,
     _msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION).unwrap();
-
-    offers_count_storage(deps.storage)
-        .save(&OffersCount { count: 0 })
-        .unwrap();
-    let res = Response::new().add_attribute("action", "instantiate_offer");
-    Ok(res)
+    // Convert any StdError into ContractError explicitly.
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
+        .map_err(ContractError::Std)?;
+    OFFERS_COUNT
+        .save(deps.storage, &OffersCount { count: 0 })
+        .map_err(ContractError::Std)?;
+    Ok(Response::new().add_attribute("action", "instantiate_offer"))
 }
+
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
@@ -52,8 +54,8 @@ pub fn execute(
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::State {} => to_binary(&query_state(deps)?),
-        QueryMsg::Offer { id } => to_binary(&load_offer_by_id(deps, id)?),
+        QueryMsg::State {} => to_json_binary(&query_state(deps)?),
+        QueryMsg::Offer { id } => to_json_binary(&load_offer_by_id(deps, id)?),
         QueryMsg::OffersBy {
             offer_type,
             fiat_currency,
@@ -61,7 +63,7 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
             order,
             limit,
             last,
-        } => to_binary(&OfferModel::query_by(
+        } => to_json_binary(&OfferModel::query_by(
             deps,
             offer_type,
             fiat_currency,
@@ -71,12 +73,12 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
             last,
         )?),
         QueryMsg::OffersByOwner { owner, limit, last } => {
-            to_binary(&OfferModel::query_by_owner(deps, owner, limit, last)?)
+            to_json_binary(&OfferModel::query_by_owner(deps, owner, limit, last)?)
         }
     }
 }
 
-/// Creates a new offer
+/// Creates a new offer.
 pub fn create_offer(
     deps: DepsMut,
     env: Env,
@@ -85,17 +87,16 @@ pub fn create_offer(
 ) -> Result<Response, ContractError> {
     let hub_config = get_hub_config(deps.as_ref());
     assert_min_g_max(msg.min_amount, msg.max_amount)?;
+    assert_offer_description_valid(msg.description.clone())?;
 
-    assert_offer_description_valid(msg.description.clone()).unwrap();
-
-    // Load offers count to create the next sequential id, maybe we can switch to a hash based id in the future.
-    let mut offers_count = offers_count_storage(deps.storage)
-        .load()
-        .unwrap_or(OffersCount { count: 0 });
+    // Load offers count to create the next sequential id.
+    let mut offers_count = OFFERS_COUNT
+        .load(deps.storage)
+        .map_err(ContractError::Std)?;
     offers_count.count += 1;
     let offer_id = offers_count.count;
 
-    // Update profile contact info
+    // Update profile contact info.
     let update_profile_contact_msg = update_profile_contact_msg(
         hub_config.profile_addr.to_string(),
         info.sender.clone(),
@@ -121,19 +122,19 @@ pub fn create_offer(
     )
     .offer;
 
-    // Update offers count
-    offers_count_storage(deps.storage)
-        .save(&offers_count)
-        .unwrap();
+    // Update offers count.
+    OFFERS_COUNT
+        .save(deps.storage, &offers_count)
+        .map_err(ContractError::Std)?;
 
-    // Update profile active offers
+    // Update profile active offers.
     let update_profile_offers_msg = update_profile_active_offers_msg(
         hub_config.profile_addr.to_string(),
         info.sender.clone(),
         offer.state,
     );
 
-    let res = Response::new()
+    Ok(Response::new()
         .add_submessage(update_profile_contact_msg)
         .add_submessage(update_profile_offers_msg)
         .add_attribute("action", "create_offer")
@@ -142,8 +143,7 @@ pub fn create_offer(
         .add_attribute("rate", offer.rate.to_string())
         .add_attribute("min_amount", offer.min_amount.to_string())
         .add_attribute("max_amount", offer.max_amount.to_string())
-        .add_attribute("owner", offer.owner);
-    Ok(res)
+        .add_attribute("owner", offer.owner.to_string()))
 }
 
 pub fn update_offer(
@@ -158,8 +158,7 @@ pub fn update_offer(
     let mut offer_model = OfferModel::may_load(deps.storage, msg.id);
 
     assert_ownership(info.sender.clone(), offer_model.offer.owner.clone())?;
-
-    assert_offer_description_valid(msg.description.clone()).unwrap();
+    assert_offer_description_valid(msg.description.clone())?;
 
     let mut sub_msgs: Vec<SubMsg> = Vec::new();
     if msg.owner_contact.is_some() && msg.owner_encryption_key.is_some() {
@@ -180,54 +179,52 @@ pub fn update_offer(
 
     let offer = offer_model.update(msg);
 
-    let res = Response::new()
+    Ok(Response::new()
         .add_submessages(sub_msgs)
         .add_attribute("action", "update_offer")
         .add_attribute("id", offer.id.to_string())
-        .add_attribute("owner", offer.owner.to_string());
-
-    Ok(res)
+        .add_attribute("owner", offer.owner.to_string()))
 }
 
 fn register_hub(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-    register_hub_internal(info.sender, deps.storage, HubAlreadyRegistered {})
+    // Supply two generic arguments to register_hub_internal.
+    register_hub_internal::<ContractError, ContractError>(
+        info.sender,
+        deps.storage,
+        HubAlreadyRegistered {},
+    )?;
+    Ok(Response::new().add_attribute("action", "register_hub"))
 }
 
 fn query_state(deps: Deps) -> StdResult<OffersCount> {
-    let state = offers_count_read(deps.storage).load().unwrap();
-    Ok(state)
+    OFFERS_COUNT.load(deps.storage)
 }
 
 pub fn load_offer_by_id(deps: Deps, id: u64) -> StdResult<OfferResponse> {
     let hub_config = get_hub_config(deps);
     let offer = offers()
-        .may_load(deps.storage, id)
-        .unwrap_or_default()
-        .unwrap();
+        .may_load(deps.storage, id)?
+        .ok_or_else(|| StdError::not_found("Offer"))?;
     let profile = load_profile(
         &deps.querier,
         hub_config.profile_addr.to_string(),
         offer.owner.clone(),
-    )
-    .unwrap();
+    )?;
     Ok(OfferResponse { offer, profile })
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    let previous_contract_version = get_contract_version(deps.storage).unwrap();
-
+    let previous_contract_version =
+        get_contract_version(deps.storage).map_err(ContractError::Std)?;
     assert_migration_parameters(
         previous_contract_version.clone(),
         CONTRACT_NAME.to_string(),
         CONTRACT_VERSION,
-    )
-    .unwrap();
-
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION).unwrap();
-    // If the structure of the data in storage changes, we must treat it here
-
-    Ok(Response::default()
+    )?;
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
+        .map_err(ContractError::Std)?;
+    Ok(Response::new()
         .add_attribute("previous_version", previous_contract_version.version)
         .add_attribute("new_version", CONTRACT_VERSION)
         .add_attribute("name", CONTRACT_NAME))

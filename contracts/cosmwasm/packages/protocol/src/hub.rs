@@ -1,4 +1,4 @@
-use cosmwasm_std::{Addr, Decimal};
+use cosmwasm_std::{Addr, Decimal, Uint128};
 use cw20::Denom;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -47,8 +47,8 @@ pub struct HubConfig {
     pub warchest_fee_pct: Decimal,
     pub trade_expiration_timer: u64, // in seconds
     pub trade_dispute_timer: u64,
-    pub trade_limit_min: u128, // in USD
-    pub trade_limit_max: u128, // in USD
+    pub trade_limit_min: Uint128, // in USD
+    pub trade_limit_max: Uint128, // in USD
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
