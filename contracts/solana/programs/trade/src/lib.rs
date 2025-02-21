@@ -1,26 +1,21 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::sysvar::rent::Rent;
+
 use anchor_spl::token::{self, Token};
-use solana_program::{
-    msg,
-    pubkey::Pubkey,
-    sysvar::Sysvar,
-    program::invoke,
-    instruction::{Instruction, AccountMeta},
-};
 
+// Add imports for external programs
+use price::program::Price;
+use price::{self, PriceState};
+use profile::program::Profile;
+use profile::{self, Profile as ProfileAccount};
 
-// Declare program ID
-declare_id!("ENJvkqkwjEKd2CPd9NgcwEywx6ia3tCrvHE1ReZGac8t");
+declare_id!("437aWt9WrLYquEwJsVe3B3kANP77ZCvn4gs4hJBNLefG");
 
 #[program]
 pub mod trade {
     use super::*;
 
-    pub fn create_trade(
-        ctx: Context<CreateTrade>,
-        amount: u64,
-        price: u64,
-    ) -> Result<()> {
+    pub fn create_trade(ctx: Context<CreateTrade>, amount: u64, price: u64) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
         trade.seller = ctx.accounts.seller.key();
         trade.buyer = None;
@@ -31,6 +26,7 @@ pub mod trade {
         trade.status = TradeStatus::Open;
         trade.created_at = Clock::get()?.unix_timestamp;
         trade.updated_at = Clock::get()?.unix_timestamp;
+        trade.bump = ctx.bumps.trade;
 
         // Transfer tokens to escrow
         let transfer_ctx = CpiContext::new(
@@ -49,7 +45,10 @@ pub mod trade {
 
     pub fn accept_trade(ctx: Context<AcceptTrade>) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
-        require!(trade.status == TradeStatus::Open, TradeError::InvalidTradeStatus);
+        require!(
+            trade.status == TradeStatus::Open,
+            TradeError::InvalidTradeStatus
+        );
 
         trade.buyer = Some(ctx.accounts.buyer.key());
         trade.status = TradeStatus::InProgress;
@@ -60,55 +59,71 @@ pub mod trade {
     }
 
     pub fn complete_trade(ctx: Context<CompleteTrade>) -> Result<()> {
-        let trade = &mut ctx.accounts.trade;
-        require!(trade.status == TradeStatus::InProgress, TradeError::InvalidTradeStatus);
+        require!(
+            ctx.accounts.trade.status == TradeStatus::InProgress,
+            TradeError::InvalidTradeStatus
+        );
 
-        // First verify price through CPI to price program
-        let price_accounts = vec![
-            AccountMeta::new_readonly(ctx.accounts.price_oracle.key(), false),
-        ];
+        // Verify price using CPI
+        let cpi_program = ctx.accounts.price_program.to_account_info();
+        let cpi_accounts = price::cpi::accounts::VerifyPrice {
+            oracle: ctx.accounts.price_oracle.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
-        invoke(
-            &Instruction {
-                program_id: ctx.accounts.price_program.key(),
-                accounts: price_accounts,
-                data: vec![], // Add proper price verification instruction data
-            },
-            &[ctx.accounts.price_oracle.to_account_info()],
+        // Call verify_price_for_trade with the correct parameters
+        price::cpi::verify_price_for_trade(
+            cpi_ctx,
+            ctx.accounts.trade.price,
+            "USD".to_string(),
+            100, // 1% tolerance
         )?;
 
         // Transfer tokens from escrow to buyer
-        let trade_account_info = trade.to_account_info();
-        
-        let transfer_ctx = CpiContext::new(
+        let trade_account_info = ctx.accounts.trade.to_account_info();
+        let seller_key = ctx.accounts.seller.key();
+        let token_mint = ctx.accounts.trade.token_mint;
+        let seeds = &[
+            b"trade",
+            seller_key.as_ref(),
+            token_mint.as_ref(),
+            &[ctx.accounts.trade.bump],
+        ];
+        let signer = &[&seeds[..]];
+        let transfer_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             token::Transfer {
-                from: ctx.accounts.buyer_token_account.to_account_info(),
-                to: ctx.accounts.escrow_account.to_account_info(),
+                from: ctx.accounts.escrow_account.to_account_info(),
+                to: ctx.accounts.buyer_token_account.to_account_info(),
                 authority: trade_account_info,
             },
+            signer,
         );
+        token::transfer(transfer_ctx, ctx.accounts.trade.amount)?;
 
-        token::transfer(transfer_ctx, trade.amount)?;
-
-        // Update profiles through CPI
-        let profile_accounts = vec![
-            AccountMeta::new(ctx.accounts.buyer_profile.key(), false),
-            AccountMeta::new(ctx.accounts.seller_profile.key(), false),
-        ];
-
-        invoke(
-            &Instruction {
-                program_id: ctx.accounts.profile_program.key(),
-                accounts: profile_accounts,
-                data: vec![], // Add proper profile update instruction data
+        // Update profiles using CPI
+        let buyer_profile_ctx = CpiContext::new(
+            ctx.accounts.profile_program.to_account_info(),
+            profile::cpi::accounts::RecordTrade {
+                profile: ctx.accounts.buyer_profile.to_account_info(),
+                owner: ctx.accounts.buyer.to_account_info(),
+                trade_program: ctx.accounts.trade.to_account_info(),
             },
-            &[
-                ctx.accounts.buyer_profile.to_account_info(),
-                ctx.accounts.seller_profile.to_account_info(),
-            ],
-        )?;
+        );
+        profile::cpi::record_trade_completion(buyer_profile_ctx)?;
 
+        let seller_profile_ctx = CpiContext::new(
+            ctx.accounts.profile_program.to_account_info(),
+            profile::cpi::accounts::RecordTrade {
+                profile: ctx.accounts.seller_profile.to_account_info(),
+                owner: ctx.accounts.seller.to_account_info(),
+                trade_program: ctx.accounts.trade.to_account_info(),
+            },
+        );
+        profile::cpi::record_trade_completion(seller_profile_ctx)?;
+
+        // Update trade status after all CPIs
+        let trade = &mut ctx.accounts.trade;
         trade.status = TradeStatus::Completed;
         trade.updated_at = Clock::get()?.unix_timestamp;
 
@@ -117,20 +132,40 @@ pub mod trade {
     }
 
     pub fn cancel_trade(ctx: Context<CancelTrade>) -> Result<()> {
-        let trade = &mut ctx.accounts.trade;
-        require!(trade.status == TradeStatus::Open, TradeError::InvalidTradeStatus);
+        // Verify trade status and store values we need
+        let bump;
+        let token_mint;
+        let amount;
+        {
+            let trade = &ctx.accounts.trade;
+            require!(
+                trade.status == TradeStatus::Open,
+                TradeError::InvalidTradeStatus
+            );
+            bump = trade.bump;
+            token_mint = trade.token_mint;
+            amount = trade.amount;
+        }
+
+        let seller_key = ctx.accounts.seller.key();
+        let trade_account_info = ctx.accounts.trade.to_account_info();
 
         // Return tokens from escrow to seller
-        let transfer_ctx = CpiContext::new(
+        let seeds = &[b"trade", seller_key.as_ref(), token_mint.as_ref(), &[bump]];
+        let signer = &[&seeds[..]];
+        let transfer_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             token::Transfer {
                 from: ctx.accounts.escrow_account.to_account_info(),
                 to: ctx.accounts.seller_token_account.to_account_info(),
-                authority: ctx.accounts.seller.to_account_info(),
+                authority: trade_account_info,
             },
+            signer,
         );
-        token::transfer(transfer_ctx, trade.amount)?;
+        token::transfer(transfer_ctx, amount)?;
 
+        // Update trade status
+        let trade = &mut ctx.accounts.trade;
         trade.status = TradeStatus::Cancelled;
         trade.updated_at = Clock::get()?.unix_timestamp;
 
@@ -140,13 +175,17 @@ pub mod trade {
 
     pub fn dispute_trade(ctx: Context<DisputeTrade>) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
-        require!(trade.status == TradeStatus::InProgress, TradeError::InvalidTradeStatus);
 
         // Verify disputer is either buyer or seller
         let disputer_key = ctx.accounts.disputer.key();
         require!(
             trade.seller == disputer_key || trade.buyer == Some(disputer_key),
             TradeError::UnauthorizedDisputer
+        );
+
+        require!(
+            trade.status == TradeStatus::InProgress,
+            TradeError::InvalidTradeStatus
         );
 
         trade.status = TradeStatus::Disputed;
@@ -157,26 +196,66 @@ pub mod trade {
     }
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq)]
+pub enum TradeStatus {
+    Open,
+    InProgress,
+    Completed,
+    Cancelled,
+    Disputed,
+}
+
+#[account]
+pub struct Trade {
+    pub seller: Pubkey,
+    pub buyer: Option<Pubkey>,
+    pub amount: u64,
+    pub price: u64,
+    pub token_mint: Pubkey,
+    pub escrow_account: Pubkey,
+    pub status: TradeStatus,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub bump: u8,
+}
+
 #[derive(Accounts)]
+#[instruction(amount: u64, price: u64)]
 pub struct CreateTrade<'info> {
-    #[account(init, payer = seller, space = 8 + std::mem::size_of::<Trade>())]
+    #[account(
+        init,
+        payer = seller,
+        space = 8 + // discriminator
+            32 + // seller
+            (1 + 32) + // buyer (Option<Pubkey>) - 1 for the tag, 32 for the pubkey
+            8 + // amount
+            8 + // price
+            32 + // token_mint
+            32 + // escrow_account
+            2 + // status (1 for enum discriminator, 1 for variant)
+            8 + // created_at
+            8 + // updated_at
+            1 + // bump
+            64, // padding for future updates
+        seeds = [b"trade", seller.key().as_ref(), token_mint.key().as_ref()],
+        bump
+    )]
     pub trade: Account<'info, Trade>,
     #[account(mut)]
     pub seller: Signer<'info>,
-    pub token_mint: Box<Account<'info, token::Mint>>,
+    pub token_mint: Account<'info, token::Mint>,
+    #[account(mut)]
+    pub seller_token_account: Account<'info, token::TokenAccount>,
     #[account(
-        mut,
-        constraint = seller_token_account.mint == token_mint.key(),
-        constraint = seller_token_account.owner == seller.key()
+        init,
+        payer = seller,
+        token::mint = token_mint,
+        token::authority = trade,
     )]
-    pub seller_token_account: Box<Account<'info, token::TokenAccount>>,
-    #[account(
-        mut,
-        constraint = escrow_account.mint == token_mint.key()
-    )]
-    pub escrow_account: Box<Account<'info, token::TokenAccount>>,
+    pub escrow_account: Account<'info, token::TokenAccount>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -188,7 +267,11 @@ pub struct AcceptTrade<'info> {
 
 #[derive(Accounts)]
 pub struct CompleteTrade<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"trade", seller.key().as_ref(), trade.token_mint.as_ref()],
+        bump,
+    )]
     pub trade: Account<'info, Trade>,
     #[account(constraint = seller.key() == trade.seller)]
     pub seller: Signer<'info>,
@@ -206,23 +289,36 @@ pub struct CompleteTrade<'info> {
     )]
     pub buyer_token_account: Box<Account<'info, token::TokenAccount>>,
     pub token_program: Program<'info, Token>,
-    /// CHECK: Price oracle account from price program
-    pub price_oracle: AccountInfo<'info>,
-    /// CHECK: Price program
-    pub price_program: AccountInfo<'info>,
-    /// CHECK: Profile program
-    pub profile_program: AccountInfo<'info>,
-    /// CHECK: Buyer's profile account
-    #[account(mut)]
-    pub buyer_profile: AccountInfo<'info>,
-    /// CHECK: Seller's profile account
-    #[account(mut)]
-    pub seller_profile: AccountInfo<'info>,
+
+    // Price verification accounts with proper constraints
+    pub price_oracle: Account<'info, PriceState>,
+    pub price_program: Program<'info, Price>,
+
+    // Profile accounts with proper constraints
+    #[account(
+        mut,
+        seeds = [b"profile", buyer.key().as_ref()],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub buyer_profile: Account<'info, ProfileAccount>,
+    #[account(
+        mut,
+        seeds = [b"profile", seller.key().as_ref()],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Account<'info, ProfileAccount>,
+    pub profile_program: Program<'info, Profile>,
 }
 
 #[derive(Accounts)]
 pub struct CancelTrade<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"trade", seller.key().as_ref(), trade.token_mint.as_ref()],
+        bump = trade.bump,
+    )]
     pub trade: Account<'info, Trade>,
     #[account(constraint = seller.key() == trade.seller)]
     pub seller: Signer<'info>,
@@ -247,74 +343,10 @@ pub struct DisputeTrade<'info> {
     pub disputer: Signer<'info>,
 }
 
-#[account]
-pub struct Trade {
-    pub seller: Pubkey,
-    pub buyer: Option<Pubkey>,
-    pub amount: u64,
-    pub price: u64,
-    pub token_mint: Pubkey,
-    pub escrow_account: Pubkey,
-    pub status: TradeStatus,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Debug)]
-pub enum TradeStatus {
-    Open,
-    InProgress,
-    Completed,
-    Cancelled,
-    Disputed,
-}
-
 #[error_code]
 pub enum TradeError {
     #[msg("Invalid trade status for this operation")]
     InvalidTradeStatus,
-    #[msg("Only buyer or seller can dispute a trade")]
+    #[msg("Unauthorized disputer")]
     UnauthorizedDisputer,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize)]
-pub enum TradeInstruction {
-    CreateTrade {
-        amount: u64,
-        price: u64,
-    },
-    CompleteTrade,
-    CancelTrade,
-    DisputeTrade,
-}
-
-impl TradeInstruction {
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut data = Vec::new();
-        AnchorSerialize::serialize(self, &mut data)
-            .expect("Failed to serialize trade instruction");
-        data
-    }
-}
-
-// Add this to the trade program module
-pub fn create_trade_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountMeta],
-    amount: u64,
-    price: u64,
-) -> Instruction {
-    let data = TradeInstruction::CreateTrade { amount, price }.serialize();
-    
-    Instruction {
-        program_id: *program_id,
-        accounts: accounts.to_vec(),
-        data,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    
-    // Add tests here
 }
