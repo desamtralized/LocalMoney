@@ -27,7 +27,8 @@ const LocalWalletSelector: FC = () => {
     
     selectWallet(type);
     setSelectedWallet(getSelectedWallet());
-    console.log('Selected wallet:', selectedWallet);
+    const pubKey = getSelectedWallet()?.keypair.publicKey.toString();
+    console.log('Selected wallet:', pubKey);
   };
 
   return (

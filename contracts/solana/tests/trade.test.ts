@@ -1,4 +1,4 @@
-import * as anchor from "@project-serum/anchor";
+/*  */import * as anchor from "@project-serum/anchor";
 import { PublicKey, Keypair } from "@solana/web3.js";
 import { expect } from "chai";
 import { TradeClient } from "../sdk/src/clients/trade";
@@ -443,41 +443,172 @@ describe("trade", () => {
     it("should retrieve all trades for a maker", async () => {
       const makerTrades = await tradeClient.getTradesByUser(testMaker.publicKey);
       
-      // For now, we're just testing that the mock functionality works
-      expect(makerTrades.length).to.be.at.least(1);
+      // Create a trade for the testMaker to guarantee we have at least one trade
+      console.log("Creating a test trade for the test maker");
+      const escrowKeypair = Keypair.generate();
+      const amount = new anchor.BN(500_000);  // 0.5 SOL
+      const price = new anchor.BN(50_000);    // $0.50
+      
+      await tradeClient.createTrade(
+        testTaker,
+        testMaker.publicKey, 
+        mint,
+        makerTokenAccount, 
+        escrowKeypair,
+        amount,
+        price
+      );
+      
+      // Get the trades again after creating one
+      const updatedMakerTrades = await tradeClient.getTradesByUser(testMaker.publicKey);
+      console.log(`Found ${updatedMakerTrades.length} trades for test maker`);
+      
+      // Now we should have at least one trade
+      expect(updatedMakerTrades.length).to.be.at.least(1);
       
       // Verify that at least one trade is related to the maker
-      const found = makerTrades.some(trade => 
-        trade.maker.toString() === testMaker.publicKey.toString() || 
-        (trade.taker && trade.taker.toString() === testMaker.publicKey.toString())
+      const found = updatedMakerTrades.some(trade => 
+        trade.maker.toString() === testMaker.publicKey.toString()
       );
       
       expect(found).to.be.true;
     });
 
     it("should retrieve all trades for a taker", async () => {
+      // We already created a trade in the previous test where testTaker is the taker
+      // Now fetch the trades for the taker
       const takerTrades = await tradeClient.getTradesByUser(testTaker.publicKey);
+      console.log(`Found ${takerTrades.length} trades for test taker`);
       
-      // For now, we're just testing that the mock functionality works
+      // Now we should have at least one trade
       expect(takerTrades.length).to.be.at.least(1);
       
       // Verify that at least one trade is related to the taker
       const found = takerTrades.some(trade => 
-        trade.maker.toString() === testTaker.publicKey.toString() || 
         (trade.taker && trade.taker.toString() === testTaker.publicKey.toString())
       );
       
       expect(found).to.be.true;
     });
 
-    it("should return mock data for users with no trades", async () => {
-      // Note: This test depends on the implementation of getTradesByUser which currently 
-      // returns mock data for testing purposes. In production, we would expect an empty array.
+    it("should return empty array for users with no trades", async () => {
+      // Get trades for a random user that should have no trades
       const randomUser = Keypair.generate();
       const userTrades = await tradeClient.getTradesByUser(randomUser.publicKey);
       
-      // Check that we're getting mock data
-      expect(userTrades.length).to.be.at.least(1);
+      // SDK should return an empty array, not mock data
+      expect(userTrades.length).to.equal(0);
     });
+  });
+
+  // Add a dedicated debug test for the getTradesByUser function
+  it("DEBUG: Properly creates and reads a trade account with the correct discriminator", async () => {
+    // Create a trade first
+    console.log("Creating a test trade for discriminator debugging...");
+    const tradePDA = await tradeClient.createTrade(
+      taker,
+      maker.publicKey,
+      mint,
+      makerTokenAccount,
+      Keypair.generate(),
+      new anchor.BN(Math.random() * 1000_000),
+      new anchor.BN(Math.random() * 100_000)
+    );
+    await delay(1000); // Longer delay for network confirmation
+    const tradePDA2 = await tradeClient.createTrade(
+      taker,
+      maker.publicKey,
+      mint,
+      makerTokenAccount,
+      Keypair.generate(),
+      new anchor.BN(Math.random() * 1000_000),
+      new anchor.BN(Math.random() * 100_000)
+    );
+
+    console.log("Verifying trade was created by fetching it directly...");
+    try {
+      const trade = await tradeClient.getTrade(tradePDA);
+      console.log("Trade fetched successfully:", {
+        maker: trade.maker.toString(),
+        taker: trade.taker?.toString(),
+        amount: trade.amount.toString(),
+        status: trade.status
+      });
+    } catch (error) {
+      console.error("Error fetching trade directly:", error);
+    }
+
+    // Try to get trade account info directly
+    console.log("Fetching raw account data...");
+    const accountInfo = await provider.connection.getAccountInfo(tradePDA);
+    
+    if (!accountInfo) {
+      console.error("Account info not found for trade PDA");
+    } else {
+      console.log("Account exists with", accountInfo.data.length, "bytes of data");
+      console.log("Owner:", accountInfo.owner.toString());
+      
+      if (accountInfo.data.length >= 8) {
+        const actualDiscriminator = accountInfo.data.slice(0, 8);
+        console.log("Account discriminator:", Buffer.from(actualDiscriminator).toString('hex'));
+        
+        // Compute the expected discriminator
+        const expectedDiscriminator = anchor.utils.bytes.utf8.encode("account:trade");
+        const hash = anchor.utils.sha256.hash(expectedDiscriminator);
+        const expectedHash = hash.slice(0, 8);
+        console.log("Expected discriminator:", Buffer.from(expectedHash).toString('hex'));
+        
+        if (Buffer.from(actualDiscriminator).equals(Buffer.from(expectedHash))) {
+          console.log("✅ Discriminators match!");
+        } else {
+          console.log("❌ Discriminators do not match");
+        }
+      }
+    }
+
+    // Now try to fetch using the getTradesByUser method
+    console.log("Testing getTradesByUser for maker:", maker.publicKey.toString());
+    const makerTrades = await tradeClient.getTradesByUser(maker.publicKey);
+    console.log(`Found ${makerTrades.length} maker trades`);
+    
+    console.log("Testing getTradesByUser for taker:", taker.publicKey.toString());
+    const takerTrades = await tradeClient.getTradesByUser(taker.publicKey);
+    console.log(`Found ${takerTrades.length} taker trades`);
+    
+    const randomUser = Keypair.generate();
+    const randomUserTrades = await tradeClient.getTradesByUser(randomUser.publicKey);
+    console.log(`Found ${randomUserTrades.length} random user trades`);
+
+    // Verify we can get trades
+    expect(makerTrades.length).to.be.at.least(1);
+    expect(takerTrades.length).to.be.at.least(2);
+    expect(randomUserTrades.length).to.be.eq(0);
+  });
+
+  // Add a dedicated test for the specific user address
+  it("DEBUG: Fetch trades for specific address p1DWhN5r8ifoZmUyJfqjH96twyeGFejsWoBb8BdtaXB", async () => {
+    console.log("Testing getTradesByUser for specific user address");
+    
+    // Convert address string to PublicKey
+    const specificUserAddress = new PublicKey("p1DWhN5r8ifoZmUyJfqjH96twyeGFejsWoBb8BdtaXB");
+    console.log("User address:", specificUserAddress.toString());
+    
+    // Call getTradesByUser for the specific address
+    const specificUserTrades = await tradeClient.getTradesByUser(specificUserAddress);
+    console.log(`Found ${specificUserTrades.length} trades for specific user`);
+    
+    // Log detailed information about each trade found
+    if (specificUserTrades.length > 0) {
+      specificUserTrades.forEach((trade, index) => {
+        console.log(`Trade ${index + 1}:`);
+        console.log(`  PDA: ${trade.publicKey.toString()}`);
+        console.log(`  Maker: ${trade.maker.toString()}`);
+        console.log(`  Taker: ${trade.taker ? trade.taker.toString() : 'null'}`);
+        console.log(`  Amount: ${trade.amount.toString()}`);
+        console.log(`  Status: ${trade.status}`);
+      });
+    } else {
+      console.log("No trades found for this specific user address");
+    }
   });
 });
