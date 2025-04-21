@@ -1,0 +1,31 @@
+[package]
+name = "localmoney-protocol"
+version = "1.0.0"
+authors = ["LocalMoney Developers"]
+edition = "2018"
+description = "Common helpers for localmoney-protocol"
+license = "Apache-2.0"
+repository = "https://github.com/Local-Money/localmoney/tree/main/contracts"
+homepage = "https://localmoney.io"
+documentation = "https://localmoney.gitbook.io"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+# for quicker tests, cargo test --lib
+# for more explicit tests, cargo test --features=backtraces
+backtraces = []
+
+[dependencies]
+cw2 = "2.0.0"
+cw20 = "2.0.0"
+cosmwasm-std = "2.2.1"
+cosmwasm-storage = { version = "1.0.0" }
+cw-storage-plus = { version = "2.0.0" }
+schemars = "0.8.12"
+serde = { version = "1.0.188", default-features = false, features = ["derive"] }
+thiserror = "1.0.45"
+
+[dev-dependencies]
+cosmwasm-schema = "2.2.0"
+cosmwasm-vm = "2.2.1"

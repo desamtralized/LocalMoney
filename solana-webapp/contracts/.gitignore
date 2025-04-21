@@ -1,0 +1,40 @@
+# Rust/Cargo build artifacts
+target/
+**/*.rs.bk
+
+# Solana program build artifacts
+dist/
+test-ledger/
+.anchor/
+
+# Solana BPF build artifacts
+*.so
+programs/target/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+
+# Node.js dependencies (for client/tests)
+node_modules/
+package-lock.json
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# macOS system files
+.DS_Store
+
+# Program keypair files
+*-keypair.json 

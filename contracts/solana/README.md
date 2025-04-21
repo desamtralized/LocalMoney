@@ -1,128 +1,53 @@
-😊 Below is a sample README file for the Solana folder:
+# LocalMoney Protocol - Solana Implementation
 
-```markdown:README.md
-# LocalMoney - Solana Programs
+This is a port of the LocalMoney protocol from CosmWasm to Solana using the Anchor framework.
 
-## Overview
+## Project Structure
 
-This repository contains the Solana programs for the LocalMoney project built with the [Anchor Framework](https://project-serum.github.io/anchor/). The project comprises several interrelated programs:
+The LocalMoney protocol consists of the following programs:
 
-- **Price:** A decentralized price oracle for managing currency values.
-- **Offer:** A program to create and manage buy/sell offers.
-- **Trade:** A trading platform that facilitates secure token transfers between buyers and sellers.
-- **Profile:** A user profile management program to track reputation, trade completions, and more.
-- **Common:** Shared utilities and common logic used across the programs.
+- **Hub Program**: Central coordination program that stores configuration and connects other programs
+- **Offer Program**: For creating and managing buy/sell offers
+- **Trade Program**: Handles escrow mechanics and trade lifecycle
+- **Price Program**: Oracle program for currency pricing
+- **Profile Program**: User profile management
 
-## Folder Structure
+## Program Architecture
 
-```
-LocalMoney/
- ├── programs/
- │    ├── price
- │    ├── offer
- │    ├── trade
- │    └── profile
- ├── common/ 
- ├── tests/            # Integration tests written in TypeScript
- └── Anchor.toml       # Anchor configuration file
-```
+Each program follows Solana's account model, where data is stored in Program Derived Accounts (PDAs). Cross-program invocations (CPIs) are used for communication between programs.
 
-## Prerequisites
+## Key Design Decisions
 
-Before starting development, ensure you have the following installed:
+1. **Account Model**: Used PDAs to store data that was previously in CosmWasm storage
+2. **Program Interface**: Split CosmWasm execute handlers into individual Anchor instructions
+3. **Data Types**: Converted CosmWasm types (Addr, Uint128, etc.) to Solana types (Pubkey, u64, etc.)
+4. **Permissions**: Replaced CosmWasm sender checks with Solana signer verification
+5. **Token Handling**: Integrated with Solana's SPL token program instead of CosmWasm's token handling
 
-- [Solana CLI](https://docs.solana.com/cli/install-solana-cli-tools)
-- [Anchor CLI](https://project-serum.github.io/anchor/getting-started/installation.html)
-- [Rust](https://www.rust-lang.org/tools/install)
-- [pnpm](https://pnpm.io/installation) — **Note:** Always use pnpm as the package manager.
+## Development Status
 
-## Local Development
+- [x] Project structure setup
+- [x] Shared library with common types
+- [x] Hub program core functionality
+- [x] Offer program core functionality
+- [ ] Trade program
+- [ ] Price program
+- [ ] Profile program
+- [ ] Cross-program interactions
+- [ ] Tests
 
-### Starting the Local Validator
+## Usage
 
-To run a local Solana test network, use the following command:
+To build the programs:
 
 ```bash
-solana-test-validator
+cd solana
+anchor build
 ```
 
-A sample output looks like this:
-
-```plaintext
-Ledger location: test-ledger
-Log: test-ledger/validator.log
-Initializing...
-Waiting for fees to stabilize 1...
-Identity: 6eWaCxgWnQXfDftUMtU1GEVcaz1nS8cubPFyv5tgq1VT
-Genesis Hash: A8XqDDkcEBWxCNSpFF8TQeE3i6fXcecwsjur8PXGWLVP
-Version: 1.18.26
-Shred Version: 46456
-Gossip Address: 127.0.0.1:1024
-TPU Address: 127.0.0.1:1027
-JSON RPC URL: http://127.0.0.1:8899
-WebSocket PubSub URL: ws://127.0.0.1:8900
-```
-
-### Environment Configuration
-
-- Create a `.env` file (or update your existing one) with the following variables:
-  - `PRICE_PROGRAM_ID`
-  - `OFFER_PROGRAM_ID`
-  - `TRADE_PROGRAM_ID`
-  - `PROFILE_PROGRAM_ID`
-
-- If any program IDs change after deployment, update them in both the `.env` file and the `Anchor.toml` file.
-
-### Building and Deploying Programs
-
-After making changes to any program:
-
-1. **Build the programs:**
-
-    ```bash
-    anchor build
-    ```
-
-2. **Deploy the programs (ensure you are connected to the localnet):**
-
-    ```bash
-    anchor deploy --provider.cluster localnet
-    ```
-
-3. **Important:** If any program's ID changes during redeployments, update the corresponding entries in `Anchor.toml` and the environment files.
-
-### Running Tests
-
-Integration tests are written in TypeScript (using ts-mocha) and can be run with the provided npm scripts. From the `tests` folder, run:
+To deploy to localnet:
 
 ```bash
-pnpm run test:price
-pnpm run test:offer
-pnpm run test:trade
-```
-
-Or run all tests with:
-
-```bash
-pnpm run test:all
-```
-
-## Additional Notes
-
-- **SOL Airdrops:** If a wallet is low on SOL, use the following command to airdrop SOL on the local validator:
-
-    ```bash
-    solana airdrop 111 <WALLET_ADDRESS>
-    ```
-
-- **Localnet for Testing:** Always use the Solana localnet (`solana-test-validator`) when testing changes locally.
-
-- **IDL Files:** Do not modify the generated IDL files manually. They are auto-generated at program compilation and serve as references for front-end development.
-
-- **Rebuild and Redeploy:** Every time you make changes to a program, remember to rebuild and redeploy it to keep the deployment in sync with the latest changes.
-
-## Contributing
-
-Contributions are welcome! If you find issues or have improvements, please open an issue or submit a pull request.
-
-```
+cd solana
+anchor deploy
+``` 

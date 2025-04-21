@@ -1,0 +1,20 @@
+[package]
+name = "localmoney-shared"
+version = "0.1.0"
+description = "Shared library for LocalMoney Solana programs"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "localmoney_shared"
+
+[features]
+no-entrypoint = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = { version = "0.31.1" }
+anchor-spl = { version = "0.31.1", features = ["token"] }
+# solana-program = "1.18.12" 

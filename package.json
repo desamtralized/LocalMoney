@@ -2,5 +2,11 @@
   "dependencies": {
     "@project-serum/anchor": "^0.26.0",
     "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/spl-token": "^0.4.13",
+    "@types/mocha": "^10.0.10",
+    "chai": "^5.2.0"
   }
 }
