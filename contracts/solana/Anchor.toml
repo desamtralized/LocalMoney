@@ -23,4 +23,12 @@ wallet = "~/.config/solana/id.json"
 members = ["programs/hub", "programs/offer", "programs/trade", "programs/price", "programs/profile"]
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[test]
+startup_wait = 0
+skip_local_validator = true
+
+[test.validator]
+startup_wait = 0
+url = "http://localhost:8899"

@@ -48,17 +48,49 @@ export interface TestContext {
 
 // --- Setup Function ---
 export async function setupTestEnvironment(): Promise<TestContext> {
-    anchor.setProvider(anchor.AnchorProvider.env());
-    const provider = anchor.getProvider() as anchor.AnchorProvider;
+    // Instead of relying on ANCHOR_PROVIDER_URL, create a direct connection to localhost
+    const connection = new Connection("http://localhost:8899", "confirmed");
+    const wallet = new anchor.Wallet(Keypair.generate());
+    const provider = new anchor.AnchorProvider(connection, wallet, { commitment: "confirmed" });
+    anchor.setProvider(provider);
 
-    // Load Programs
-    const programs: TestPrograms = {
-        hub: anchor.workspace.Hub as Program<Hub>,
-        offer: anchor.workspace.Offer as Program<Offer>,
-        trade: anchor.workspace.Trade as Program<Trade>,
-        price: anchor.workspace.Price as Program<Price>,
-        profile: anchor.workspace.Profile as Program<Profile>,
+    // Program IDs from Anchor.toml
+    const programIds = {
+        hub: new PublicKey("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG"),
+        offer: new PublicKey("GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn"),
+        price: new PublicKey("51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG"),
+        profile: new PublicKey("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq"),
+        trade: new PublicKey("kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB")
     };
+
+    // Load Programs directly from IDL files to avoid workspace issues
+    console.log("Loading program IDLs...");
+    
+    const fs = require('fs');
+    const path = require('path');
+    
+    const hubIdlPath = path.join(__dirname, '../target/idl/hub.json');
+    const offerIdlPath = path.join(__dirname, '../target/idl/offer.json');
+    const tradeIdlPath = path.join(__dirname, '../target/idl/trade.json');
+    const priceIdlPath = path.join(__dirname, '../target/idl/localmoney_price.json');
+    const profileIdlPath = path.join(__dirname, '../target/idl/profile.json');
+    
+    const hubIdl = JSON.parse(fs.readFileSync(hubIdlPath, 'utf8'));
+    const offerIdl = JSON.parse(fs.readFileSync(offerIdlPath, 'utf8'));
+    const tradeIdl = JSON.parse(fs.readFileSync(tradeIdlPath, 'utf8'));
+    const priceIdl = JSON.parse(fs.readFileSync(priceIdlPath, 'utf8'));
+    const profileIdl = JSON.parse(fs.readFileSync(profileIdlPath, 'utf8'));
+    
+    // Create Program interfaces with explicit program IDs
+    const programs: TestPrograms = {
+        hub: new anchor.Program(hubIdl, programIds.hub, provider),
+        offer: new anchor.Program(offerIdl, programIds.offer, provider),
+        trade: new anchor.Program(tradeIdl, programIds.trade, provider),
+        price: new anchor.Program(priceIdl, programIds.price, provider),
+        profile: new anchor.Program(profileIdl, programIds.profile, provider),
+    };
+    
+    console.log("Programs loaded successfully");
 
     // Create Users
     const users: TestAccounts = {
@@ -71,7 +103,7 @@ export async function setupTestEnvironment(): Promise<TestContext> {
     // Fund Users
     console.log("Airdropping SOL to users...");
     await Promise.all(
-        Object.values(users).map(user => airdropSol(provider.connection, user.publicKey))
+        Object.values(users).map(user => airdropSol(connection, user.publicKey))
     );
     console.log("Airdrops complete.");
 

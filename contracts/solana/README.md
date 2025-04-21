@@ -1,53 +1,101 @@
 # LocalMoney Protocol - Solana Implementation
 
-This is a port of the LocalMoney protocol from CosmWasm to Solana using the Anchor framework.
+This repository contains the Solana implementation of the LocalMoney protocol, a peer-to-peer trading platform for exchanging crypto assets and fiat currencies.
 
 ## Project Structure
 
-The LocalMoney protocol consists of the following programs:
+The project consists of five main programs:
 
-- **Hub Program**: Central coordination program that stores configuration and connects other programs
-- **Offer Program**: For creating and managing buy/sell offers
-- **Trade Program**: Handles escrow mechanics and trade lifecycle
-- **Price Program**: Oracle program for currency pricing
-- **Profile Program**: User profile management
+- **Hub**: Central coordination program storing global configuration
+- **Offer**: Manages buy/sell listings for crypto-to-fiat trades
+- **Trade**: Handles escrow, trade lifecycle, and dispute resolution
+- **Price**: Oracle integration for currency pricing
+- **Profile**: User profile management and reputation data
 
-## Program Architecture
+## Prerequisites
 
-Each program follows Solana's account model, where data is stored in Program Derived Accounts (PDAs). Cross-program invocations (CPIs) are used for communication between programs.
+- Solana CLI (v2.0.26+)
+- Anchor Framework (v0.31.1+)
+- Node.js (v16+)
+- Yarn or npm
 
-## Key Design Decisions
+## Setup
 
-1. **Account Model**: Used PDAs to store data that was previously in CosmWasm storage
-2. **Program Interface**: Split CosmWasm execute handlers into individual Anchor instructions
-3. **Data Types**: Converted CosmWasm types (Addr, Uint128, etc.) to Solana types (Pubkey, u64, etc.)
-4. **Permissions**: Replaced CosmWasm sender checks with Solana signer verification
-5. **Token Handling**: Integrated with Solana's SPL token program instead of CosmWasm's token handling
+1. Clone the repository
+2. Install dependencies:
+   ```
+   npm install
+   ```
+3. Build the programs:
+   ```
+   anchor build
+   ```
 
-## Development Status
+## Running Tests
 
-- [x] Project structure setup
-- [x] Shared library with common types
-- [x] Hub program core functionality
-- [x] Offer program core functionality
-- [ ] Trade program
-- [ ] Price program
-- [ ] Profile program
-- [ ] Cross-program interactions
-- [ ] Tests
+### Unit Tests
 
-## Usage
+To run individual program unit tests:
 
-To build the programs:
-
-```bash
-cd solana
-anchor build
+```
+npm run test:unit
 ```
 
-To deploy to localnet:
+### Integration Tests
 
-```bash
-cd solana
+Integration tests cover the complete trade lifecycle flows including:
+- Full trade lifecycle (offer -> trade -> accept -> fund -> release)
+- Cancellation flow
+- Refund flow
+- Dispute resolution
+
+To run integration tests:
+
+1. Make sure you have a local validator running in a separate terminal:
+   ```
+   solana-test-validator
+   ```
+
+2. Run the test environment setup script:
+   ```
+   npm run setup-test-env
+   ```
+   This will:
+   - Check if the local validator is running
+   - Create test keypairs
+   - Airdrop SOL to test accounts
+   - Build and deploy all programs
+
+3. Run the integration tests:
+   ```
+   npm run test:integration
+   ```
+
+Or run the complete process with a single command:
+```
+npm run run-integration-tests
+```
+
+## Debugging Tests
+
+If you encounter issues running the tests:
+
+1. Check that all dependencies are properly installed
+2. Make sure the local validator is running
+3. Check the program IDs in Anchor.toml match the ones in .env
+4. Run `anchor build` to rebuild the programs
+5. Check the logs for specific errors
+
+## Deployment
+
+To deploy to localnet (for testing):
+
+```
 anchor deploy
-``` 
+```
+
+For devnet or mainnet deployments, modify the provider.cluster in Anchor.toml accordingly.
+
+## License
+
+MIT 
