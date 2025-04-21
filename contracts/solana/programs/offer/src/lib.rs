@@ -8,7 +8,7 @@ use localmoney_shared::{
     errors::*,
 };
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnT");
+declare_id!("GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn");
 
 #[program]
 pub mod offer {

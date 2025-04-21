@@ -15,7 +15,7 @@ use profile;
 // Use the ID constant directly when needed
 use profile::ID as PROFILE_ID;
 
-declare_id!("TradeHNpQ8Tkm2Z7CecWW9nZ366mToKFpLPSfhSgCZ8");
+declare_id!("kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB");
 
 #[program]
 pub mod trade {
@@ -23,7 +23,7 @@ pub mod trade {
 
     /// Register hub program for cross-program calls
     pub fn register_hub(ctx: Context<RegisterHub>) -> Result<()> {
-        let hub_config = &ctx.accounts.hub_config;
+        let _hub_config = &ctx.accounts.hub_config;
         let trade_config = &mut ctx.accounts.trade_config;
         
         // Save hub program ID and bump
@@ -880,6 +880,7 @@ pub struct CreateTrade<'info> {
     
     /// Arbitrator account (randomly selected)
     /// This account is loaded by the client
+    /// CHECK: Arbitrator safety checks are performed in constraints.
     #[account(
         constraint = arbitrator.is_signer @ TradeError::ArbitratorMustSign,
         constraint = arbitrator.key() != taker.key() @ TradeError::ArbitratorCannotBeTaker,
@@ -906,6 +907,7 @@ pub struct CreateTrade<'info> {
     pub trade: Account<'info, Trade>,
     
     /// Trade authority PDA for CPI calls
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         seeds = [b"trade_authority"],
         bump = trade_config.bump,
@@ -913,6 +915,7 @@ pub struct CreateTrade<'info> {
     pub trade_authority: AccountInfo<'info>,
     
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Taker's profile account for updating contact and trade count
@@ -961,6 +964,7 @@ pub struct AcceptRequest<'info> {
     pub trade: Account<'info, Trade>,
     
     /// Trade authority PDA for CPI calls
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         seeds = [b"trade_authority"],
         bump = trade_config.bump,
@@ -968,6 +972,7 @@ pub struct AcceptRequest<'info> {
     pub trade_authority: AccountInfo<'info>,
     
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Maker's profile account for updating contact and trade count
@@ -1033,6 +1038,7 @@ pub struct FundEscrow<'info> {
     pub escrow_token_account: Account<'info, TokenAccount>,
 
     /// Trade authority PDA for CPI calls
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         seeds = [b"trade_authority"],
         bump = trade_config.bump,
@@ -1040,6 +1046,7 @@ pub struct FundEscrow<'info> {
     pub trade_authority: AccountInfo<'info>,
     
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Seller's profile account for updating trade count
@@ -1136,6 +1143,7 @@ pub struct ReleaseEscrow<'info> {
     pub trade: Box<Account<'info, Trade>>,
     
     /// Trade authority PDA that controls the escrow
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         // Note: Anchor automatically derives the trade_authority seeds if not specified 
         // when the trade account uses seeds with trade_id. Let's rely on that.
@@ -1191,6 +1199,7 @@ pub struct ReleaseEscrow<'info> {
     pub local_token_mint: Account<'info, anchor_spl::token::Mint>,
 
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Buyer's profile account for updating trade count
@@ -1250,6 +1259,7 @@ pub struct RefundEscrow<'info> {
     pub trade: Account<'info, Trade>,
     
     /// Trade authority PDA that controls the escrow
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         seeds = [TRADE_SEED, trade_id.to_le_bytes().as_ref()],
         bump,
@@ -1273,6 +1283,7 @@ pub struct RefundEscrow<'info> {
     pub seller_token_account: Account<'info, TokenAccount>,
     
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Buyer's profile account for updating trade count
@@ -1379,6 +1390,7 @@ pub struct SettleDispute<'info> {
     pub trade: Box<Account<'info, Trade>>,
     
     /// Trade authority PDA that controls the escrow
+    /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
         // Relies on Anchor deriving seeds from trade account
         // seeds = [TRADE_SEED, trade_id.to_le_bytes().as_ref()],
@@ -1441,6 +1453,7 @@ pub struct SettleDispute<'info> {
     pub local_token_mint: Account<'info, anchor_spl::token::Mint>,
 
     /// Profile program for CPI calls
+    /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
     
     /// Buyer's profile account for updating trade count

@@ -3,7 +3,7 @@ use localmoney_shared::price::*;
 use localmoney_shared::constants::*;
 use localmoney_shared::errors::*;
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG");
 
 #[program]
 pub mod localmoney_price {

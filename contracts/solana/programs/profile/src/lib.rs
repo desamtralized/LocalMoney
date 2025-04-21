@@ -1,15 +1,13 @@
 use anchor_lang::prelude::*;
-use localmoney_shared::profile::*;
+use localmoney_shared::{constants::*, errors::*, profile::*};
 use localmoney_shared::trade::TradeState;
 use localmoney_shared::offer::OfferState;
-use localmoney_shared::constants::*;
-use localmoney_shared::errors::*;
 use anchor_lang::solana_program::clock::Clock;
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq");
 
 #[program]
-pub mod localmoney_profile {
+pub mod profile {
     use super::*;
 
     /// Initialize the profile program

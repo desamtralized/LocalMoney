@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use localmoney_shared::{constants::*, errors::LocalMoneyError, hub::*};
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG");
 
 #[program]
 pub mod hub {
