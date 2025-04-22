@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import * as borsh from "@coral-xyz/borsh";
+import { PROGRAM_IDS } from "../config";
 
 // Test to see if we're set up correctly
 describe("LocalMoney Test Setup", () => {
@@ -16,7 +17,7 @@ describe("LocalMoney Test Setup", () => {
     const hubIdlPath = path.join(__dirname, '../../target/idl/hub.json');
     const offerIdlPath = path.join(__dirname, '../../target/idl/offer.json');
     const tradeIdlPath = path.join(__dirname, '../../target/idl/trade.json');
-    const priceIdlPath = path.join(__dirname, '../../target/idl/localmoney_price.json');
+    const priceIdlPath = path.join(__dirname, '../../target/idl/price.json');
     const profileIdlPath = path.join(__dirname, '../../target/idl/profile.json');
     
     assert.isTrue(fs.existsSync(hubIdlPath), `Hub IDL file doesn't exist at ${hubIdlPath}`);
@@ -26,13 +27,13 @@ describe("LocalMoney Test Setup", () => {
     assert.isTrue(fs.existsSync(profileIdlPath), `Profile IDL file doesn't exist at ${profileIdlPath}`);
     
     if (!fs.existsSync(path.join(__dirname, '../../target/idl/price.json'))) {
-      // Copy the localmoney_price.json file to price.json if it doesn't exist
-      const localmoneyPriceIdlPath = path.join(__dirname, '../../target/idl/localmoney_price.json');
+      // Copy the price.json file to price.json if it doesn't exist
+      const localmoneyPriceIdlPath = path.join(__dirname, '../../target/idl/price.json');
       if (fs.existsSync(localmoneyPriceIdlPath)) {
         const priceIdlDir = path.dirname(priceIdlPath);
         const priceIdlContent = fs.readFileSync(localmoneyPriceIdlPath, 'utf8');
         fs.writeFileSync(path.join(priceIdlDir, 'price.json'), priceIdlContent);
-        console.log("Created price.json from localmoney_price.json");
+        console.log("Created price.json from price.json");
       }
     }
   });
@@ -41,7 +42,7 @@ describe("LocalMoney Test Setup", () => {
     const hubIdl = require('../../target/idl/hub.json');
     const offerIdl = require('../../target/idl/offer.json');
     const tradeIdl = require('../../target/idl/trade.json');
-    const priceIdl = require('../../target/idl/localmoney_price.json');
+    const priceIdl = require('../../target/idl/price.json');
     const profileIdl = require('../../target/idl/profile.json');
     
     assert.isDefined(hubIdl, "Hub IDL should be defined");
@@ -59,14 +60,8 @@ describe("LocalMoney Test Setup", () => {
 });
 
 describe("Simple Trade Lifecycle Test", () => {
-  // Hard-coded program IDs from Anchor.toml
-  const programIds = {
-    hub: "FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG",
-    offer: "GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn",
-    price: "51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG",
-    profile: "3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq",
-    trade: "kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB"
-  };
+  // Program IDs from config
+  const programIds = PROGRAM_IDS;
 
   it("should verify program IDs match configuration", async () => {
     // Create a direct connection to the local validator
@@ -83,7 +78,7 @@ describe("Simple Trade Lifecycle Test", () => {
     assert.isDefined(latestBlockhash, "Should be able to get latest blockhash from provider");
     
     console.log("Successfully connected to local validator");
-    console.log("Using Hub program ID:", programIds.hub);
+    console.log("Using Hub program ID:", programIds.hub.toString());
   });
   
   it("should load all program IDLs directly", async () => {
@@ -104,7 +99,7 @@ describe("Simple Trade Lifecycle Test", () => {
     ));
     
     const priceIdl = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '../../target/idl/localmoney_price.json'), 
+      path.join(__dirname, '../../target/idl/price.json'), 
       'utf8'
     ));
     
@@ -178,14 +173,8 @@ describe("Trade Lifecycle Simulation", () => {
   // Mock USDC mint
   const mockUsdcMint = Keypair.generate();
   
-  // Program IDs from Anchor.toml
-  const programIds = {
-    hub: new PublicKey("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG"),
-    offer: new PublicKey("GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn"),
-    price: new PublicKey("51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG"),
-    profile: new PublicKey("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq"),
-    trade: new PublicKey("kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB")
-  };
+  // Program IDs from config
+  const programIds = PROGRAM_IDS;
   
   before("Setup test environment", async function() {
     // Use this.timeout to increase the timeout for this test if needed
@@ -206,7 +195,7 @@ describe("Trade Lifecycle Simulation", () => {
     const hubIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/hub.json'), 'utf8'));
     const offerIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/offer.json'), 'utf8'));
     const tradeIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/trade.json'), 'utf8'));
-    const priceIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/localmoney_price.json'), 'utf8'));
+    const priceIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/price.json'), 'utf8'));
     const profileIdl = JSON.parse(fs.readFileSync(path.join(__dirname, '../../target/idl/profile.json'), 'utf8'));
     
     // Connect to the programs directly using lower-level Solana Web3.js APIs to avoid Anchor IDL parsing issues
@@ -789,7 +778,7 @@ function createStartTradeInstruction(
   );
   
   // Get price program ID
-  const priceProgramId = new PublicKey("51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG");
+  const priceProgramId = new PublicKey("HPX5EkkHVJxDrvqWcw9Uk6ELxH4jbjkmJYYWRJ9CcN7M");
   
   // Create mock denom price PDA (this would need to be properly set up by the price program)
   const tokenMint = new PublicKey("So11111111111111111111111111111111111111112"); // SOL mint for example
@@ -805,16 +794,16 @@ function createStartTradeInstruction(
   );
   
   // Profile Program ID
-  const profileProgramId = new PublicKey("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq");
+  const profileProgramId = new PublicKey("5J5vJxZy34aPXhHHDJNFKB8kEyDzwD3GVThuoynsuUso");
   
   // Combine everything together for the instruction data
   return new anchor.web3.TransactionInstruction({
     keys: [
       { pubkey: taker, isSigner: true, isWritable: true },
       { pubkey: tradeConfigPda, isSigner: false, isWritable: false },
-      { pubkey: new PublicKey("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG"), isSigner: false, isWritable: false }, // Hub program ID
+      { pubkey: new PublicKey("CMBCybcewXGrJYGxXqibdXzPcEvQc9fAZoRj7a42eBBh"), isSigner: false, isWritable: false }, // Hub program ID
       { pubkey: hubPda, isSigner: false, isWritable: false },
-      { pubkey: new PublicKey("GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn"), isSigner: false, isWritable: false }, // Offer program ID
+      { pubkey: new PublicKey("Fqb9ufNCYs8N1PyCtGWCiyFHWTBFiLrXLHYLcXobwq5x"), isSigner: false, isWritable: false }, // Offer program ID
       { pubkey: offerPda, isSigner: false, isWritable: false },
       { pubkey: denomPricePda, isSigner: false, isWritable: false },
       { pubkey: arbitrator, isSigner: false, isWritable: false },
@@ -968,7 +957,7 @@ function createTradeConfigInitializeInstruction(
   }
   
   // Get Hub program ID from Anchor.toml
-  const hubProgramId = new PublicKey("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG");
+  const hubProgramId = new PublicKey("CMBCybcewXGrJYGxXqibdXzPcEvQc9fAZoRj7a42eBBh");
   
   // Create counter PDA
   const [tradesCounterPda] = PublicKey.findProgramAddressSync(

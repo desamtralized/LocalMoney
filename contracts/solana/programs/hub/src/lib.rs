@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use localmoney_shared::{constants::*, errors::LocalMoneyError, hub::*};
 
-declare_id!("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG");
+declare_id!("CeUJv3YczYt8EeXvvcHNf1UZjSGapLc77XHQPqEMMSLP");
 
 #[program]
 pub mod hub {
@@ -49,22 +49,21 @@ pub mod hub {
 // Validate hub configuration
 fn validate_config(config: &HubConfig) -> Result<()> {
     // Check platform fee (sum of fees must be <= MAX_PLATFORM_FEE)
-    let total_platform_fee = config.chain_fee_pct as u8 + 
-                             config.burn_fee_pct as u8 + 
-                             config.warchest_fee_pct as u8;
-    
+    let total_platform_fee =
+        config.chain_fee_pct as u8 + config.burn_fee_pct as u8 + config.warchest_fee_pct as u8;
+
     if total_platform_fee > MAX_PLATFORM_FEE {
         return Err(LocalMoneyError::InvalidPlatformFee.into());
     }
 
     // Check trade timers
-    if config.trade_expiration_timer == 0 || 
-       config.trade_expiration_timer > MAX_TRADE_EXPIRATION_TIMER {
+    if config.trade_expiration_timer == 0
+        || config.trade_expiration_timer > MAX_TRADE_EXPIRATION_TIMER
+    {
         return Err(LocalMoneyError::InvalidParameter.into());
     }
 
-    if config.trade_dispute_timer == 0 || 
-       config.trade_dispute_timer > MAX_TRADE_DISPUTE_TIMER {
+    if config.trade_dispute_timer == 0 || config.trade_dispute_timer > MAX_TRADE_DISPUTE_TIMER {
         return Err(LocalMoneyError::InvalidParameter.into());
     }
 
@@ -85,7 +84,7 @@ pub struct Initialize<'info> {
         bump
     )]
     pub hub: Account<'info, Hub>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -119,4 +118,4 @@ pub struct UpdateAdmin<'info> {
         bump = hub.bump
     )]
     pub hub: Account<'info, Hub>,
-} 
+}

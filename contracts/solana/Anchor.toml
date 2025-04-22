@@ -6,11 +6,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hub = "FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG"
-offer = "GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn"
-price = "51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG"
-profile = "3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq"
-trade = "kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB"
+hub = "CeUJv3YczYt8EeXvvcHNf1UZjSGapLc77XHQPqEMMSLP"
+offer = "Frq3AZaxxRDncWbrKf6PBjEYREMp8tLQuzD1XUBNcLUZ"
+price = "FVnKLFiYQFzCFJkGnn5ptEAXszQRfxVPuV7wBFhcFRHY"
+profile = "14QsEiiC1GDujKagkJ316P81dJUQ7QxsQrzz7ggQg7qQ"
+trade = "FyCprmE9zhs29WRN48Y4cpK4dX552uKWwnzapu9bVLbM"
 
 [registry]
 url = "https://api.apr.dev"
@@ -20,15 +20,24 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = ["programs/hub", "programs/offer", "programs/trade", "programs/price", "programs/profile"]
+members = [
+    "programs/hub",
+    "programs/offer",
+    "programs/trade",
+    "programs/price",
+    "programs/profile",
+]
 
 [scripts]
 test = "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 
 [test]
 startup_wait = 0
-skip_local_validator = true
+shutdown_wait = 2000
+upgradeable = false
 
 [test.validator]
-startup_wait = 0
+bind_address = "0.0.0.0"
 url = "http://localhost:8899"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899

@@ -118,7 +118,7 @@ describe("LocalMoney Protocol - Anchor Integration", () => {
     ));
     
     const priceIdl = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '../target/idl/localmoney_price.json'), 
+      path.join(__dirname, '../target/idl/price.json'), 
       'utf8'
     ));
     

@@ -25,7 +25,7 @@ describe("LocalMoney Connection Test", () => {
     const hubIdlPath = path.join(__dirname, '../target/idl/hub.json');
     const offerIdlPath = path.join(__dirname, '../target/idl/offer.json');
     const tradeIdlPath = path.join(__dirname, '../target/idl/trade.json');
-    const priceIdlPath = path.join(__dirname, '../target/idl/localmoney_price.json');
+    const priceIdlPath = path.join(__dirname, '../target/idl/price.json');
     const profileIdlPath = path.join(__dirname, '../target/idl/profile.json');
     
     assert.isTrue(fs.existsSync(hubIdlPath), `Hub IDL file doesn't exist at ${hubIdlPath}`);
@@ -39,7 +39,7 @@ describe("LocalMoney Connection Test", () => {
     const hubIdlPath = path.join(__dirname, '../target/idl/hub.json');
     const offerIdlPath = path.join(__dirname, '../target/idl/offer.json');
     const tradeIdlPath = path.join(__dirname, '../target/idl/trade.json');
-    const priceIdlPath = path.join(__dirname, '../target/idl/localmoney_price.json');
+    const priceIdlPath = path.join(__dirname, '../target/idl/price.json');
     const profileIdlPath = path.join(__dirname, '../target/idl/profile.json');
     
     const hubIdl = JSON.parse(fs.readFileSync(hubIdlPath, 'utf8'));

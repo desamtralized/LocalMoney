@@ -1,21 +1,21 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::System as SystemProgram;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
-use localmoney_shared::trade::{Trade, TradeState, TradeStateItem, FeeInfo};
-use localmoney_shared::price::{FiatCurrency};
-use localmoney_shared::offer::{Offer, OfferDirection};
+use localmoney_shared::constants::TRADE_SEED;
 use localmoney_shared::errors::LocalMoneyError;
 use localmoney_shared::hub::HubConfig;
-use localmoney_shared::price::{DenomFiatPrice};
+use localmoney_shared::offer::{Offer, OfferDirection};
+use localmoney_shared::price::DenomFiatPrice;
+use localmoney_shared::price::FiatCurrency;
 use localmoney_shared::profile::{Profile, UpdateContactParams, UpdateTradesCountParams};
-use localmoney_shared::constants::{TRADE_SEED};
-use anchor_lang::system_program::System as SystemProgram;
-use profile::cpi::accounts::{UpdateTradesCount, UpdateContact};
+use localmoney_shared::trade::{FeeInfo, Trade, TradeState, TradeStateItem};
 use profile;
+use profile::cpi::accounts::{UpdateContact, UpdateTradesCount};
 
 // Use the ID constant directly when needed
 use profile::ID as PROFILE_ID;
 
-declare_id!("kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB");
+declare_id!("FyCprmE9zhs29WRN48Y4cpK4dX552uKWwnzapu9bVLbM");
 
 #[program]
 pub mod trade {
@@ -25,13 +25,13 @@ pub mod trade {
     pub fn register_hub(ctx: Context<RegisterHub>) -> Result<()> {
         let _hub_config = &ctx.accounts.hub_config;
         let trade_config = &mut ctx.accounts.trade_config;
-        
+
         // Save hub program ID and bump
         trade_config.hub_program = ctx.accounts.hub_program.key();
         // Set bump value directly
         trade_config.bump = 255; // This will be set by Anchor
         trade_config.authority = ctx.accounts.authority.key();
-        
+
         msg!("Hub registered with trade program");
         Ok(())
     }
@@ -49,56 +49,60 @@ pub mod trade {
         let _hub_config = &ctx.accounts.hub_config;
         let offer = &ctx.accounts.offer;
         let taker = ctx.accounts.taker.key();
-        
+
         // Reject if taker is the offer owner
         if taker == offer.owner {
             return Err(TradeError::CannotTradeWithSelf.into());
         }
-        
+
         // Check if amount is within allowed range
         if amount < offer.min_amount || amount > offer.max_amount {
             return Err(TradeError::InvalidAmount.into());
         }
-        
+
         // Check if trade amount in USD is within global limits
-        let offer_usd_price = offer.price_premium as u128 * (ctx.accounts.denom_price.price as u128) / 100;
+        let offer_usd_price =
+            offer.price_premium as u128 * (ctx.accounts.denom_price.price as u128) / 100;
         let trade_usd_amount = (amount as u128 * offer_usd_price) / 1_000_000;
-        
-        if trade_usd_amount < _hub_config.trade_limit_min as u128 || 
-           trade_usd_amount > _hub_config.trade_limit_max as u128 {
+
+        if trade_usd_amount < _hub_config.trade_limit_min as u128
+            || trade_usd_amount > _hub_config.trade_limit_max as u128
+        {
             return Err(TradeError::InvalidTradeAmount.into());
         }
-        
+
         // Calculate the denom price in fiat using offer rate
-        let denom_final_price = (offer.price_premium as u128 * (ctx.accounts.denom_price.price as u128)) / 100;
+        let denom_final_price =
+            (offer.price_premium as u128 * (ctx.accounts.denom_price.price as u128)) / 100;
         if denom_final_price == 0 {
             return Err(TradeError::InvalidPriceForDenom.into());
         }
-        
+
         // Determine buyer and seller based on offer type
-        let (buyer, buyer_contact, seller, seller_contact) = if offer.direction == OfferDirection::Buy {
-            (offer.owner, None, taker, Some(taker_contact))
-        } else {
-            (taker, Some(taker_contact), offer.owner, None)
-        };
+        let (buyer, buyer_contact, seller, seller_contact) =
+            if offer.direction == OfferDirection::Buy {
+                (offer.owner, None, taker, Some(taker_contact))
+            } else {
+                (taker, Some(taker_contact), offer.owner, None)
+            };
 
         // Create trade PDA
         let trade_data = &mut ctx.accounts.trade;
         let trade_id = ctx.accounts.trades_counter.counter + 1;
-        
+
         // Update trades counter
         ctx.accounts.trades_counter.counter = trade_id;
-        
+
         // Create initial trade state history
         let initial_state = TradeStateItem {
             actor: taker,
             state: TradeState::RequestCreated,
             timestamp: current_time,
         };
-        
+
         // Set expiration time based on hub config
         let expires_at = current_time + _hub_config.trade_expiration_timer as i64;
-        
+
         // Initialize the trade
         trade_data.id = trade_id;
         trade_data.buyer = buyer;
@@ -120,12 +124,12 @@ pub mod trade {
             "JPY" => FiatCurrency::JPY,
             "GBP" => FiatCurrency::GBP,
             "CAD" => FiatCurrency::CAD,
-            _ => return Err(TradeError::InvalidFiatCurrency.into())
+            _ => return Err(TradeError::InvalidFiatCurrency.into()),
         };
         trade_data.denom_fiat_price = denom_final_price;
         trade_data.state_history = vec![initial_state];
         trade_data.state = TradeState::RequestCreated;
-        
+
         // CPI to profile program to update taker's contact info
         let cpi_accounts = UpdateContact {
             authority: ctx.accounts.trade_authority.to_account_info(),
@@ -141,11 +145,14 @@ pub mod trade {
             cpi_accounts,
             signer_seeds,
         );
-        profile::cpi::update_contact(cpi_ctx, UpdateContactParams {
-            contact: profile_taker_contact,
-            encryption_key: profile_taker_encryption_key,
-        })?;
-        
+        profile::cpi::update_contact(
+            cpi_ctx,
+            UpdateContactParams {
+                contact: profile_taker_contact,
+                encryption_key: profile_taker_encryption_key,
+            },
+        )?;
+
         // CPI to update taker's trade count
         let cpi_trade_count_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
@@ -158,10 +165,13 @@ pub mod trade {
             cpi_trade_count_accounts,
             signer_seeds,
         );
-        profile::cpi::update_trades_count(cpi_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::RequestCreated,
-        })?;
-        
+        profile::cpi::update_trades_count(
+            cpi_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::RequestCreated,
+            },
+        )?;
+
         msg!("Trade created with ID: {}", trade_id);
         Ok(())
     }
@@ -176,17 +186,17 @@ pub mod trade {
         let current_time = clock.unix_timestamp;
         let trade = &mut ctx.accounts.trade;
         let maker = ctx.accounts.maker.key();
-        
+
         // Check if trade is already expired
         if trade.is_expired(current_time) {
             return Err(TradeError::TradeExpired.into());
         }
-        
+
         // Verify trade is in RequestCreated state
         if trade.state != TradeState::RequestCreated {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Check if maker is the right counter-party for this trade
         if trade.buyer == maker {
             // If maker is buyer, update buyer contact
@@ -197,10 +207,10 @@ pub mod trade {
         } else {
             return Err(TradeError::Unauthorized.into());
         }
-        
+
         // Update trade state
         trade.set_state(TradeState::RequestAccepted, maker, current_time);
-        
+
         // CPI to profile program to update maker's contact information
         let cpi_accounts = UpdateContact {
             authority: ctx.accounts.trade_authority.to_account_info(),
@@ -216,11 +226,14 @@ pub mod trade {
             cpi_accounts,
             signer_seeds,
         );
-        profile::cpi::update_contact(cpi_ctx, UpdateContactParams {
-            contact: maker_contact,
-            encryption_key: "".to_string(), // Placeholder, should be provided if needed
-        })?;
-        
+        profile::cpi::update_contact(
+            cpi_ctx,
+            UpdateContactParams {
+                contact: maker_contact,
+                encryption_key: "".to_string(), // Placeholder, should be provided if needed
+            },
+        )?;
+
         // CPI to update maker's trade count
         let cpi_trade_count_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
@@ -233,10 +246,13 @@ pub mod trade {
             cpi_trade_count_accounts,
             signer_seeds,
         );
-        profile::cpi::update_trades_count(cpi_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::RequestAccepted,
-        })?;
-        
+        profile::cpi::update_trades_count(
+            cpi_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::RequestAccepted,
+            },
+        )?;
+
         msg!("Trade {} accepted by {}", _trade_id, maker);
         Ok(())
     }
@@ -251,17 +267,17 @@ pub mod trade {
         let current_time = clock.unix_timestamp;
         let trade = &mut ctx.accounts.trade;
         let seller = ctx.accounts.seller.key();
-        
+
         // Check if trade is already expired
         if trade.is_expired(current_time) {
             return Err(TradeError::TradeExpired.into());
         }
-        
+
         // Verify trade is in RequestAccepted state
         if trade.state != TradeState::RequestAccepted {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Update seller contact if provided
         if let Some(contact) = maker_contact {
             if trade.seller == seller {
@@ -270,22 +286,19 @@ pub mod trade {
                 return Err(TradeError::Unauthorized.into());
             }
         }
-        
+
         // Transfer tokens to escrow
         let transfer_ix = Transfer {
             from: ctx.accounts.seller_token_account.to_account_info(),
             to: ctx.accounts.escrow_token_account.to_account_info(),
             authority: ctx.accounts.seller.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            transfer_ix,
-        );
+        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), transfer_ix);
         token::transfer(cpi_ctx, trade.amount)?;
-        
+
         // Update trade state
         trade.set_state(TradeState::EscrowFunded, seller, current_time);
-        
+
         // CPI to update seller's trade count
         let cpi_trade_count_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
@@ -301,81 +314,84 @@ pub mod trade {
             cpi_trade_count_accounts,
             signer_seeds,
         );
-        profile::cpi::update_trades_count(cpi_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::EscrowFunded,
-        })?;
-        
+        profile::cpi::update_trades_count(
+            cpi_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::EscrowFunded,
+            },
+        )?;
+
         Ok(())
     }
 
     /// Mark fiat as deposited
-    pub fn fiat_deposited(
-        ctx: Context<FiatDeposited>,
-        _trade_id: u64,
-    ) -> Result<()> {
+    pub fn fiat_deposited(ctx: Context<FiatDeposited>, _trade_id: u64) -> Result<()> {
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
         let trade = &mut ctx.accounts.trade;
         let buyer = ctx.accounts.buyer.key();
-        
+
         // Verify caller is the buyer
         if trade.buyer != buyer {
             return Err(TradeError::Unauthorized.into());
         }
-        
+
         // Verify trade is in EscrowFunded state
         if trade.state != TradeState::EscrowFunded {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Set the dispute timer
         let _hub_config = &ctx.accounts.hub_config;
         let enables_dispute_at = current_time + _hub_config.trade_dispute_timer as i64;
         trade.enables_dispute_at = Some(enables_dispute_at);
-        
+
         // Update trade state
         trade.set_state(TradeState::FiatDeposited, buyer, current_time);
-        
+
         msg!("Fiat deposited for trade {} by {}", _trade_id, buyer);
         Ok(())
     }
-    
+
     /// Release escrow funds to complete trade
-    pub fn release_escrow(
-        ctx: Context<ReleaseEscrow>,
-        _trade_id: u64,
-    ) -> Result<()> {
+    pub fn release_escrow(ctx: Context<ReleaseEscrow>, _trade_id: u64) -> Result<()> {
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
         let _hub_config = &ctx.accounts.hub_config;
         let trade = &mut ctx.accounts.trade;
         let seller = ctx.accounts.seller.key();
-        
+
         // Check if trade is in correct state
         if trade.state != TradeState::FiatDeposited {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Calculate protocol fees
         let fee_info = calculate_fees(_hub_config, trade.amount);
-        
+
         // Calculate release amount after deducting protocol fees
-        let release_amount = trade.amount
-            .checked_sub(fee_info.total_fees()).ok_or(LocalMoneyError::FeeCalculationError)?;
+        let release_amount = trade
+            .amount
+            .checked_sub(fee_info.total_fees())
+            .ok_or(LocalMoneyError::FeeCalculationError)?;
 
         // Security Check: Ensure outgoing amounts equal escrow balance
         let total_outgoing = release_amount
-            .checked_add(fee_info.total_fees()).ok_or(LocalMoneyError::FeeCalculationError)?;
-        require!(total_outgoing == ctx.accounts.escrow_token_account.amount, LocalMoneyError::EscrowBalanceMismatch);
+            .checked_add(fee_info.total_fees())
+            .ok_or(LocalMoneyError::FeeCalculationError)?;
+        require!(
+            total_outgoing == ctx.accounts.escrow_token_account.amount,
+            LocalMoneyError::EscrowBalanceMismatch
+        );
 
-        // --- Token Transfers --- 
+        // --- Token Transfers ---
         let seeds = &[
             TRADE_SEED,
             &_trade_id.to_le_bytes(),
             &[trade.bump], // Use trade bump, not authority bump from context
         ];
         let signer = &[&seeds[..]];
-        
+
         // 1. Transfer release amount to seller
         let transfer_seller_ix = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
@@ -418,7 +434,7 @@ pub mod trade {
             );
             token::transfer(transfer_warchest_cpi_ctx, fee_info.warchest_amount)?;
         }
-        
+
         // 4. Burn Fee
         if fee_info.burn_amount > 0 {
             let burn_ix = anchor_spl::token::Burn {
@@ -426,18 +442,18 @@ pub mod trade {
                 from: ctx.accounts.escrow_token_account.to_account_info(),
                 authority: ctx.accounts.trade_authority.to_account_info(),
             };
-             let burn_cpi_ctx = CpiContext::new_with_signer(
+            let burn_cpi_ctx = CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 burn_ix,
                 signer,
             );
             anchor_spl::token::burn(burn_cpi_ctx, fee_info.burn_amount)?;
         }
-        
+
         // Update trade state
         trade.set_state(TradeState::EscrowReleased, seller, current_time);
-        
-        // --- Update Profile Counts --- 
+
+        // --- Update Profile Counts ---
         let cpi_seller_trade_count_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
             hub: ctx.accounts.hub_config.to_account_info(),
@@ -449,33 +465,33 @@ pub mod trade {
             cpi_seller_trade_count_accounts,
             signer,
         );
-        profile::cpi::update_trades_count(cpi_seller_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::EscrowReleased,
-        })?;
-        
+        profile::cpi::update_trades_count(
+            cpi_seller_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::EscrowReleased,
+            },
+        )?;
+
         Ok(())
     }
 
     /// Cancel and refund escrow
-    pub fn refund_escrow(
-        ctx: Context<RefundEscrow>,
-        _trade_id: u64,
-    ) -> Result<()> {
+    pub fn refund_escrow(ctx: Context<RefundEscrow>, _trade_id: u64) -> Result<()> {
         let clock = Clock::get()?;
         let current_time = clock.unix_timestamp;
         let trade = &mut ctx.accounts.trade;
         let initiator = ctx.accounts.initiator.key();
-        
+
         // Verify trade state allows refund
         if trade.state != TradeState::EscrowFunded && trade.state != TradeState::FiatDeposited {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Check if initiator is authorized
         if initiator != trade.buyer && initiator != trade.seller {
             return Err(TradeError::Unauthorized.into());
         }
-        
+
         // Check if refund is allowed based on trade state and initiator
         match trade.state {
             TradeState::EscrowFunded => {
@@ -483,16 +499,16 @@ pub mod trade {
                 if initiator != trade.seller {
                     return Err(TradeError::Unauthorized.into());
                 }
-            },
+            }
             TradeState::FiatDeposited => {
                 // Only buyer can refund after fiat is marked as sent
                 if initiator != trade.buyer {
                     return Err(TradeError::Unauthorized.into());
                 }
-            },
+            }
             _ => return Err(TradeError::InvalidTradeState.into()),
         }
-        
+
         // Transfer tokens from escrow back to seller
         let transfer_ix = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
@@ -502,7 +518,11 @@ pub mod trade {
         // Define seeds for the transfer CPI
         let trade_id_bytes = _trade_id.to_le_bytes();
         let bump_seed = [trade.bump];
-        let transfer_seeds = &[TRADE_SEED.as_ref(), trade_id_bytes.as_ref(), bump_seed.as_ref()];
+        let transfer_seeds = &[
+            TRADE_SEED.as_ref(),
+            trade_id_bytes.as_ref(),
+            bump_seed.as_ref(),
+        ];
         let transfer_signer_seeds = &[&transfer_seeds[..]];
         let cpi_ctx = CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
@@ -510,10 +530,10 @@ pub mod trade {
             transfer_signer_seeds, // Use the defined seeds
         );
         token::transfer(cpi_ctx, trade.amount)?;
-        
+
         // Update trade state
         trade.set_state(TradeState::EscrowRefunded, initiator, current_time);
-        
+
         // Define seeds for profile CPIs
         let config_bump_seed = [ctx.accounts.trade_config.bump];
         let config_authority_seeds = &[b"trade_authority".as_ref(), config_bump_seed.as_ref()];
@@ -531,9 +551,12 @@ pub mod trade {
             cpi_buyer_trade_count_accounts,
             config_signer_seeds, // Use defined config seeds
         );
-        profile::cpi::update_trades_count(cpi_buyer_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::EscrowRefunded,
-        })?;
+        profile::cpi::update_trades_count(
+            cpi_buyer_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::EscrowRefunded,
+            },
+        )?;
 
         // CPI to update seller's trade count
         let cpi_seller_trade_count_accounts = UpdateTradesCount {
@@ -547,10 +570,13 @@ pub mod trade {
             cpi_seller_trade_count_accounts,
             config_signer_seeds, // Use defined config seeds
         );
-        profile::cpi::update_trades_count(cpi_seller_trade_count_ctx, UpdateTradesCountParams {
-            trade_state: TradeState::EscrowRefunded,
-        })?;
-        
+        profile::cpi::update_trades_count(
+            cpi_seller_trade_count_ctx,
+            UpdateTradesCountParams {
+                trade_state: TradeState::EscrowRefunded,
+            },
+        )?;
+
         Ok(())
     }
 
@@ -565,17 +591,17 @@ pub mod trade {
         let current_time = clock.unix_timestamp;
         let trade = &mut ctx.accounts.trade;
         let trader = ctx.accounts.trader.key();
-        
+
         // Verify trade is in FiatDeposited state
         if trade.state != TradeState::FiatDeposited {
             return Err(TradeError::InvalidTradeState.into());
         }
-        
+
         // Verify caller is either the buyer or seller
         if trader != trade.buyer && trader != trade.seller {
             return Err(TradeError::Unauthorized.into());
         }
-        
+
         // Verify dispute is allowed (within dispute window)
         if let Some(dispute_time) = trade.enables_dispute_at {
             if current_time < dispute_time {
@@ -584,14 +610,14 @@ pub mod trade {
         } else {
             return Err(TradeError::DisputeNotEnabled.into());
         }
-        
+
         // Update trade state
         trade.set_state(TradeState::EscrowDisputed, trader, current_time);
-        
+
         // Store contact information for arbitrator
         trade.arbitrator_buyer_contact = Some(buyer_contact);
         trade.arbitrator_seller_contact = Some(seller_contact);
-        
+
         msg!("Dispute initiated for trade {} by {}", _trade_id, trader);
         Ok(())
     }
@@ -608,33 +634,42 @@ pub mod trade {
         let trade = &mut ctx.accounts.trade;
         let winner_is_buyer = winner == trade.buyer;
         let _winner_is_seller = winner == trade.seller;
-        
+
         // Calculate arbitration fee
         let _hub_config = &ctx.accounts.hub_config;
-        let arbitration_fee = (trade.amount as u128 * _hub_config.arbitration_fee_pct as u128 / 100) as u64;
-  
+        let arbitration_fee =
+            (trade.amount as u128 * _hub_config.arbitration_fee_pct as u128 / 100) as u64;
+
         // Calculate protocol fees (unconditionally)
         let fee_info = calculate_fees(_hub_config, trade.amount);
 
         // Calculate release amount after deducting arbitration fee and protocol fees
-        let release_amount = trade.amount
-            .checked_sub(arbitration_fee).ok_or(LocalMoneyError::FeeCalculationError)?
-            .checked_sub(fee_info.total_fees()).ok_or(LocalMoneyError::FeeCalculationError)?;
+        let release_amount = trade
+            .amount
+            .checked_sub(arbitration_fee)
+            .ok_or(LocalMoneyError::FeeCalculationError)?
+            .checked_sub(fee_info.total_fees())
+            .ok_or(LocalMoneyError::FeeCalculationError)?;
 
         // Security Check: Ensure outgoing amounts equal escrow balance
         let total_outgoing = release_amount
-            .checked_add(arbitration_fee).ok_or(LocalMoneyError::FeeCalculationError)?
-            .checked_add(fee_info.total_fees()).ok_or(LocalMoneyError::FeeCalculationError)?;
-        require!(total_outgoing == ctx.accounts.escrow_token_account.amount, LocalMoneyError::EscrowBalanceMismatch);
+            .checked_add(arbitration_fee)
+            .ok_or(LocalMoneyError::FeeCalculationError)?
+            .checked_add(fee_info.total_fees())
+            .ok_or(LocalMoneyError::FeeCalculationError)?;
+        require!(
+            total_outgoing == ctx.accounts.escrow_token_account.amount,
+            LocalMoneyError::EscrowBalanceMismatch
+        );
 
-        // --- Token Transfers --- 
+        // --- Token Transfers ---
         let seeds = &[
             TRADE_SEED,
             &_trade_id.to_le_bytes(),
             &[trade.bump], // Use trade bump, not authority bump from context
         ];
         let signer = &[&seeds[..]];
-        
+
         // 1. Transfer release amount to winner
         let transfer_winner_ix = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
@@ -671,7 +706,10 @@ pub mod trade {
         if fee_info.chain_amount > 0 {
             let transfer_chain_ix = Transfer {
                 from: ctx.accounts.escrow_token_account.to_account_info(),
-                to: ctx.accounts.chain_fee_collector_token_account.to_account_info(),
+                to: ctx
+                    .accounts
+                    .chain_fee_collector_token_account
+                    .to_account_info(),
                 authority: ctx.accounts.trade_authority.to_account_info(),
             };
             let transfer_chain_cpi_ctx = CpiContext::new_with_signer(
@@ -696,7 +734,7 @@ pub mod trade {
             );
             token::transfer(transfer_warchest_cpi_ctx, fee_info.warchest_amount)?;
         }
-        
+
         // 5. Burn Fee
         if fee_info.burn_amount > 0 {
             let burn_ix = anchor_spl::token::Burn {
@@ -704,26 +742,34 @@ pub mod trade {
                 from: ctx.accounts.escrow_token_account.to_account_info(),
                 authority: ctx.accounts.trade_authority.to_account_info(),
             };
-             let burn_cpi_ctx = CpiContext::new_with_signer(
+            let burn_cpi_ctx = CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 burn_ix,
                 signer,
             );
             anchor_spl::token::burn(burn_cpi_ctx, fee_info.burn_amount)?;
         }
-        
-        // --- Update Profile Counts --- 
+
+        // --- Update Profile Counts ---
         let winner_state = if winner_is_buyer {
             TradeState::SettledForTaker
         } else {
             TradeState::SettledForMaker
         };
-        
-        let winner_profile_info = if winner_is_buyer { ctx.accounts.buyer_profile.to_account_info() } else { ctx.accounts.seller_profile.to_account_info() };
+
+        let winner_profile_info = if winner_is_buyer {
+            ctx.accounts.buyer_profile.to_account_info()
+        } else {
+            ctx.accounts.seller_profile.to_account_info()
+        };
         let cpi_winner_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
             hub: ctx.accounts.hub_config.to_account_info(),
-            profile_owner: if winner_is_buyer { ctx.accounts.buyer_profile.to_account_info() } else { ctx.accounts.seller_profile.to_account_info() }, // Use winner's profile account info
+            profile_owner: if winner_is_buyer {
+                ctx.accounts.buyer_profile.to_account_info()
+            } else {
+                ctx.accounts.seller_profile.to_account_info()
+            }, // Use winner's profile account info
             profile: winner_profile_info,
         };
         // Define signer_seeds for profile CPIs using the config bump
@@ -735,21 +781,34 @@ pub mod trade {
             cpi_winner_accounts,
             signer_seeds, // Use the defined signer_seeds
         );
-        profile::cpi::update_trades_count(cpi_winner_ctx, UpdateTradesCountParams {
-            trade_state: winner_state,
-        })?;
-        
-        let loser_state = if winner_is_buyer { // Loser is seller
+        profile::cpi::update_trades_count(
+            cpi_winner_ctx,
+            UpdateTradesCountParams {
+                trade_state: winner_state,
+            },
+        )?;
+
+        let loser_state = if winner_is_buyer {
+            // Loser is seller
             TradeState::SettledForMaker
-        } else { // Loser is buyer
+        } else {
+            // Loser is buyer
             TradeState::SettledForTaker
         };
-        
-        let loser_profile_info = if winner_is_buyer { ctx.accounts.seller_profile.to_account_info() } else { ctx.accounts.buyer_profile.to_account_info() };
+
+        let loser_profile_info = if winner_is_buyer {
+            ctx.accounts.seller_profile.to_account_info()
+        } else {
+            ctx.accounts.buyer_profile.to_account_info()
+        };
         let cpi_loser_accounts = UpdateTradesCount {
             authority: ctx.accounts.trade_authority.to_account_info(),
             hub: ctx.accounts.hub_config.to_account_info(),
-            profile_owner: if winner_is_buyer { ctx.accounts.seller_profile.to_account_info() } else { ctx.accounts.buyer_profile.to_account_info() }, // Use loser's profile account info
+            profile_owner: if winner_is_buyer {
+                ctx.accounts.seller_profile.to_account_info()
+            } else {
+                ctx.accounts.buyer_profile.to_account_info()
+            }, // Use loser's profile account info
             profile: loser_profile_info,
         };
         // Re-use signer_seeds defined above
@@ -758,11 +817,18 @@ pub mod trade {
             cpi_loser_accounts,
             signer_seeds, // Use the same signer_seeds
         );
-        profile::cpi::update_trades_count(cpi_loser_ctx, UpdateTradesCountParams {
-            trade_state: loser_state,
-        })?;
-        
-        msg!("Dispute settled for trade {} by arbitrator {}", _trade_id, arbitrator);
+        profile::cpi::update_trades_count(
+            cpi_loser_ctx,
+            UpdateTradesCountParams {
+                trade_state: loser_state,
+            },
+        )?;
+
+        msg!(
+            "Dispute settled for trade {} by arbitrator {}",
+            _trade_id,
+            arbitrator
+        );
         msg!("Winner: {}", winner);
         Ok(())
     }
@@ -787,10 +853,10 @@ pub struct TradesCounter {
 pub struct RegisterHub<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     /// Hub program
     pub hub_program: Program<'info, SystemProgram>,
-    
+
     /// Hub configuration account
     #[account(
         seeds = [b"config"],
@@ -798,7 +864,7 @@ pub struct RegisterHub<'info> {
         seeds::program = hub_program.key(),
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Trade configuration PDA
     #[account(
         init_if_needed,
@@ -808,7 +874,7 @@ pub struct RegisterHub<'info> {
         bump
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Trade counter PDA for tracking number of trades
     #[account(
         init_if_needed,
@@ -818,7 +884,7 @@ pub struct RegisterHub<'info> {
         bump
     )]
     pub trades_counter: Account<'info, TradesCounter>,
-    
+
     pub system_program: Program<'info, SystemProgram>,
 }
 
@@ -833,7 +899,7 @@ pub struct RegisterHub<'info> {
 pub struct CreateTrade<'info> {
     #[account(mut)]
     pub taker: Signer<'info>,
-    
+
     /// Trade configuration account
     #[account(
         seeds = [b"config"],
@@ -841,10 +907,10 @@ pub struct CreateTrade<'info> {
         has_one = hub_program @ TradeError::InvalidHubProgram,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub program
     pub hub_program: Program<'info, SystemProgram>,
-    
+
     /// Hub configuration account
     #[account(
         seeds = [b"config"],
@@ -853,10 +919,10 @@ pub struct CreateTrade<'info> {
         constraint = hub_config.is_initialized @ TradeError::HubNotInitialized,
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Offer program
     pub offer_program: Program<'info, SystemProgram>,
-    
+
     /// Offer account
     #[account(
         seeds = [b"offer", offer.id.to_le_bytes().as_ref()],
@@ -868,7 +934,7 @@ pub struct CreateTrade<'info> {
         constraint = offer.min_amount <= amount @ TradeError::AmountTooSmall,
     )]
     pub offer: Account<'info, Offer>,
-    
+
     /// Denom price from price program
     /// This account is loaded by the client
     #[account(
@@ -877,7 +943,7 @@ pub struct CreateTrade<'info> {
         constraint = denom_price.price > 0 @ TradeError::InvalidPrice,
     )]
     pub denom_price: Account<'info, DenomFiatPrice>,
-    
+
     /// Arbitrator account (randomly selected)
     /// This account is loaded by the client
     /// CHECK: Arbitrator safety checks are performed in constraints.
@@ -887,7 +953,7 @@ pub struct CreateTrade<'info> {
         constraint = arbitrator.key() != offer.owner @ TradeError::ArbitratorCannotBeOfferOwner,
     )]
     pub arbitrator: AccountInfo<'info>,
-    
+
     /// Trade counter PDA for tracking number of trades
     #[account(
         mut,
@@ -895,7 +961,7 @@ pub struct CreateTrade<'info> {
         bump,
     )]
     pub trades_counter: Account<'info, TradesCounter>,
-    
+
     /// Trade account to be created
     #[account(
         init,
@@ -905,7 +971,7 @@ pub struct CreateTrade<'info> {
         bump,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     /// Trade authority PDA for CPI calls
     /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
@@ -913,11 +979,11 @@ pub struct CreateTrade<'info> {
         bump = trade_config.bump,
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Taker's profile account for updating contact and trade count
     #[account(
         mut,
@@ -927,7 +993,7 @@ pub struct CreateTrade<'info> {
         constraint = taker_profile.owner == taker.key() @ TradeError::InvalidProfileOwner,
     )]
     pub taker_profile: Account<'info, Profile>,
-    
+
     pub system_program: Program<'info, SystemProgram>,
 }
 
@@ -937,14 +1003,14 @@ pub struct CreateTrade<'info> {
 pub struct AcceptRequest<'info> {
     #[account(mut)]
     pub maker: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -952,7 +1018,7 @@ pub struct AcceptRequest<'info> {
         seeds::program = trade_config.hub_program,
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -962,7 +1028,7 @@ pub struct AcceptRequest<'info> {
         constraint = (trade.buyer == maker.key() || trade.seller == maker.key()) @ TradeError::Unauthorized,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     /// Trade authority PDA for CPI calls
     /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
@@ -970,11 +1036,11 @@ pub struct AcceptRequest<'info> {
         bump = trade_config.bump,
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Maker's profile account for updating contact and trade count
     #[account(
         mut,
@@ -984,7 +1050,7 @@ pub struct AcceptRequest<'info> {
         constraint = maker_profile.owner == maker.key() @ TradeError::InvalidProfileOwner,
     )]
     pub maker_profile: Account<'info, Profile>,
-    
+
     pub system_program: Program<'info, SystemProgram>,
 }
 
@@ -994,14 +1060,14 @@ pub struct AcceptRequest<'info> {
 pub struct FundEscrow<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -1009,7 +1075,7 @@ pub struct FundEscrow<'info> {
         seeds::program = trade_config.hub_program,
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1019,7 +1085,7 @@ pub struct FundEscrow<'info> {
         constraint = trade.seller == seller.key() @ TradeError::Unauthorized,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     /// Seller's token account
     #[account(
         mut,
@@ -1028,7 +1094,7 @@ pub struct FundEscrow<'info> {
         constraint = seller_token_account.amount >= trade.amount @ TradeError::InsufficientFunds,
     )]
     pub seller_token_account: Account<'info, TokenAccount>,
-    
+
     /// Escrow token account
     #[account(
         mut,
@@ -1044,11 +1110,11 @@ pub struct FundEscrow<'info> {
         bump = trade_config.bump,
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Seller's profile account for updating trade count
     #[account(
         mut,
@@ -1058,7 +1124,7 @@ pub struct FundEscrow<'info> {
         constraint = seller_profile.owner == seller.key() @ TradeError::InvalidProfileOwner,
     )]
     pub seller_profile: Account<'info, Profile>,
-    
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, SystemProgram>,
 }
@@ -1069,14 +1135,14 @@ pub struct FundEscrow<'info> {
 pub struct FiatDeposited<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -1084,7 +1150,7 @@ pub struct FiatDeposited<'info> {
         seeds::program = trade_config.hub_program,
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1094,7 +1160,7 @@ pub struct FiatDeposited<'info> {
         constraint = trade.buyer == buyer.key() @ TradeError::Unauthorized,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     pub system_program: Program<'info, SystemProgram>,
 }
 
@@ -1104,14 +1170,14 @@ pub struct FiatDeposited<'info> {
 pub struct ReleaseEscrow<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -1119,10 +1185,10 @@ pub struct ReleaseEscrow<'info> {
         seeds::program = trade_config.hub_program,
     )]
     pub hub_config: Box<Account<'info, HubConfig>>,
-    
+
     /// Offer program
     pub offer_program: Program<'info, SystemProgram>,
-    
+
     /// Offer account to verify if buyer is maker
     #[account(
         seeds = [b"offer", offer.id.to_le_bytes().as_ref()],
@@ -1130,7 +1196,7 @@ pub struct ReleaseEscrow<'info> {
         seeds::program = offer_program.key(),
     )]
     pub offer: Box<Account<'info, Offer>>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1141,7 +1207,7 @@ pub struct ReleaseEscrow<'info> {
         constraint = trade.state == TradeState::FiatDeposited @ TradeError::InvalidTradeState // Ensure correct state
     )]
     pub trade: Box<Account<'info, Trade>>,
-    
+
     /// Trade authority PDA that controls the escrow
     /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
@@ -1151,7 +1217,7 @@ pub struct ReleaseEscrow<'info> {
         // bump = trade.bump, // Use trade bump
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Escrow token account
     #[account(
         mut,
@@ -1159,7 +1225,7 @@ pub struct ReleaseEscrow<'info> {
         bump,
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
-    
+
     /// Seller's token account (was buyer's, corrected based on logic)
     #[account(
         mut,
@@ -1201,7 +1267,7 @@ pub struct ReleaseEscrow<'info> {
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Buyer's profile account for updating trade count
     #[account(
         mut,
@@ -1221,7 +1287,7 @@ pub struct ReleaseEscrow<'info> {
         constraint = seller_profile.owner == seller.key() @ TradeError::InvalidProfileOwner,
     )]
     pub seller_profile: Box<Account<'info, Profile>>,
-    
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, SystemProgram>,
 }
@@ -1232,14 +1298,14 @@ pub struct ReleaseEscrow<'info> {
 pub struct RefundEscrow<'info> {
     #[account(mut)]
     pub initiator: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -1247,7 +1313,7 @@ pub struct RefundEscrow<'info> {
         seeds::program = trade_config.hub_program,
     )]
     pub hub_config: Account<'info, HubConfig>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1257,7 +1323,7 @@ pub struct RefundEscrow<'info> {
         constraint = (initiator.key() == trade.buyer || initiator.key() == trade.seller) @ TradeError::Unauthorized,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     /// Trade authority PDA that controls the escrow
     /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
@@ -1265,7 +1331,7 @@ pub struct RefundEscrow<'info> {
         bump,
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Escrow token account
     #[account(
         mut,
@@ -1273,7 +1339,7 @@ pub struct RefundEscrow<'info> {
         bump,
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
-    
+
     /// Seller's token account to receive refund
     #[account(
         mut,
@@ -1281,11 +1347,11 @@ pub struct RefundEscrow<'info> {
         constraint = seller_token_account.mint == escrow_token_account.mint @ TradeError::InvalidTokenMint,
     )]
     pub seller_token_account: Account<'info, TokenAccount>,
-    
+
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Buyer's profile account for updating trade count
     #[account(
         mut,
@@ -1305,7 +1371,7 @@ pub struct RefundEscrow<'info> {
         constraint = seller_profile.owner == trade.seller @ TradeError::InvalidProfileOwner,
     )]
     pub seller_profile: Account<'info, Profile>,
-    
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, SystemProgram>,
 }
@@ -1316,14 +1382,14 @@ pub struct RefundEscrow<'info> {
 pub struct DisputeEscrow<'info> {
     #[account(mut)]
     pub trader: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
         bump,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1333,7 +1399,7 @@ pub struct DisputeEscrow<'info> {
         constraint = (trade.buyer == trader.key() || trade.seller == trader.key()) @ TradeError::Unauthorized,
     )]
     pub trade: Account<'info, Trade>,
-    
+
     pub system_program: Program<'info, SystemProgram>,
 }
 
@@ -1343,7 +1409,7 @@ pub struct DisputeEscrow<'info> {
 pub struct SettleDispute<'info> {
     #[account(mut)]
     pub arbitrator: Signer<'info>,
-    
+
     /// Trade configuration
     #[account(
         seeds = [b"config"],
@@ -1351,10 +1417,10 @@ pub struct SettleDispute<'info> {
         has_one = hub_program @ TradeError::InvalidHubProgram,
     )]
     pub trade_config: Account<'info, TradeConfig>,
-    
+
     /// Hub program
     pub hub_program: Program<'info, SystemProgram>,
-    
+
     /// Hub configuration
     #[account(
         seeds = [b"config"],
@@ -1363,10 +1429,10 @@ pub struct SettleDispute<'info> {
         constraint = hub_config.is_initialized @ TradeError::HubNotInitialized,
     )]
     pub hub_config: Box<Account<'info, HubConfig>>,
-    
+
     /// Offer program
     pub offer_program: Program<'info, SystemProgram>,
-    
+
     /// Offer account to verify if buyer is maker
     #[account(
         seeds = [b"offer", offer.id.to_le_bytes().as_ref()],
@@ -1376,7 +1442,7 @@ pub struct SettleDispute<'info> {
         constraint = offer.id == trade.offer_id @ TradeError::InvalidOffer,
     )]
     pub offer: Box<Account<'info, Offer>>,
-    
+
     /// Trade account
     #[account(
         mut,
@@ -1388,7 +1454,7 @@ pub struct SettleDispute<'info> {
         constraint = (winner == trade.buyer || winner == trade.seller) @ TradeError::InvalidWinner,
     )]
     pub trade: Box<Account<'info, Trade>>,
-    
+
     /// Trade authority PDA that controls the escrow
     /// CHECK: trade_authority PDA is checked via seeds constraint.
     #[account(
@@ -1397,7 +1463,7 @@ pub struct SettleDispute<'info> {
         // bump = trade.bump,
     )]
     pub trade_authority: AccountInfo<'info>,
-    
+
     /// Escrow token account
     #[account(
         mut,
@@ -1406,7 +1472,7 @@ pub struct SettleDispute<'info> {
         constraint = escrow_token_account.amount >= trade.amount @ TradeError::InsufficientEscrowFunds,
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
-    
+
     /// Buyer's token account
     #[account(
         mut,
@@ -1414,7 +1480,7 @@ pub struct SettleDispute<'info> {
         constraint = buyer_token_account.mint == escrow_token_account.mint @ TradeError::InvalidTokenMint,
     )]
     pub buyer_token_account: Account<'info, TokenAccount>,
-    
+
     /// Seller's token account
     #[account(
         mut,
@@ -1422,7 +1488,7 @@ pub struct SettleDispute<'info> {
         constraint = seller_token_account.mint == escrow_token_account.mint @ TradeError::InvalidTokenMint,
     )]
     pub seller_token_account: Account<'info, TokenAccount>,
-    
+
     /// Arbitrator's token account for fee
     #[account(
         mut,
@@ -1455,7 +1521,7 @@ pub struct SettleDispute<'info> {
     /// Profile program for CPI calls
     /// CHECK: profile_program is checked via address constraints or CPI call.
     pub profile_program: AccountInfo<'info>,
-    
+
     /// Buyer's profile account for updating trade count
     #[account(
         mut,
@@ -1475,7 +1541,7 @@ pub struct SettleDispute<'info> {
         constraint = seller_profile.owner == trade.seller @ TradeError::InvalidProfileOwner,
     )]
     pub seller_profile: Box<Account<'info, Profile>>,
-    
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, SystemProgram>,
 }
@@ -1485,7 +1551,7 @@ fn calculate_fees(hub_config: &HubConfig, amount: u64) -> FeeInfo {
     let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 / 100) as u64;
     let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 / 100) as u64;
     let warchest_amount = (amount as u128 * hub_config.warchest_fee_pct as u128 / 100) as u64;
-    
+
     FeeInfo {
         burn_amount,
         chain_amount,
@@ -1556,4 +1622,4 @@ pub enum TradeError {
     #[msg("Invalid Offer ID for this trade.")]
     InvalidOffer,
     // Add other custom errors as needed during development
-} 
+}

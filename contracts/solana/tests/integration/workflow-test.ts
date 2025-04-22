@@ -5,16 +5,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MINT_SIZE, TOKEN_PROGRAM_ID, createInitializeMintInstruction, getMinimumBalanceForRentExemptMint, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createMintToInstruction } from "@solana/spl-token";
 import * as borsh from 'borsh';
+import { PROGRAM_IDS } from "../config";
 
 describe("LocalMoney Workflow Test", () => {
-  // Program IDs from Anchor.toml
-  const programIds = {
-    hub: new PublicKey("FHVko2rGMf6x2Tw6WSCbJBY8wLNymfSFqjtgESmvivwG"),
-    offer: new PublicKey("GaupCSNN86LpjFQYiLhYGBsXPwWxUW3XmRGdBLkr1tMn"),
-    price: new PublicKey("51GmuXVNFTveMq1UtrmzWT8q564YjBKD5Zx2zbsMaWHG"),
-    profile: new PublicKey("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq"),
-    trade: new PublicKey("kXcoGbvG1ib18vK6YLdkbEdnc9NsqrhAS256yhreacB")
-  };
+  // Program IDs from config
+  const programIds = PROGRAM_IDS;
   
   // Test accounts
   const admin = Keypair.generate();

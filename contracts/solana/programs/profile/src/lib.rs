@@ -1,10 +1,10 @@
 use anchor_lang::prelude::*;
-use localmoney_shared::{constants::*, errors::*, profile::*};
-use localmoney_shared::trade::TradeState;
-use localmoney_shared::offer::OfferState;
 use anchor_lang::solana_program::clock::Clock;
+use localmoney_shared::offer::OfferState;
+use localmoney_shared::trade::TradeState;
+use localmoney_shared::{constants::*, errors::*, hub::*, profile::*};
 
-declare_id!("3FDN5CZQZrBydRA9wW2UAif4p3xmP1VQwkg97Bc8CrNq");
+declare_id!("14QsEiiC1GDujKagkJ316P81dJUQ7QxsQrzz7ggQg7qQ");
 
 #[program]
 pub mod profile {
@@ -13,10 +13,10 @@ pub mod profile {
     /// Initialize the profile program
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let profile_config = &mut ctx.accounts.profile_config;
-        
+
         profile_config.hub_authority = ctx.accounts.hub_authority.key();
         profile_config.bump = ctx.bumps.profile_config;
-        
+
         Ok(())
     }
 
@@ -28,99 +28,99 @@ pub mod profile {
             ctx.accounts.profile_config.hub_authority == ctx.accounts.hub_authority.key(),
             LocalMoneyError::Unauthorized
         );
-        
+
         Ok(())
     }
 
     /// Create or update a user's profile contact information
-    pub fn update_contact(
-        ctx: Context<UpdateContact>, 
-        params: UpdateContactParams
-    ) -> Result<()> {
+    pub fn update_contact(ctx: Context<UpdateContact>, params: UpdateContactParams) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
         let clock = Clock::get()?;
-        
+
         // Initialize profile if it's new
         if profile.created_at == 0 {
             profile.created_at = clock.unix_timestamp;
         }
-        
+
         profile.contact = Some(params.contact);
         profile.encryption_key = Some(params.encryption_key);
-        
+
         Ok(())
     }
 
     /// Update the trades count for a profile based on a trade state change
     pub fn update_trades_count(
         ctx: Context<UpdateTradesCount>,
-        params: UpdateTradesCountParams
+        params: UpdateTradesCountParams,
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
         let clock = Clock::get()?;
-        
+
         // Only the trade program should be able to call this
         // We verify this through the constraints in the account struct
-        
+
         match params.trade_state {
             TradeState::RequestCreated => {
                 profile.requested_trades_count += 1;
                 // Check if active trades limit is reached
-                if profile.active_trades_count >= ctx.accounts.hub.config.active_trades_limit.into() {
+                if profile.active_trades_count >= ctx.accounts.hub.config.active_trades_limit.into()
+                {
                     return Err(LocalMoneyError::ActiveTradesLimitReached.into());
                 }
-            },
+            }
             TradeState::RequestAccepted | TradeState::EscrowFunded => {
                 // Check if active trades limit is reached
-                if profile.active_trades_count < ctx.accounts.hub.config.active_trades_limit.into() {
+                if profile.active_trades_count < ctx.accounts.hub.config.active_trades_limit.into()
+                {
                     profile.active_trades_count += 1;
                 } else {
                     return Err(LocalMoneyError::ActiveTradesLimitReached.into());
                 }
-            },
-            TradeState::EscrowCanceled | 
-            TradeState::EscrowRefunded | 
-            TradeState::SettledForMaker | 
-            TradeState::SettledForTaker => {
+            }
+            TradeState::EscrowCanceled
+            | TradeState::EscrowRefunded
+            | TradeState::SettledForMaker
+            | TradeState::SettledForTaker => {
                 // Decrease active trades when finished
                 if profile.active_trades_count > 0 {
                     profile.active_trades_count -= 1;
                 }
-            },
+            }
             TradeState::EscrowReleased => {
                 profile.released_trades_count += 1;
                 // Decrease active trades when finished
                 if profile.active_trades_count > 0 {
                     profile.active_trades_count -= 1;
                 }
-            },
+            }
             _ => {}
         }
-        
+
         profile.last_trade = clock.unix_timestamp;
-        
+
         Ok(())
     }
 
     /// Update the active offers count for a profile based on an offer state change
     pub fn update_active_offers(
         ctx: Context<UpdateActiveOffers>,
-        params: UpdateActiveOffersParams
+        params: UpdateActiveOffersParams,
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
-        
+
         // Only the offer program should be able to call this
         // We verify this through the constraints in the account struct
-        
+
         match params.offer_state {
             OfferState::Active => {
                 // Check if active offers limit is reached
-                if profile.active_offers_count < ctx.accounts.hub.config.active_offers_limit.into() {
+                if profile.active_offers_count < ctx.accounts.hub.config.active_offers_limit.into()
+                {
                     profile.active_offers_count += 1;
                 } else {
                     return Err(LocalMoneyError::ActiveOffersLimitReached.into());
                 }
-            },
+            }
             OfferState::Paused | OfferState::Archive | OfferState::Closed => {
                 // Decrease active offers when paused, archived or closed
                 if profile.active_offers_count > 0 {
@@ -128,7 +128,7 @@ pub mod profile {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -138,11 +138,11 @@ pub mod profile {
 pub struct Initialize<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     /// Hub authority for validating program interactions
     /// CHECK: Just used as a reference for validation
     pub hub_authority: UncheckedAccount<'info>,
-    
+
     /// Profile configuration account
     #[account(
         init,
@@ -152,7 +152,7 @@ pub struct Initialize<'info> {
         bump
     )]
     pub profile_config: Account<'info, ProfileConfig>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -161,10 +161,10 @@ pub struct Initialize<'info> {
 pub struct RegisterHub<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     /// CHECK: Hub authority account verified in the function
     pub hub_authority: UncheckedAccount<'info>,
-    
+
     #[account(
         seeds = [PROFILE_CONFIG_SEED],
         bump = profile_config.bump,
@@ -177,10 +177,10 @@ pub struct RegisterHub<'info> {
 pub struct UpdateContact<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     /// CHECK: Hub config containing trade and offer program addresses
     pub hub_config: UncheckedAccount<'info>,
-    
+
     /// Profile account to update
     #[account(
         init_if_needed,
@@ -190,7 +190,7 @@ pub struct UpdateContact<'info> {
         bump,
     )]
     pub profile: Account<'info, Profile>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -216,7 +216,7 @@ pub struct UpdateTradesCount<'info> {
     /// The profile owner
     /// CHECK: Just a reference, not used for signing
     pub profile_owner: UncheckedAccount<'info>,
-    
+
     /// Profile account to update
     #[account(
         mut,
@@ -248,7 +248,7 @@ pub struct UpdateActiveOffers<'info> {
     /// The profile owner
     /// CHECK: Just a reference, not used for signing
     pub profile_owner: UncheckedAccount<'info>,
-    
+
     /// Profile account to update
     #[account(
         mut,
@@ -270,4 +270,4 @@ pub struct UpdateActiveOffers<'info> {
 // fn derive_offer_authority() -> (Pubkey, u8) {
 //     // Implementation depends on Offer program's authority structure
 //     (Pubkey::default(), 0)
-// } 
+// }
