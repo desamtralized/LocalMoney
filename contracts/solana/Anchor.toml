@@ -6,11 +6,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hub = "CeUJv3YczYt8EeXvvcHNf1UZjSGapLc77XHQPqEMMSLP"
-offer = "Frq3AZaxxRDncWbrKf6PBjEYREMp8tLQuzD1XUBNcLUZ"
-price = "FVnKLFiYQFzCFJkGnn5ptEAXszQRfxVPuV7wBFhcFRHY"
-profile = "14QsEiiC1GDujKagkJ316P81dJUQ7QxsQrzz7ggQg7qQ"
-trade = "FyCprmE9zhs29WRN48Y4cpK4dX552uKWwnzapu9bVLbM"
+hub = "3dF7ebo6DErpveMLxGAg6KTkTanGYLHmVXvqTWkqhpmL"
+offer = "8V7KPa396tMUbU1HpuGGWAWMddfsuQ5K5vLMnxdAurFv"
+price = "HpUVnehKAfNRzC12m9EYwhwjMwbWKTbcaCwPpwVGoNrC"
+profile = "HNKH412Fsfe8vdBudCnsbmB9PwYxcxYfktfmyTWgiKbd"
+trade = "c4zS4D2VUbXrp48rUVWTSuFbJf9iSdd4Qn2aJSyBpXN"
 
 [registry]
 url = "https://api.apr.dev"
@@ -20,13 +20,7 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = [
-    "programs/hub",
-    "programs/offer",
-    "programs/trade",
-    "programs/price",
-    "programs/profile",
-]
+members = ["programs/hub", "programs/offer", "programs/trade", "programs/price", "programs/profile"]
 
 [scripts]
 test = "ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"

@@ -35,8 +35,8 @@ pub struct PriceConfig {
 #[account]
 pub struct CurrencyPrice {
     pub currency: FiatCurrency,
-    pub usd_price: u64,         // Price in USD * PRICE_SCALE
-    pub updated_at: i64,        // Unix timestamp of last update
+    pub usd_price: u64,  // Price in USD * PRICE_SCALE
+    pub updated_at: i64, // Unix timestamp of last update
     pub bump: u8,
 }
 
@@ -54,18 +54,20 @@ impl CurrencyPrice {
 // Price route for token conversion
 #[account]
 pub struct PriceRoute {
-    pub offer_asset_mint: Pubkey,     // The asset being offered
-    pub ask_asset_mint: Pubkey,       // The asset being requested
-    pub pool: Pubkey,                 // The AMM/DEX pool address
+    pub offer_asset_mint: Pubkey, // The asset being offered
+    pub ask_asset_mint: Pubkey,   // The asset being requested
+    pub pool: Pubkey,             // The AMM/DEX pool address
     pub bump: u8,
 }
 
 impl ToString for PriceRoute {
     fn to_string(&self) -> String {
-        format!("{:?}->{:?} via {:?}", 
-            self.offer_asset_mint.to_string(), 
+        format!(
+            "{:?}->{:?} via {:?}",
+            self.offer_asset_mint.to_string(),
             self.ask_asset_mint.to_string(),
-            self.pool.to_string())
+            self.pool.to_string()
+        )
     }
 }
 
@@ -74,8 +76,8 @@ impl ToString for PriceRoute {
 pub struct DenomFiatPrice {
     pub token_mint: Pubkey,
     pub fiat: FiatCurrency,
-    pub price: u64,           // Price scaled by PRICE_SCALE
+    pub price: u64, // Price scaled by PRICE_SCALE
 }
 
 // Constants
-pub const PRICE_SCALE: u64 = 1_000_000;    // 6 decimal places 
+pub const PRICE_SCALE: u64 = 1_000_000; // 6 decimal places

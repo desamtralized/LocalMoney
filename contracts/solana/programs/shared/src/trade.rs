@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::pubkey::Pubkey;
 
 // Corrected imports
-use crate::price::FiatCurrency; 
+use crate::price::FiatCurrency;
 
 // NOTE: Definition for 'Denom' is currently missing and needs to be added.
 //       It might be intended to be 'Pubkey'.
@@ -59,7 +59,7 @@ pub struct NewTrade {
     pub amount: u64,
     pub taker: Pubkey,
     pub profile_taker_contact: String,
-    pub profile_taker_encryption_key: String, 
+    pub profile_taker_encryption_key: String,
     pub taker_contact: String,
 }
 
@@ -93,7 +93,7 @@ pub struct Trade {
     pub id: u64,
     pub buyer: Pubkey,
     pub buyer_contact: Option<String>,
-    pub seller: Pubkey, 
+    pub seller: Pubkey,
     pub seller_contact: Option<String>,
     pub arbitrator: Pubkey,
     pub arbitrator_buyer_contact: Option<String>,
@@ -200,4 +200,4 @@ pub struct TradeResponse {
 /// Utility function to calculate denom fiat price
 pub fn calc_denom_fiat_price(offer_rate: u64, denom_fiat_price: u128) -> u128 {
     offer_rate as u128 * denom_fiat_price / 100
-} 
+}

@@ -40,4 +40,4 @@ pub fn derive_hub_address(program_id: &Pubkey) -> (Pubkey, u8) {
 // Authority PDA that allows cross program invocation
 pub fn derive_authority_address(program_id: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(&[b"authority"], program_id)
-} 
+}

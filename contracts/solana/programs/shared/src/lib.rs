@@ -10,4 +10,4 @@ pub mod offer;
 pub mod price;
 pub mod profile;
 pub mod trade;
-pub mod utils; 
+pub mod utils;

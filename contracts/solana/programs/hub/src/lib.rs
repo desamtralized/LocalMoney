@@ -1,7 +1,9 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{create_account, CreateAccount};
+use anchor_lang::solana_program::rent::Rent;
 use localmoney_shared::{constants::*, errors::LocalMoneyError, hub::*};
 
-declare_id!("CeUJv3YczYt8EeXvvcHNf1UZjSGapLc77XHQPqEMMSLP");
+declare_id!("3dF7ebo6DErpveMLxGAg6KTkTanGYLHmVXvqTWkqhpmL");
 
 #[program]
 pub mod hub {
@@ -9,15 +11,75 @@ pub mod hub {
 
     // Initialize the hub program
     pub fn initialize(ctx: Context<Initialize>, config: HubConfig) -> Result<()> {
-        // Validate configuration
+        // Validate configuration first
         validate_config(&config)?;
-
-        // Set the admin and config in the hub account
-        let hub = &mut ctx.accounts.hub;
-        hub.admin = ctx.accounts.admin.key();
-        hub.config = config;
-        hub.bump = ctx.bumps.hub;
-
+        
+        // Debugging logs
+        msg!("Initializing hub with params:");
+        msg!("Hub address: {}", ctx.accounts.hub.key());
+        msg!("Hub bump: {}", ctx.bumps.hub);
+        msg!("Admin: {}", ctx.accounts.admin.key());
+        
+        // Check if the account already exists
+        let hub_info = &ctx.accounts.hub;
+        let hub_data_len = hub_info.data_len();
+        
+        msg!("Hub data length: {}", hub_data_len);
+        msg!("Hub owner: {}", hub_info.owner);
+        
+        // If account doesn't exist yet (data length is 0), create it
+        if hub_data_len == 0 {
+            msg!("Creating new hub account");
+            
+            // Calculate the space needed
+            let space = 8 + std::mem::size_of::<Hub>();
+            
+            // Calculate the rent required
+            let rent = Rent::get()?;
+            let lamports = rent.minimum_balance(space);
+            
+            // Create account with system program
+            msg!("Creating account with {} lamports and {} space", lamports, space);
+            let hub_seeds = &[b"hub" as &[u8], &[ctx.bumps.hub]];
+            let hub_signer = &[&hub_seeds[..]];
+            
+            create_account(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    CreateAccount {
+                        from: ctx.accounts.admin.to_account_info(),
+                        to: ctx.accounts.hub.to_account_info(),
+                    },
+                    hub_signer,
+                ),
+                lamports,
+                space as u64,
+                ctx.program_id,
+            )?;
+            
+            msg!("Account created successfully");
+        } else {
+            // If account exists, verify ownership
+            if hub_info.owner != ctx.program_id {
+                msg!("Hub account owned by wrong program: {}", hub_info.owner);
+                return Err(LocalMoneyError::Unauthorized.into());
+            }
+            msg!("Hub account already exists and is owned by program");
+        }
+        
+        // Create a Hub struct and initialize it
+        let mut hub = Hub {
+            admin: ctx.accounts.admin.key(),
+            config,
+            bump: ctx.bumps.hub
+        };
+        
+        // Serialize the struct to the account data
+        let hub_data = &mut hub_info.try_borrow_mut_data()?;
+        let dst: &mut [u8] = &mut hub_data[..];
+        let mut cursor = std::io::Cursor::new(dst);
+        hub.try_serialize(&mut cursor)?;
+        
         msg!("Hub initialized with admin: {}", hub.admin);
         Ok(())
     }
@@ -72,18 +134,18 @@ fn validate_config(config: &HubConfig) -> Result<()> {
 
 // Context for initializing the hub
 #[derive(Accounts)]
+#[instruction(config: HubConfig)]
 pub struct Initialize<'info> {
     #[account(mut)]
     pub admin: Signer<'info>,
 
+    /// CHECK: We're checking this account in the instruction handler
     #[account(
-        init,
-        payer = admin,
-        space = 8 + std::mem::size_of::<Hub>(),
+        mut, 
         seeds = [b"hub"],
         bump
     )]
-    pub hub: Account<'info, Hub>,
+    pub hub: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 }

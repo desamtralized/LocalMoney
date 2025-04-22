@@ -1,6 +1,6 @@
-use anchor_lang::prelude::*;
-use crate::trade::TradeState;
 use crate::offer::OfferState;
+use crate::trade::TradeState;
+use anchor_lang::prelude::*;
 
 #[account]
 pub struct ProfileConfig {
@@ -53,4 +53,4 @@ pub struct UpdateTradesCountParams {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct UpdateActiveOffersParams {
     pub offer_state: OfferState,
-} 
+}

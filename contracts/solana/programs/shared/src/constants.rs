@@ -10,4 +10,4 @@ pub const PRICE_CONFIG_SEED: &[u8] = b"price_config"; // For price config PDA
 pub const PRICE_ROUTE_SEED: &[u8] = b"price_route"; // For price route PDA
 pub const CURRENCY_PRICE_SEED: &[u8] = b"currency_price"; // For currency price PDA
 pub const PROFILE_CONFIG_SEED: &[u8] = b"profile_config"; // For profile config PDA
-pub const PROFILE_SEED: &[u8] = b"profile"; // For profile PDA 
+pub const PROFILE_SEED: &[u8] = b"profile"; // For profile PDA

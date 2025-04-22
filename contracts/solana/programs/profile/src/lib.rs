@@ -2,9 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::clock::Clock;
 use localmoney_shared::offer::OfferState;
 use localmoney_shared::trade::TradeState;
-use localmoney_shared::{constants::*, errors::*, hub::*, profile::*};
+use localmoney_shared::{constants::*, errors::*, profile::*};
 
-declare_id!("14QsEiiC1GDujKagkJ316P81dJUQ7QxsQrzz7ggQg7qQ");
+declare_id!("HNKH412Fsfe8vdBudCnsbmB9PwYxcxYfktfmyTWgiKbd");
 
 #[program]
 pub mod profile {

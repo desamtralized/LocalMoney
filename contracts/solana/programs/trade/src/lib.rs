@@ -15,7 +15,7 @@ use profile::cpi::accounts::{UpdateContact, UpdateTradesCount};
 // Use the ID constant directly when needed
 use profile::ID as PROFILE_ID;
 
-declare_id!("FyCprmE9zhs29WRN48Y4cpK4dX552uKWwnzapu9bVLbM");
+declare_id!("c4zS4D2VUbXrp48rUVWTSuFbJf9iSdd4Qn2aJSyBpXN");
 
 #[program]
 pub mod trade {

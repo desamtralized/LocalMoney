@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use localmoney_shared::{constants::*, errors::LocalMoneyError, price::*};
 
-declare_id!("FVnKLFiYQFzCFJkGnn5ptEAXszQRfxVPuV7wBFhcFRHY");
+declare_id!("HpUVnehKAfNRzC12m9EYwhwjMwbWKTbcaCwPpwVGoNrC");
 
 #[program]
 pub mod price {

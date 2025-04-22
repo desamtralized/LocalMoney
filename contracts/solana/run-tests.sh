@@ -12,6 +12,11 @@
 # Exit on error
 set -e
 
+# Always stop existing validator first to ensure reset if needed
+echo "🛑 Attempting to stop any running local validator..."
+pkill -f solana-test-validator || true
+sleep 2 # Give time for the process to terminate
+
 # Parse command line arguments
 SKIP_BUILD=false
 TEST_SUITE="full-lifecycle"
@@ -69,13 +74,13 @@ check_validator_running() {
     fi
 }
 
-# Check if validator is already running
+# Check if validator is already running (should be false now unless manually started *after* pkill)
 if check_validator_running; then
-    echo "✅ Validator already running at http://localhost:8899"
+    echo "✅ Validator already running at http://localhost:8899" # This path should ideally not be taken now
 else
-    echo "🧹 Cleaning up previous validator instances..."
-    pkill -f solana-test-validator || true
-    sleep 2
+    echo "🧹 Cleaning up previous validator instances (redundant check)..."
+    # pkill -f solana-test-validator || true # Already done above
+    # sleep 2
 
     # Create log directory if it doesn't exist
     mkdir -p test-ledger
@@ -106,6 +111,16 @@ fi
 # Set Solana config to use localhost
 echo "⚙️ Configuring Solana to use localhost..."
 solana config set --url localhost
+
+# Export environment variables for Anchor provider
+export ANCHOR_PROVIDER_URL=http://localhost:8899
+# Assuming the default keypair path is used for testing, 
+# otherwise, this needs to point to the correct test wallet keypair
+export ANCHOR_WALLET=/root/.config/solana/id.json 
+
+echo "⚓ Anchor environment variables set:"
+echo "ANCHOR_PROVIDER_URL: $ANCHOR_PROVIDER_URL"
+echo "ANCHOR_WALLET: $ANCHOR_WALLET"
 
 # Build and deploy programs if not skipped
 if [ "$SKIP_BUILD" = false ]; then
@@ -161,7 +176,7 @@ if [ "$SKIP_BUILD" = true ]; then
     echo "⏩ Running tests without build and deploy..."
     case $TEST_SUITE in
         "full-lifecycle")
-            npm run run-full-lifecycle:no-build
+            npm run setup-test-env:no-build && npm run test:direct:full-lifecycle
             ;;
         "integration")
             npm run setup-test-env:no-build && npm run test:direct:integration
@@ -181,41 +196,42 @@ if [ "$SKIP_BUILD" = true ]; then
             fi
             ;;
         "all")
-            npm run run-all-tests:no-build
+            npm run setup-test-env:no-build && npm run test:direct:all
             ;;
         *)
             echo "❌ Unknown test suite: $TEST_SUITE. Using default (full-lifecycle)."
-            npm run run-full-lifecycle:no-build
+            npm run setup-test-env:no-build && npm run test:direct:full-lifecycle
             ;;
     esac
 else
+    echo "⚙️ Running tests WITH build and deploy..."
     case $TEST_SUITE in
         "full-lifecycle")
-            npm run run-full-lifecycle
+            npm run setup-test-env:no-build && npm run test:direct:full-lifecycle
             ;;
         "integration")
-            npm run run-integration-tests
+            npm run setup-test-env:no-build && npm run test:direct:integration
             ;;
         "unit")
-            npm run run-unit-tests
+            npm run setup-test-env:no-build && npm run test:direct:unit
             ;;
         "hub")
-            npm run run-hub-tests
+            npm run setup-test-env:no-build && npm run test:direct:hub
             ;;
         "anchor")
             if [ "$USE_ANCHOR_CLIENT" = true ]; then
-                npm run setup-test-env && npm run test:anchor
+                npm run setup-test-env:no-build && npm run test:anchor
             else
                 echo "❌ Anchor suite requires --anchor-client flag"
                 exit 1
             fi
             ;;
         "all")
-            npm run run-all-tests
+            npm run setup-test-env:no-build && npm run test:direct:all
             ;;
         *)
             echo "❌ Unknown test suite: $TEST_SUITE. Using default (full-lifecycle)."
-            npm run run-full-lifecycle
+            npm run setup-test-env:no-build && npm run test:direct:full-lifecycle
             ;;
     esac
 fi
