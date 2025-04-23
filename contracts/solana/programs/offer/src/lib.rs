@@ -174,7 +174,8 @@ pub struct Initialize<'info> {
     )]
     pub offer_counter: Account<'info, OfferCounter>,
 
-    pub hub_program: Program<'info, System>,
+    /// CHECK: Account used to derive the program address for constraint checks
+    pub hub_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -233,7 +234,8 @@ pub struct CreateOffer<'info> {
     )]
     pub profile: Account<'info, localmoney_shared::profile::Profile>,
 
-    pub hub_program: Program<'info, System>,
+    /// CHECK: Account used to derive the program address for constraint checks
+    pub hub_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 

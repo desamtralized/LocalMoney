@@ -104,7 +104,8 @@ async function main() {
       console.log("\nBuilding and deploying programs...");
       
       try {
-        execSync("anchor build", { stdio: "inherit" });
+        // Specify localnet cluster for build
+        execSync("anchor build --provider.cluster localnet", { stdio: "inherit" });
         console.log("✅ Build completed");
       } catch (err) {
         console.error("❌ Build failed:", err);
@@ -112,7 +113,8 @@ async function main() {
       }
       
       try {
-        execSync("anchor deploy", { stdio: "inherit" });
+        // Specify localnet cluster for deploy
+        execSync("anchor deploy --provider.cluster localnet", { stdio: "inherit" });
         console.log("✅ Deployment completed");
       } catch (err) {
         console.error("❌ Deployment failed:", err);
