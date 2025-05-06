@@ -6,7 +6,11 @@
     "module": "commonjs",
     "target": "es6",
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "strict": true,
-    "resolveJsonModule": true
-  }
-} 
+    "skipLibCheck": true,
+    "outDir": "./dist"
+  },
+  "include": ["tests/**/*"],
+  "exclude": ["node_modules"]
+}

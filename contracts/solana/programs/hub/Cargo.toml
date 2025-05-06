@@ -1,12 +1,12 @@
 [package]
-name = "localmoney-price"
+name = "localmoney-hub"
 version = "0.1.0"
-description = "LocalMoney Price - Oracle for fiat and on-chain asset price feeds and conversion routes"
+description = "LocalMoney Hub - Central configuration, admin and registration orchestration"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "localmoney_price"
+name = "localmoney_hub"
 
 [features]
 default = []
@@ -16,5 +16,6 @@ no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
+
 [dependencies]
-anchor-lang = "0.31.1"
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }

@@ -1,29 +1,21 @@
 [package]
-name = "trade"
+name = "localmoney-trade"
 version = "0.1.0"
-description = "Created with Anchor"
+description = "LocalMoney Trade - P2P trade lifecycle, escrow, disputes, and settlements"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "trade"
+name = "localmoney_trade"
 
 [features]
+default = []
+cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = "0.29.0"
-anchor-spl = "0.29.0"
-solana-program = "1.17"
-common = { path = "../../common" }
-price = { path = "../price", features = ["cpi"] }
-profile = { path = "../profile", features = ["cpi"] }
-
-[dev-dependencies]
-solana-program-test = "1.17"
-solana-sdk = "1.17"
-tokio = { version = "1.14", features = ["full"] }
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"

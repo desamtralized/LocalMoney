@@ -1,36 +1,23 @@
 use anchor_lang::prelude::*;
-use solana_program::msg;
 
-declare_id!("8uzArQW1YiLwh2CLQhMU1Ya774EMEbdbpgux6Tf8z1rn");
+declare_id!("FG8y6dbLj9jxitE9jbairdd79XkiyNoj8u7gRjothJiC");
 
 #[program]
-pub mod price {
+pub mod localmoney_price {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let state = &mut ctx.accounts.state;
-        state.admin = ctx.accounts.admin.key();
-        state.price_provider = ctx.accounts.admin.key(); // Initially set to admin
-        state.is_initialized = true;
-        state.prices = Vec::new();
+        msg!("Initializing LocalMoney Price program");
+        Ok(())
+    }
 
-        msg!("Price oracle initialized successfully");
+    pub fn register_hub(ctx: Context<RegisterHub>, hub_addr: Pubkey) -> Result<()> {
+        msg!("Registering Hub: {}", hub_addr);
         Ok(())
     }
 
     pub fn update_prices(ctx: Context<UpdatePrices>, prices: Vec<CurrencyPrice>) -> Result<()> {
-        let oracle = &mut ctx.accounts.oracle;
-
-        // Validate the price provider
-        require!(
-            ctx.accounts.price_provider.key() == oracle.price_provider,
-            PriceError::InvalidPriceProvider
-        );
-
-        // Update all prices
-        oracle.prices = prices.clone();
-
-        msg!("Updated {} prices in the oracle", prices.len());
+        msg!("Updating prices for {} currencies", prices.len());
         Ok(())
     }
 
@@ -39,138 +26,56 @@ pub mod price {
         denom: String,
         route: Vec<PriceRoute>,
     ) -> Result<()> {
-        let route_data = &mut ctx.accounts.route_data;
-        route_data.denom = denom;
-        route_data.route = route;
-
-        msg!("Price route registered successfully");
-        Ok(())
-    }
-
-    pub fn verify_price_for_trade(
-        ctx: Context<VerifyPrice>,
-        trade_price: u64,
-        currency: String,
-        tolerance_bps: u16, // Basis points (1/10000) of allowed deviation
-    ) -> Result<()> {
-        let oracle = &ctx.accounts.oracle;
-        require!(oracle.is_initialized, PriceError::NotInitialized);
-
-        // Find the reference price for the given currency
-        let reference_price = oracle
-            .prices
-            .iter()
-            .find(|p| p.currency == currency)
-            .ok_or(PriceError::PriceNotFound)?;
-
-        // Calculate allowed deviation range
-        let tolerance = (reference_price.usd_price as u128)
-            .checked_mul(tolerance_bps as u128)
-            .unwrap_or(0)
-            .checked_div(10000)
-            .unwrap_or(0) as u64;
-
-        let min_allowed = reference_price.usd_price.saturating_sub(tolerance);
-        let max_allowed = reference_price.usd_price.saturating_add(tolerance);
-
-        require!(
-            trade_price >= min_allowed && trade_price <= max_allowed,
-            PriceError::PriceOutOfRange
-        );
-
-        msg!(
-            "Price verified successfully within {}bps tolerance",
-            tolerance_bps
-        );
+        msg!("Registering price route for denom: {}", denom);
         Ok(())
     }
 }
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(
-        init,
-        payer = admin,
-        space = 8 + // discriminator
-            1 + // is_initialized
-            32 + // admin
-            32 + // price_provider
-            4 + // vec length
-            10 * (4 + 32 + 8 + 8) // space for 10 prices (string length + string + price + timestamp)
-    )]
-    pub state: Account<'info, PriceState>,
     #[account(mut)]
-    pub admin: Signer<'info>,
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RegisterHub<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct UpdatePrices<'info> {
     #[account(mut)]
-    pub oracle: Account<'info, PriceState>,
-    #[account(
-        constraint = price_provider.key() == oracle.price_provider @ PriceError::InvalidPriceProvider
-    )]
-    pub price_provider: Signer<'info>,
-}
-
-#[derive(Accounts)]
-pub struct RegisterPriceRoute<'info> {
-    #[account(init, payer = admin, space = 8 + std::mem::size_of::<PriceRouteData>())]
-    pub route_data: Account<'info, PriceRouteData>,
-    #[account(mut, has_one = admin)]
-    pub state: Account<'info, PriceState>,
-    #[account(mut)]
-    pub admin: Signer<'info>,
+    pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct VerifyPrice<'info> {
-    pub oracle: Account<'info, PriceState>,
+pub struct RegisterPriceRoute<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
-#[account]
-#[derive(Default)]
-pub struct PriceState {
-    pub is_initialized: bool,
-    pub admin: Pubkey,
-    pub price_provider: Pubkey,
-    pub prices: Vec<CurrencyPrice>,
-}
-
-#[account]
-pub struct PriceRouteData {
-    pub denom: String,
-    pub route: Vec<PriceRoute>,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CurrencyPrice {
-    pub currency: String,
+    pub currency: [u8; 3], // 3-letter currency code
+    pub usd_price: u64,    // USD price with 6 decimals
+    pub updated_at: i64,   // Unix timestamp
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct PriceRoute {
+    pub pool: Pubkey,
+    pub ask_asset: String,
+    pub offer_asset: String,
+}
+
+#[account]
+pub struct FiatPrice {
+    pub currency: [u8; 3],
     pub usd_price: u64,
     pub updated_at: i64,
 }
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct PriceRoute {
-    pub offer_asset: String,
-    pub pool: Pubkey,
-}
-
-#[error_code]
-pub enum PriceError {
-    #[msg("Price oracle is not initialized")]
-    NotInitialized,
-    #[msg("Invalid price provider")]
-    InvalidPriceProvider,
-    #[msg("Invalid price route configuration")]
-    InvalidPriceRoute,
-    #[msg("Price not found for the specified currency")]
-    PriceNotFound,
-    #[msg("Trade price is outside allowed range")]
-    PriceOutOfRange,
-}
-
-// Re-export for CPI
-pub use price::*;

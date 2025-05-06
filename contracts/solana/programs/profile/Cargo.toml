@@ -1,21 +1,20 @@
 [package]
-name = "profile"
+name = "localmoney-profile"
 version = "0.1.0"
-description = "Created with Anchor"
+description = "LocalMoney Profile - Manage user profiles, contacts, and counters"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "profile"
+name = "localmoney_profile"
 
 [features]
+default = []
+cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
+idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = "0.29.0"
-solana-program = "1.17"
-common = { path = "../../common" }
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
