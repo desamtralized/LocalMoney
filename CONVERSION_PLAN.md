@@ -86,12 +86,12 @@ LocalMoney/contracts/solana/
   - [x] Implement `get_price` query with pool CPI integration
   - [x] Write tests to verify on-chain and fiat price consistency
 
-- [x] M5: Trade Lifecycle
+- [-] M5: Trade Lifecycle
   - [x] Define Trade PDA and account struct
   - [x] Implement `create_trade` and `accept_trade` instructions
   - [x] Implement `fund_trade` and `deposit_trade` instructions *(corresponds to `fund_trade_escrow` and `confirm_payment_sent` which are implemented and compile)*
   - [x] Add state transition checks and profile CPI counters *(State checks and CPI calls to Profile implemented)*
-  - [-] Write integration tests for full trade lifecycle *(Integration test file `trade.ts` created; `anchor build` now successful, IDL should be stable for testing, CPIs added)*
+  - [x] Write integration tests for full trade lifecycle *(Integration test file trade.ts created; anchor build now successful, IDL should be stable for testing, CPIs added, basic lifecycle tests implemented)*
 
 - [ ] M6: Trade Settlement & Dispute
   - [x] Implement `release_escrow` with fee distribution logic *(Core instruction, fee logic, and Profile CPI calls implemented and compile)*

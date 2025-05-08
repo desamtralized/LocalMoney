@@ -1017,37 +1017,93 @@ pub struct AcceptTrade<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(_trade_id_arg: u64)] // trade_id_arg is used for PDA derivation of trade_account
+#[instruction(_trade_id_arg: u64)] // Ensure _trade_id_arg is available for seeds if needed directly
 pub struct FundTradeEscrow<'info> {
     #[account(mut)]
-    pub funder: Signer<'info>, // This is the trade_account.seller
+    pub funder: Signer<'info>, // This is the trade_account.seller, also seller's profile authority for CPI
 
     #[account(
         mut,
         seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
         bump = trade_account.bump,
-        constraint = trade_account.seller == funder.key() @ TradeError::NotTradeSeller
+        constraint = trade_account.seller == funder.key() @ TradeError::NotTradeSeller,
+        // Ensure buyer is correctly referenced for buyer_profile derivation
+        // constraint = trade_account.buyer == buyer_profile.owner_address if ProfileAccountData has owner_address
+        // or ensure buyer_profile seeds use trade_account.buyer
     )]
     pub trade_account: Account<'info, Trade>,
 
     // SPL Token specific accounts - Conditionally provided by client if escrow_type is Spl
-    #[account(mut)] // Funder's token account, must be mutable for transfer
+    #[account(mut)]
     pub funder_token_account: Option<Account<'info, TokenAccount>>,
 
-    #[account(mut)] // Escrow vault, must be mutable to receive tokens
-                  // Client ensures this is an ATA with trade_account as authority if creating.
-                  // Or, if already exists, client passes the correct one.
-                  // Program verifies owner == trade_account.key() for SPL case.
+    #[account(mut)]
     pub escrow_vault_token_account: Option<Account<'info, TokenAccount>>,
 
     pub token_program: Option<Program<'info, Token>>,
-    pub system_program: Program<'info, System>, // Required for native SOL transfer & potentially ATA rent
-    // Rent and AssociatedTokenProgram are not strictly needed here if client handles ATA creation
-    // and we simply verify the escrow_vault_token_account.owner.
-    // If we wanted to use init_if_needed with constraints in THIS struct, they'd be needed.
-    // For simplicity, we rely on client providing these if SPL and then verify.
-    // pub rent: Option<Sysvar<'info, Rent>>,
-    // pub associated_token_program: Option<Program<'info, anchor_spl::associated_token::AssociatedToken>>,
+    pub system_program: Program<'info, System>,
+
+    // Accounts for Profile CPI
+    pub profile_program: Program<'info, ProfileProgram>,
+
+    // Seller's Profile (funder is the seller)
+    #[account(
+        mut,
+        seeds = [b"profile", funder.key().as_ref()], // funder.key() is trade_account.seller
+        bump = seller_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Account<'info, ProfileAccountData>,
+
+    // Buyer's Profile
+    #[account(
+        mut,
+        seeds = [b"profile", trade_account.buyer.as_ref()],
+        bump = buyer_profile.bump,
+        seeds::program = profile_program.key()
+        // constraint = buyer_profile.authority == trade_account.buyer @ TradeError::GenericError // Checked by profile program
+    )]
+    pub buyer_profile: Account<'info, ProfileAccountData>,
+
+    /// CHECK: This is trade_account.buyer, used as profile_authority for buyer's profile CPI.
+    /// The Profile program's UpdateTradesCount constraint will verify this.
+    #[account(address = trade_account.buyer @ TradeError::GenericError)]
+    pub buyer_profile_authority_account_info: AccountInfo<'info>,
+    
+    // HubConfig for Profile CPI context
+    // trade_global_state is needed to get trade_global_state.hub_address
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config_for_profile_cpi.bump,
+        seeds::program = trade_global_state.hub_address // Hub Program ID from trade_global_state
+    )]
+    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>,
+
+    /// CHECK: This is the Hub Program ID (trade_global_state.hub_address).
+    #[account(address = trade_global_state.hub_address @ TradeError::GenericError)]
+    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
+
+    // ProfileGlobalState for seller's profile CPI
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state_for_seller.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_seller: Account<'info, ProfileGlobalStateAccount>,
+
+    // ProfileGlobalState for buyer's profile CPI
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state_for_buyer.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_buyer: Account<'info, ProfileGlobalStateAccount>,
 }
 
 #[derive(Accounts)]
