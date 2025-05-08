@@ -1,22 +1,19 @@
 [package]
-name = "localmoney-offer"
+name = "offer"
 version = "0.1.0"
-description = "LocalMoney Offer - Create, update, and query trade offers"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "localmoney_offer"
+name = "offer"
 
 [features]
-default = []
-cpi = []
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
-anchor-spl = { version = "0.31.1", features = ["metadata"] }
-localmoney-profile = { path = "../profile", features = ["cpi"] }
+anchor-lang = "0.31.1"

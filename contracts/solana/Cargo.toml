@@ -1,10 +1,6 @@
 [workspace]
 members = [
-    "programs/hub",
-    "programs/offer",
-    "programs/profile",
-    "programs/price",
-    "programs/trade",
+    "programs/*"
 ]
 resolver = "2"
 

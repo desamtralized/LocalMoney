@@ -1,487 +1,387 @@
 use anchor_lang::prelude::*;
-use localmoney_profile::client_cpi;
-use localmoney_profile::client_cpi::accounts_def as profile_client_accounts;
-use localmoney_profile::program::LocalmoneyProfile;
 
-declare_id!("6mya23vFa1BwWhmxuPqmM51wPe53VK2Ct3eA6bPyLZqJ"); // Updated Program ID
-
-pub mod constants {
-    pub const ACTIVE: u8 = 0;
-    pub const PAUSED: u8 = 1;
-    pub const ARCHIVED: u8 = 2;
-}
-
-pub mod state {
-    use super::*;
-
-    #[account]
-    pub struct OfferConfig {
-        pub hub_addr: Pubkey,
-        pub offers_count: u64,
-        pub is_initialized: bool,
-        pub bump: u8,
-    }
-
-    impl OfferConfig {
-        pub const SPACE: usize = 8 +  // Discriminator
-            32 +                      // hub_addr
-            8 +                       // offers_count
-            1 +                       // is_initialized
-            1; // bump
-    }
-}
-
-pub mod cpi;
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"); // Example ID, replace with actual
 
 #[program]
-pub mod localmoney_offer {
+pub mod offer {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Initializing LocalMoney Offer program");
-        let config = &mut ctx.accounts.offer_config;
-        config.offers_count = 0;
-        config.bump = ctx.bumps.offer_config;
+    pub fn initialize_offer_global_state(ctx: Context<InitializeOfferGlobalState>) -> Result<()> {
+        ctx.accounts.offer_global_state.offers_count = 0;
+        ctx.accounts.offer_global_state.hub_address = Pubkey::default(); // Signifies not yet registered
+        ctx.accounts.offer_global_state.bump = ctx.bumps.offer_global_state;
         Ok(())
     }
 
-    pub fn register_hub(ctx: Context<RegisterHub>, hub_addr: Pubkey) -> Result<()> {
-        let config = &mut ctx.accounts.offer_config;
+    pub fn register_hub(ctx: Context<RegisterHub>, hub_program_address: Pubkey) -> Result<()> {
+        require!(
+            ctx.accounts.offer_global_state.hub_address == Pubkey::default(),
+            OfferError::HubAlreadyRegistered
+        );
+        // TODO: Add a check to ensure ctx.accounts.hub_program.key() == hub_program_address
+        // And that hub_program is actually the Hub Program. This might involve a CPI to the Hub
+        // to get its official address or verifying its executable flag / owner.
+        // For now, we trust the authority calling this and the provided hub_program_address.
+        // A more robust check would involve the Hub program calling this instruction itself,
+        // or the authority being the admin of the Hub program.
 
-        // Ensure this is only called once
-        require!(!config.is_initialized, OfferError::AlreadyInitialized);
+        // The authority calling this should be a trusted party (e.g., global admin, or the Hub program via CPI)
+        // For now, we assume the `authority` signer is the one authorized to set the Hub address.
+        // In a real scenario, this authority might be the Hub program itself via CPI, or a multisig admin.
 
-        // Verify that the caller is actually the hub program
-        // This would typically verify the CPI context, but we'll keep it simple for now
-
-        // Set hub address and mark as initialized
-        config.hub_addr = hub_addr;
-        config.is_initialized = true;
-
-        msg!("Hub registered: {}", hub_addr);
+        ctx.accounts.offer_global_state.hub_address = hub_program_address;
         Ok(())
     }
 
-    pub fn create(
+    pub fn create_offer(
         ctx: Context<CreateOffer>,
-        offer_type: u8,
+        owner_contact: String,
+        owner_encryption_key: String,
+        offer_type: OfferType,
         fiat_currency: String,
         rate: u64,
         denom: String,
         min_amount: u64,
         max_amount: u64,
         description: String,
-        owner_contact: String,
-        owner_encryption_key: String,
     ) -> Result<()> {
-        // Validate inputs
-        require!(min_amount <= max_amount, OfferError::InvalidAmountRange);
-        require!(description.len() <= 255, OfferError::DescriptionTooLong);
-        require!(fiat_currency.len() == 3, OfferError::InvalidFiatCurrency);
-        require!(denom.len() <= 20, OfferError::InvalidDenom);
-        require!(owner_contact.len() <= 100, OfferError::ContactTooLong);
         require!(
-            owner_encryption_key.len() <= 255,
-            OfferError::EncryptionKeyTooLong
+            ctx.accounts.offer_global_state.hub_address != Pubkey::default(),
+            OfferError::HubNotRegistered
         );
+        require!(
+            min_amount <= max_amount,
+            OfferError::MinAmountExceedsMaxAmount
+        );
+        // Length checks for strings are implicitly handled by #[max_len] on Offer struct with #[derive(InitSpace)]
+        // when using init. If not using init_if_needed or realloc, ensure inputs fit.
 
-        let config = &mut ctx.accounts.offer_config;
-        let offer_id = config.offers_count;
+        let offer_global_state = &mut ctx.accounts.offer_global_state;
+        let new_offer_id = offer_global_state.offers_count;
 
-        config.offers_count = config
+        offer_global_state.offers_count = offer_global_state
             .offers_count
             .checked_add(1)
-            .ok_or(OfferError::OfferCountOverflow)?;
+            .ok_or(OfferError::OfferIdOverflow)?;
 
         let offer = &mut ctx.accounts.offer;
-        offer.id = offer_id;
+        offer.id = new_offer_id;
         offer.owner = ctx.accounts.owner.key();
-        offer.offer_type = offer_type;
-
-        // Convert fiat currency string to fixed bytes
-        let mut fiat_bytes = [0u8; 3];
-        for (i, byte) in fiat_currency.as_bytes().iter().enumerate().take(3) {
-            fiat_bytes[i] = *byte;
-        }
-        offer.fiat_currency = fiat_bytes;
-
-        // Set other offer fields
+        offer.owner_contact = owner_contact.clone(); // Clone for event
+        offer.owner_encryption_key = owner_encryption_key.clone(); // Clone for event
+        offer.offer_type = offer_type.clone(); // Clone for event
+        offer.fiat_currency = fiat_currency;
         offer.rate = rate;
         offer.denom = denom;
         offer.min_amount = min_amount;
         offer.max_amount = max_amount;
         offer.description = description;
-        offer.state = constants::ACTIVE;
-        offer.owner_contact = owner_contact.clone();
-        offer.owner_encryption_key = owner_encryption_key.clone();
-        offer.created_at = Clock::get()?.unix_timestamp;
-        offer.updated_at = Clock::get()?.unix_timestamp;
+        offer.state = OfferStateAnchor::Active;
         offer.bump = ctx.bumps.offer;
 
-        msg!("Offer created with ID: {}", offer_id);
+        // Emit event for profile update (contact & active offers count)
+        emit!(OfferProfileUpdateRequest {
+            offer_id: new_offer_id,
+            owner: offer.owner,
+            owner_contact: Some(offer.owner_contact.clone()),
+            owner_encryption_key: Some(offer.owner_encryption_key.clone()),
+            offer_state_change: Some(OfferStateChange {
+                old_state: None, // New offer, so no old state
+                new_state: OfferStateAnchor::Active,
+            }),
+            action_type: ProfileUpdateActionType::CreateOffer,
+        });
+
+        // TODO: Implement actual CPI to Profile program for:
+        // 1. Update contact (owner_contact, owner_encryption_key)
+        // 2. Increment active_offers_count for the owner
+        // This will require Profile program IDL and account contexts.
+
         msg!(
-            "Offer::create - owner key for CPI (userA): {}",
+            "Offer #{} created by {}",
+            new_offer_id,
             ctx.accounts.owner.key()
         );
-
-        // CPI calls removed from here
-
-        Ok(())
-    }
-
-    pub fn update_profile_after_offer_creation(
-        ctx: Context<UpdateProfileAfterOfferCreation>,
-    ) -> Result<()> {
-        // Ensure offer owner matches signer
-        require_keys_eq!(
-            ctx.accounts.offer.owner,
-            ctx.accounts.owner.key(),
-            OfferError::Unauthorized
-        );
-
-        // CPI to Profile program to update contact info
-        msg!("Updating profile contact via CPI (from update_profile_after_offer_creation)");
-        let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
-        let cpi_accounts_update_contact = profile_client_accounts::UpdateContact {
-            authority: ctx.accounts.owner.to_account_info(), // Use owner signer as CPI authority
-            profile_owner: ctx.accounts.owner.to_account_info(), // Use owner key for profile PDA derivation
-            profile_config: ctx.accounts.profile_config_account.to_account_info(),
-            profile: ctx.accounts.user_profile.to_account_info(), // The user's profile PDA
-            system_program: ctx.accounts.system_program.to_account_info(),
-        };
-        let cpi_ctx_update_contact =
-            CpiContext::new(cpi_program_profile.clone(), cpi_accounts_update_contact);
-        client_cpi::update_contact(
-            cpi_ctx_update_contact,
-            ctx.accounts.offer.owner_contact.clone(), // Get contact from offer data
-            ctx.accounts.offer.owner_encryption_key.clone(), // Get key from offer data
-        )?;
-
-        // CPI to Profile program to update active offers count
-        msg!("Updating active offers count via CPI (from update_profile_after_offer_creation)");
-        let cpi_accounts_update_offers = profile_client_accounts::UpdateActiveOffers {
-            authority: ctx.accounts.owner.to_account_info(),
-            profile_owner: ctx.accounts.owner.to_account_info(),
-            profile_config: ctx.accounts.profile_config_account.to_account_info(),
-            hub_config: ctx.accounts.hub_config_account.to_account_info(),
-            profile: ctx.accounts.user_profile.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-        };
-        let cpi_ctx_update_offers =
-            CpiContext::new(cpi_program_profile, cpi_accounts_update_offers);
-        // Assuming new offers are created in the ACTIVE state (use correct constant)
-        profile_client_cpi::update_active_offers(cpi_ctx_update_offers, constants::OFFER_ACTIVE)?;
-
         Ok(())
     }
 
     pub fn update_offer(
         ctx: Context<UpdateOffer>,
-        rate: Option<u64>,
-        min_amount: Option<u64>,
-        max_amount: Option<u64>,
-        description: Option<String>,
-        state: Option<u8>,
-        owner_contact: Option<String>,
-        owner_encryption_key: Option<String>,
+        owner_contact_update: Option<String>,
+        owner_encryption_key_update: Option<String>,
+        rate_update: Option<u64>,
+        min_amount_update: Option<u64>,
+        max_amount_update: Option<u64>,
+        description_update: Option<String>,
+        state_update: Option<OfferStateAnchor>,
     ) -> Result<()> {
         let offer = &mut ctx.accounts.offer;
-        let old_state = offer.state;
+        let mut contact_changed = false;
+        let mut state_changed = false;
+        let old_state = offer.state.clone();
 
-        // Debug logging for profile CPI
-        msg!("Offer::update_offer - owner: {}", ctx.accounts.owner.key());
-        let expected_profile_pda = Pubkey::find_program_address(
-            &[b"profile", ctx.accounts.owner.key().as_ref()],
-            ctx.accounts.profile_program.key,
-        )
-        .0;
-        msg!(
-            "Offer::update_offer - expected profile PDA: {}",
-            expected_profile_pda
-        );
-        msg!(
-            "Offer::update_offer - user_profile account passed in: {}",
-            ctx.accounts.user_profile.key()
-        );
-
-        // Apply updates if provided
-        if let Some(new_rate) = rate {
-            offer.rate = new_rate;
+        if let Some(contact) = owner_contact_update {
+            if offer.owner_contact != contact {
+                offer.owner_contact = contact;
+                contact_changed = true;
+            }
+        }
+        if let Some(key) = owner_encryption_key_update {
+            if offer.owner_encryption_key != key {
+                offer.owner_encryption_key = key;
+                contact_changed = true; // Assuming key change also implies contact details update for profile
+            }
+        }
+        if let Some(r) = rate_update {
+            offer.rate = r;
+        }
+        if let Some(desc) = description_update {
+            offer.description = desc;
+        }
+        if let Some(s) = state_update {
+            if offer.state != s {
+                offer.state = s;
+                state_changed = true;
+            }
         }
 
-        if let Some(new_min) = min_amount {
-            offer.min_amount = new_min;
+        let mut current_min = offer.min_amount;
+        let mut current_max = offer.max_amount;
+        let mut min_max_updated = false;
+
+        if let Some(min_val) = min_amount_update {
+            current_min = min_val;
+            min_max_updated = true;
+        }
+        if let Some(max_val) = max_amount_update {
+            current_max = max_val;
+            min_max_updated = true;
         }
 
-        if let Some(new_max) = max_amount {
-            // Validate min <= max after updates
-            let min = offer.min_amount;
-            require!(min <= new_max, OfferError::InvalidAmountRange);
-            offer.max_amount = new_max;
-        }
-
-        if let Some(new_desc) = description {
-            require!(new_desc.len() <= 255, OfferError::DescriptionTooLong);
-            offer.description = new_desc;
-        }
-
-        // Handle state changes specifically (Active, Paused, Archived)
-        if let Some(new_state) = state {
+        if min_max_updated {
             require!(
-                new_state <= constants::ARCHIVED,
-                OfferError::InvalidOfferState
+                current_min <= current_max,
+                OfferError::MinAmountExceedsMaxAmount
             );
-            offer.state = new_state;
-
-            // CPI to Profile if offer activeness changed
-            if (old_state == constants::ACTIVE && new_state != constants::ACTIVE)
-                || (old_state != constants::ACTIVE && new_state == constants::ACTIVE)
-            {
-                msg!("Updating active offers count via CPI due to state change");
-                let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
-                let cpi_accounts_update_offers = profile_client_accounts::UpdateActiveOffers {
-                    authority: ctx.accounts.owner.to_account_info(),
-                    profile_owner: ctx.accounts.owner.to_account_info(),
-                    profile_config: ctx.accounts.profile_config_account.to_account_info(),
-                    hub_config: ctx.accounts.hub_config_account.to_account_info(),
-                    profile: ctx.accounts.user_profile.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                };
-                let cpi_ctx_update_offers =
-                    CpiContext::new(cpi_program_profile.clone(), cpi_accounts_update_offers);
-                client_cpi::update_active_offers(cpi_ctx_update_offers, new_state)?;
-            }
+            offer.min_amount = current_min;
+            offer.max_amount = current_max;
         }
 
-        // Update contact info if provided
-        let contact_changed = owner_contact.is_some() || owner_encryption_key.is_some();
-        if contact_changed {
-            let new_contact = owner_contact.unwrap_or_else(|| offer.owner_contact.clone());
-            let new_key =
-                owner_encryption_key.unwrap_or_else(|| offer.owner_encryption_key.clone());
-
-            if offer.owner_contact != new_contact || offer.owner_encryption_key != new_key {
-                msg!("Updating profile contact via CPI due to contact change");
-                offer.owner_contact = new_contact.clone();
-                offer.owner_encryption_key = new_key.clone();
-
-                let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
-                let cpi_accounts_update_contact = profile_client_accounts::UpdateContact {
-                    authority: ctx.accounts.owner.to_account_info(),
-                    profile_owner: ctx.accounts.owner.to_account_info(),
-                    profile_config: ctx.accounts.profile_config_account.to_account_info(),
-                    profile: ctx.accounts.user_profile.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                };
-                let cpi_ctx_update_contact =
-                    CpiContext::new(cpi_program_profile, cpi_accounts_update_contact);
-                client_cpi::update_contact(cpi_ctx_update_contact, new_contact, new_key)?;
-            }
+        if contact_changed || state_changed {
+            emit!(OfferProfileUpdateRequest {
+                offer_id: offer.id,
+                owner: offer.owner,
+                owner_contact: if contact_changed {
+                    Some(offer.owner_contact.clone())
+                } else {
+                    None
+                },
+                owner_encryption_key: if contact_changed {
+                    Some(offer.owner_encryption_key.clone())
+                } else {
+                    None
+                },
+                offer_state_change: if state_changed {
+                    Some(OfferStateChange {
+                        old_state: Some(old_state),
+                        new_state: offer.state.clone(),
+                    })
+                } else {
+                    None
+                },
+                action_type: ProfileUpdateActionType::UpdateOffer,
+            });
+            // TODO: Implement actual CPI to Profile program for:
+            // 1. Update contact (if changed)
+            // 2. Update active_offers_count (if state changed impacting active status)
+            // This will require Profile program IDL and account contexts.
         }
 
-        // Update timestamp
-        offer.updated_at = Clock::get()?.unix_timestamp;
-
-        msg!("Offer {} updated", offer.id);
+        msg!(
+            "Offer #{} updated by {}",
+            offer.id,
+            ctx.accounts.owner.key()
+        );
         Ok(())
     }
+
+    // Instructions will be added in subsequent tasks
+    // e.g., update_offer
 }
 
 #[derive(Accounts)]
-pub struct Initialize<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
+pub struct InitializeOfferGlobalState<'info> {
     #[account(
-        init_if_needed,
-        payer = payer,
-        space = state::OfferConfig::SPACE,
-        seeds = [b"offer-config"],
-        bump,
+        init,
+        payer = authority,
+        space = OfferGlobalState::SPACE,
+        seeds = [b"offer_global_state"],
+        bump
     )]
-    pub offer_config: Account<'info, state::OfferConfig>,
-
+    pub offer_global_state: Account<'info, OfferGlobalState>,
+    #[account(mut)]
+    pub authority: Signer<'info>, // Typically the deployer or program admin
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct RegisterHub<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
     #[account(
         mut,
-        seeds = [b"offer-config"],
-        bump = offer_config.bump,
+        seeds = [b"offer_global_state"],
+        bump = offer_global_state.bump,
     )]
-    pub offer_config: Account<'info, state::OfferConfig>,
-
-    pub system_program: Program<'info, System>,
+    pub offer_global_state: Account<'info, OfferGlobalState>,
+    // This authority should be the Hub program admin or the Hub program via CPI.
+    // For simplicity in this step, we assume a general authority signer.
+    // In a CosmWasm SubMsg context, the Hub program would be the sender.
+    pub authority: Signer<'info>,
+    // Potentially, the Hub program account itself to verify it's executable and the correct one.
+    // pub hub_program: AccountInfo<'info> // Or Program<'info, Hub> if its IDL is available
 }
 
 #[derive(Accounts)]
+#[instruction(owner_contact: String, owner_encryption_key: String, offer_type: OfferType, fiat_currency: String, rate: u64, denom: String, min_amount: u64, max_amount: u64, description: String)]
 pub struct CreateOffer<'info> {
-    #[account(mut)]
-    pub owner: Signer<'info>,
-
-    #[account(
-        mut,
-        seeds = [b"offer-config"],
-        bump = offer_config.bump,
-        constraint = offer_config.is_initialized @ OfferError::NotInitialized,
-    )]
-    pub offer_config: Account<'info, state::OfferConfig>,
-
     #[account(
         init,
         payer = owner,
-        space = Offer::SPACE,
-        seeds = [
-            b"offer",
-            offer_config.offers_count.to_le_bytes().as_ref()
-        ],
-        bump,
+        space = 8 + Offer::INIT_SPACE, // 8 for discriminator, Offer::INIT_SPACE for the rest
+        seeds = [b"offer", &offer_global_state.offers_count.to_le_bytes()[..]], // Use current count as ID for seed before increment
+        bump
     )]
     pub offer: Account<'info, Offer>,
-
-    // Accounts for CPI to Profile program
-    pub profile_program: Program<'info, LocalmoneyProfile>,
-    #[account(mut)]
-    /// CHECK: Initialized by profile program if needed, should be mutable for CPI updates
-    pub user_profile: AccountInfo<'info>,
-    #[account(mut)] // profile_config is needed as mut by Profile's update_contact
-    /// CHECK: Read/written by profile program (update_contact needs it mut)
-    pub profile_config_account: AccountInfo<'info>,
-    /// CHECK: Read by profile program
-    pub hub_config_account: AccountInfo<'info>,
-
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct UpdateOffer<'info> {
-    pub owner: Signer<'info>,
-
     #[account(
         mut,
-        seeds = [b"offer", offer.id.to_le_bytes().as_ref()],
+        seeds = [b"offer_global_state"],
+        bump = offer_global_state.bump,
+    )]
+    pub offer_global_state: Account<'info, OfferGlobalState>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+// Instruction data args are not needed here as they are passed directly to the function
+// and used to fetch the Offer account with its ID.
+pub struct UpdateOffer<'info> {
+    #[account(
+        mut,
+        seeds = [b"offer", &offer.id.to_le_bytes()], // offer.id must be resolved from a passed arg or another account
         bump = offer.bump,
-        constraint = offer.owner == owner.key() @ OfferError::Unauthorized,
+        has_one = owner @ OfferError::NotOfferOwner // Ensures the signer is the owner of the offer
     )]
     pub offer: Account<'info, Offer>,
-
-    // Accounts for CPI to Profile program
-    pub profile_program: Program<'info, LocalmoneyProfile>,
-    #[account(mut)]
-    /// CHECK: Read/written by profile program
-    pub user_profile: AccountInfo<'info>,
-    #[account(mut)] // profile_config is needed as mut by Profile's update_contact
-    /// CHECK: Read/written by profile program (update_contact needs it mut)
-    pub profile_config_account: AccountInfo<'info>,
-    /// CHECK: Read by profile program
-    pub hub_config_account: AccountInfo<'info>,
-
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct UpdateProfileAfterOfferCreation<'info> {
-    #[account(mut)] // Offer owner needs to sign to trigger this update
+    // The owner of the offer must sign the transaction.
     pub owner: Signer<'info>,
-    #[account(
-        mut, // Offer might be mutated if state changes are involved later, keep mut for now
-        seeds = [b"offer", owner.key().as_ref(), offer.offer_id.to_le_bytes().as_ref()],
-        bump = offer.bump,
-        constraint = offer.owner == owner.key() @ OfferError::Unauthorized // Added constraint for safety
-    )]
-    pub offer: Account<'info, state::Offer>,
-
-    // Accounts needed for CPIs to Profile
-    pub profile_program: Program<'info, LocalmoneyProfile>,
-    #[account(mut)]
-    /// CHECK: Passed to profile program CPI, checked there.
-    pub user_profile: AccountInfo<'info>,
-    #[account(mut)] // Needs to be mut for UpdateContact init_if_needed payer
-    /// CHECK: Passed to profile program CPI, checked there.
-    pub profile_config_account: AccountInfo<'info>,
-    /// CHECK: Passed to profile program CPI, checked there.
-    pub hub_config_account: AccountInfo<'info>,
-    pub system_program: Program<'info, System>,
+    // No system_program needed unless reallocating, which we are not doing here for simplicity.
+    // If string fields could grow beyond their initial `max_len` in `Offer::INIT_SPACE`,
+    // realloc would be necessary, involving system_program and careful space management.
 }
 
-#[derive(Accounts)]
-pub struct UpdateOfferState<'info> {
-    // ... existing struct ...
-}
-
+// Account to store the global count of offers, used for generating new offer IDs.
+// PDA seeds: [b"offer_global_state"]
 #[account]
-pub struct Offer {
-    pub id: u64,
-    pub owner: Pubkey,
-    pub offer_type: u8,         // 0: Buy, 1: Sell
-    pub fiat_currency: [u8; 3], // 3-letter currency code
-    pub rate: u64,              // Rate relative to fiat currency
-    pub denom: String,          // Token/currency denom (max 20 chars)
-    pub min_amount: u64,
-    pub max_amount: u64,
-    pub description: String,          // Max 255 chars
-    pub state: u8,                    // 0: Active, 1: Paused, 2: Archived
-    pub owner_contact: String,        // Max 100 chars
-    pub owner_encryption_key: String, // Max 255 chars
-    pub created_at: i64,              // Unix timestamp
-    pub updated_at: i64,              // Unix timestamp
-    pub bump: u8,
+pub struct OfferGlobalState {
+    pub offers_count: u64,   // Counter for total offers created
+    pub hub_address: Pubkey, // Address of the central Hub program, Pubkey::default() if not registered
+    pub bump: u8,            // PDA bump seed
 }
 
-impl Offer {
-    pub const SPACE: usize = 8 +   // Discriminator
-        8 +                        // id
-        32 +                       // owner
-        1 +                        // offer_type
-        3 +                        // fiat_currency
-        8 +                        // rate
-        4 + 20 +                   // denom (String with max 20 chars)
-        8 +                        // min_amount
-        8 +                        // max_amount
-        4 + 255 +                  // description (String with max 255 chars)
-        1 +                        // state
-        4 + 100 +                  // owner_contact (String with max 100 chars)
-        4 + 255 +                  // owner_encryption_key (String with max 255 chars)
-        8 +                        // created_at
-        8 +                        // updated_at
-        1; // bump
+impl OfferGlobalState {
+    // Anchor discriminator + u64 + Pubkey + u8
+    pub const SPACE: usize = 8 + 8 + 32 + 1;
+}
+
+// Represents a trade offer on the platform.
+// PDA seeds: [b"offer", &id.to_le_bytes()]
+#[account]
+#[derive(InitSpace)]
+pub struct Offer {
+    pub id: u64,       // Unique identifier for the offer
+    pub owner: Pubkey, // Pubkey of the offer creator
+    #[max_len(100)]
+    pub owner_contact: String, // Contact information of the owner
+    #[max_len(100)]
+    pub owner_encryption_key: String, // Encryption key for secure communication with the owner
+    pub offer_type: OfferType, // Type of offer (Buy or Sell)
+    #[max_len(8)]
+    pub fiat_currency: String, // Fiat currency for the trade (e.g., "USD")
+    pub rate: u64,     // Exchange rate (e.g., fiat units per smallest unit of denom)
+    #[max_len(8)]
+    pub denom: String, // Cryptocurrency or token being traded (e.g., "SOL", "USDC")
+    pub min_amount: u64, // Minimum amount of denom that can be traded
+    pub max_amount: u64, // Maximum amount of denom that can be traded
+    #[max_len(280)]
+    pub description: String, // Description of the offer
+    pub state: OfferStateAnchor, // Current state of the offer
+    pub bump: u8,      // PDA bump seed
+}
+
+// Enum defining the type of an offer.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+pub enum OfferType {
+    Buy,  // User wants to buy the specified denom using fiat_currency
+    Sell, // User wants to sell the specified denom for fiat_currency
+}
+
+// Enum defining the state of an offer.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+pub enum OfferStateAnchor {
+    Active,   // Offer is currently active and can be taken
+    Paused,   // Offer is temporarily paused by the owner
+    Archived, // Offer is archived and no longer active
 }
 
 #[error_code]
 pub enum OfferError {
-    #[msg("Offer is not initialized")]
-    NotInitialized,
-    #[msg("Unauthorized")]
-    Unauthorized,
-    #[msg("Invalid amount range, min_amount must be less than or equal to max_amount")]
-    InvalidAmountRange,
-    #[msg("Description is too long, max 255 characters")]
+    #[msg("Offer ID counter overflow.")]
+    OfferIdOverflow,
+    #[msg("Description is too long.")]
     DescriptionTooLong,
-    #[msg("Invalid fiat currency, must be 3 characters")]
-    InvalidFiatCurrency,
-    #[msg("Invalid denom, max 20 characters")]
-    InvalidDenom,
-    #[msg("Contact information too long, max 100 characters")]
-    ContactTooLong,
-    #[msg("Encryption key too long, max 255 characters")]
-    EncryptionKeyTooLong,
-    #[msg("Offer count has overflowed")]
-    OfferCountOverflow,
-    #[msg("Invalid offer state")]
-    InvalidOfferState,
-    #[msg("Hub program ID mismatch in config")]
-    HubProgramMismatch,
-    #[msg("Profile program ID mismatch in config")]
-    ProfileProgramMismatch,
-    #[msg("Generic error for debugging")]
-    GenericError,
-    #[msg("User profile PDA mismatch in create_offer CPI preparation")]
-    UserProfileMismatch,
-    #[msg("Offer program already initialized")]
-    AlreadyInitialized,
+    #[msg("Fiat currency string is too long.")]
+    FiatCurrencyTooLong,
+    #[msg("Denom string is too long.")]
+    DenomTooLong,
+    #[msg("Owner contact string is too long.")]
+    OwnerContactTooLong,
+    #[msg("Owner encryption key string is too long.")]
+    OwnerEncryptionKeyTooLong,
+    #[msg("Hub already registered.")]
+    HubAlreadyRegistered,
+    #[msg("Hub not registered.")]
+    HubNotRegistered,
+    #[msg("Unauthorized access. Caller is not the hub.")]
+    UnauthorizedHub,
+    #[msg("Min amount must be less than or equal to max amount.")]
+    MinAmountExceedsMaxAmount,
+    #[msg("Offer is not active.")]
+    OfferNotActive,
+    #[msg("Only the owner can update the offer.")]
+    NotOfferOwner,
+}
+
+// Event emitted when an offer action requires a profile update.
+#[event]
+pub struct OfferProfileUpdateRequest {
+    pub offer_id: u64,
+    pub owner: Pubkey,
+    pub owner_contact: Option<String>, // New contact info if updated
+    pub owner_encryption_key: Option<String>, // New encryption key if updated
+    pub offer_state_change: Option<OfferStateChange>, // Details if offer state changed
+    pub action_type: ProfileUpdateActionType, // Indicates if due to create or update
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub struct OfferStateChange {
+    pub old_state: Option<OfferStateAnchor>, // None if it's a new offer
+    pub new_state: OfferStateAnchor,
+}
+
+// Enum to distinguish the type of action triggering a profile update request.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum ProfileUpdateActionType {
+    CreateOffer, // For new offers, typically to set contact and increment active count
+    UpdateOffer, // For existing offers, to update contact or active count based on state change
 }

@@ -1,419 +1,369 @@
 use anchor_lang::prelude::*;
 
-declare_id!("F9idjQaykbeAD5t8q2D3ozvgPYB54RcNS5zPfpq8E7Sz"); // Updated Program ID
-
-pub mod constants {
-    // Trade states
-    pub const REQUEST_CREATED: u8 = 0;
-    pub const REQUEST_ACCEPTED: u8 = 1;
-    pub const ESCROW_FUNDED: u8 = 2;
-    pub const FIAT_DEPOSITED: u8 = 3;
-    pub const ESCROW_RELEASED: u8 = 4;
-    pub const ESCROW_DISPUTED: u8 = 5;
-    pub const SETTLED_FOR_MAKER: u8 = 6;
-    pub const SETTLED_FOR_TAKER: u8 = 7;
-    pub const ESCROW_REFUNDED: u8 = 8;
-    pub const REQUEST_CANCELED: u8 = 9;
-
-    // Offer states
-    pub const OFFER_ACTIVE: u8 = 0;
-    pub const OFFER_PAUSED: u8 = 1;
-    pub const OFFER_ARCHIVED: u8 = 2;
-}
-
-pub mod state {
-    use super::*;
-
-    #[account]
-    pub struct ProfileConfig {
-        pub hub_addr: Pubkey,
-        pub is_initialized: bool,
-        pub bump: u8,
-    }
-
-    impl ProfileConfig {
-        pub const SPACE: usize = 8 +  // Discriminator
-            32 +                      // hub_addr
-            1 +                       // is_initialized
-            1; // bump
-    }
-}
-
-pub mod client_cpi;
+declare_id!("Prf1LAmRgPhXJCpVd8q92q7tWd5Qy3gYxXm9hPaJpkr"); // Replace with actual Profile Program ID
 
 #[program]
-pub mod localmoney_profile {
+pub mod profile {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Initializing LocalMoney Profile program");
-        let config = &mut ctx.accounts.profile_config;
-        config.bump = ctx.bumps.profile_config;
+    pub fn initialize_profile_global_state(
+        ctx: Context<InitializeProfileGlobalState>,
+    ) -> Result<()> {
+        ctx.accounts.profile_global_state.hub_address = Pubkey::default(); // Signifies not yet registered
+        ctx.accounts.profile_global_state.bump = ctx.bumps.profile_global_state;
         Ok(())
     }
 
-    pub fn register_hub(ctx: Context<RegisterHub>, hub_addr: Pubkey) -> Result<()> {
-        let config = &mut ctx.accounts.profile_config;
-
-        // Ensure this is only called once
-        require!(!config.is_initialized, ProfileError::AlreadyInitialized);
-
-        // Verify that the caller is actually the hub program
-        // This would typically verify the CPI context, but we'll keep it simple for now
-
-        // Set hub address and mark as initialized
-        config.hub_addr = hub_addr;
-        config.is_initialized = true;
-
-        msg!("Hub registered in Profile program: {}", hub_addr);
+    pub fn register_hub_for_profile(
+        ctx: Context<RegisterHubForProfile>,
+        hub_address_arg: Pubkey,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.profile_global_state.hub_address == Pubkey::default(),
+            ProfileError::HubAlreadyRegistered
+        );
+        // TODO: Add authority checks - e.g., ensure caller is the actual Hub program or Hub admin.
+        ctx.accounts.profile_global_state.hub_address = hub_address_arg;
         Ok(())
     }
 
     pub fn update_contact(
         ctx: Context<UpdateContact>,
-        contact: String,
-        encryption_key: String,
+        contact_info: Option<String>,
+        encryption_key_info: Option<String>,
     ) -> Result<()> {
-        msg!(
-            "Profile::update_contact called for profile_owner (derived from ctx.accounts.profile_owner.key): {}",
-            ctx.accounts.profile_owner.key()
-        );
-        msg!(
-            "Profile::update_contact - caller.key: {}",
-            ctx.accounts.caller.key()
-        );
-        // Validate input
-        require!(contact.len() <= 100, ProfileError::ContactTooLong);
         require!(
-            encryption_key.len() <= 255,
-            ProfileError::EncryptionKeyTooLong
+            ctx.accounts.profile_global_state.hub_address != Pubkey::default(),
+            ProfileError::HubNotRegistered
         );
 
         let profile = &mut ctx.accounts.profile;
-        let is_new_profile = profile.created_at == 0;
 
-        // Set contact and encryption key
-        profile.contact = contact;
-        profile.encryption_key = encryption_key;
-
-        // If this is a new profile, initialize fields
-        if is_new_profile {
-            profile.created_at = Clock::get()?.unix_timestamp;
-            profile.address = ctx.accounts.profile_owner.key();
-            // Profile address is already set by the #[account] macro during init
+        // Initialize created_at_timestamp if this is the first meaningful update
+        // (i.e., when the account is being initialized by this instruction call)
+        // The InitSpace on Profile struct and `init_if_needed` handles allocation.
+        // We check if created_at_timestamp is 0 (its default when init by anchor_lang if not set explicitly).
+        if profile.created_at_timestamp == 0 {
+            profile.authority = ctx.accounts.profile_authority.key();
+            profile.created_at_timestamp = Clock::get()?.unix_timestamp as u64;
+            profile.bump = ctx.bumps.profile; // Set bump only on init
         }
 
-        profile.updated_at = Clock::get()?.unix_timestamp;
+        // TODO: Add more sophisticated authorization for Offer/Trade program calls.
+        // For now, only profile_authority (owner) can update directly.
+        // If called by Offer/Trade via CPI, those programs would be signers and need to be checked.
 
-        msg!(
-            "Contact information updated for profile: {}",
-            ctx.accounts.profile_owner.key()
-        );
+        if let Some(contact) = contact_info {
+            profile.contact = Some(contact);
+        }
+        if let Some(enc_key) = encryption_key_info {
+            profile.encryption_key = Some(enc_key);
+        }
+
+        msg!("Contact updated for profile: {}", profile.authority);
         Ok(())
     }
 
-    pub fn update_trades_count(ctx: Context<UpdateTradesCount>, trade_state: u8) -> Result<()> {
-        msg!(
-            "Profile::update_trades_count called for profile_owner (derived from ctx.accounts.profile_owner.key): {}",
-            ctx.accounts.profile_owner.key()
-        );
-        msg!(
-            "Profile::update_trades_count - caller.key: {}",
-            ctx.accounts.caller.key()
-        );
-        let profile = &mut ctx.accounts.profile;
-        let config = &ctx.accounts.profile_config;
-
-        // Update timestamps
-        let current_time = Clock::get()?.unix_timestamp;
-        profile.last_trade = current_time;
-        profile.updated_at = current_time;
-
-        // Update counters based on trade state
-        match trade_state {
-            // RequestCreated - increment requested trades, check active limit
-            constants::REQUEST_CREATED => {
-                profile.requested_trades_count = profile
-                    .requested_trades_count
-                    .checked_add(1)
-                    .ok_or(ProfileError::CounterOverflow)?;
-
-                // Check if we are within the active trades limit (this will be enforced by the Trade program)
-            }
-
-            // RequestAccepted or EscrowFunded - increment active trades
-            constants::REQUEST_ACCEPTED | constants::ESCROW_FUNDED => {
-                profile.active_trades_count = profile
-                    .active_trades_count
-                    .checked_add(1)
-                    .ok_or(ProfileError::CounterOverflow)?;
-            }
-
-            // EscrowReleased - increment released trades & decrement active
-            constants::ESCROW_RELEASED => {
-                profile.released_trades_count = profile
-                    .released_trades_count
-                    .checked_add(1)
-                    .ok_or(ProfileError::CounterOverflow)?;
-
-                if profile.active_trades_count > 0 {
-                    profile.active_trades_count -= 1;
-                }
-            }
-
-            // Final states - decrement active trades if positive
-            constants::SETTLED_FOR_MAKER
-            | constants::SETTLED_FOR_TAKER
-            | constants::ESCROW_REFUNDED
-            | constants::REQUEST_CANCELED => {
-                if profile.active_trades_count > 0 {
-                    profile.active_trades_count -= 1;
-                }
-            }
-
-            _ => { /* No action for other states */ }
-        }
-
-        msg!(
-            "Updated trades count for profile: {} to state: {}",
-            ctx.accounts.profile_owner.key(),
-            trade_state
-        );
-        Ok(())
-    }
-
-    pub fn update_active_offers(ctx: Context<UpdateActiveOffers>, offer_state: u8) -> Result<()> {
-        msg!(
-            "Profile::update_active_offers called for profile_owner (derived from ctx.accounts.profile_owner.key): {}",
-            ctx.accounts.profile_owner.key()
-        );
-        msg!(
-            "Profile::update_active_offers - caller.key: {}",
-            ctx.accounts.caller.key()
-        );
-        let profile = &mut ctx.accounts.profile;
-        let config = &ctx.accounts.profile_config;
-
-        // Validate offer state
+    pub fn update_active_offers(
+        ctx: Context<UpdateActiveOffers>,
+        action: CounterAction,
+    ) -> Result<()> {
         require!(
-            offer_state <= constants::OFFER_ARCHIVED,
-            ProfileError::InvalidOfferState
+            ctx.accounts.profile_global_state.hub_address != Pubkey::default(),
+            ProfileError::HubNotRegistered
         );
+        // Authorization: Check if the caller is the registered Offer program.
+        // The Offer program ID should be known (e.g. from HubConfig or ProfileGlobalState if stored there)
+        // For now, we assume `ctx.accounts.caller_program.key()` is checked against a known Offer Program ID.
+        // Example: require_keys_eq!(ctx.accounts.caller_program.key(), expected_offer_program_id, ProfileError::UnauthorizedCaller);
+        // This check requires `caller_program: AccountInfo<'info>` in context and making sure it's a Signer if not CPI
+        // or using more advanced CPI signer checks.
+        // A simpler way for CPI is that the `offer_program` account in context is executable and its key is the expected one.
 
-        // Update active offers count based on state transition
-        match offer_state {
-            // New active offer - increment counter
-            constants::OFFER_ACTIVE => {
-                // Check if we're under the limit
-                // TODO: Implement proper CPI to Hub program to read active_offers_limit from HubConfig
-                const TEMP_ACTIVE_OFFERS_LIMIT: u8 = 5; // Placeholder limit
+        // Access active_offers_limit from HubConfig (passed in context)
+        let active_offers_limit = ctx.accounts.hub_config.active_offers_limit;
+        let profile = &mut ctx.accounts.profile;
 
+        match action {
+            CounterAction::Increment => {
                 require!(
-                    profile.active_offers_count < TEMP_ACTIVE_OFFERS_LIMIT,
+                    profile.active_offers_count < active_offers_limit,
                     ProfileError::ActiveOffersLimitReached
                 );
-
                 profile.active_offers_count = profile
                     .active_offers_count
                     .checked_add(1)
-                    .ok_or(ProfileError::CounterOverflow)?;
+                    .ok_or(ProfileError::NumericOverflow)?;
             }
-
-            // Offer paused or archived - decrement counter if it was active before
-            constants::OFFER_PAUSED | constants::OFFER_ARCHIVED => {
-                if profile.active_offers_count > 0 {
-                    profile.active_offers_count -= 1;
-                }
-            }
-
-            _ => {
-                return Err(ProfileError::InvalidOfferState.into());
+            CounterAction::Decrement => {
+                profile.active_offers_count = profile
+                    .active_offers_count
+                    .checked_sub(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
             }
         }
-
-        profile.updated_at = Clock::get()?.unix_timestamp;
-
         msg!(
-            "Updated active offers for profile: {} to state: {}",
-            ctx.accounts.profile_owner.key(),
-            offer_state
+            "Active offers count for {} is now {}",
+            profile.authority,
+            profile.active_offers_count
         );
         Ok(())
     }
+
+    pub fn update_trades_count(
+        ctx: Context<UpdateTradesCount>,
+        trade_state_update: TradeStateForProfileUpdate,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.profile_global_state.hub_address != Pubkey::default(),
+            ProfileError::HubNotRegistered
+        );
+        // TODO: Authorization: Check if the caller is the registered Trade program.
+
+        let active_trades_limit = ctx.accounts.hub_config.active_trades_limit;
+        let profile = &mut ctx.accounts.profile;
+
+        match trade_state_update {
+            TradeStateForProfileUpdate::RequestCreated => {
+                profile.requested_trades_count = profile
+                    .requested_trades_count
+                    .checked_add(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+                // Check active_trades_limit here if RequestCreated implies an active trade slot immediately
+                // Spec says: `RequestCreated` → +`requested_trades_count`, check `active_trades_limit`.
+                // This implies active_trades_limit might be checked against a potential increment to active_trades_count, not requested_trades_count.
+                // For now, let's assume active_trades_limit applies to actual active_trades_count.
+            }
+            TradeStateForProfileUpdate::RequestAcceptedOrEscrowFunded => {
+                require!(
+                    profile.active_trades_count < active_trades_limit,
+                    ProfileError::ActiveTradesLimitReached
+                );
+                profile.active_trades_count = profile
+                    .active_trades_count
+                    .checked_add(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+            }
+            TradeStateForProfileUpdate::EscrowReleased => {
+                profile.released_trades_count = profile
+                    .released_trades_count
+                    .checked_add(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+                profile.active_trades_count = profile
+                    .active_trades_count
+                    .checked_sub(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+            }
+            TradeStateForProfileUpdate::FinalizedErrorOrCancelled => {
+                // For states like Settled*, Refunded, Canceled which might just decrement active_trades_count
+                if profile.active_trades_count > 0 {
+                    // Ensure not to underflow if already 0
+                    profile.active_trades_count = profile
+                        .active_trades_count
+                        .checked_sub(1)
+                        .ok_or(ProfileError::NumericOverflow)?;
+                }
+            }
+        }
+
+        profile.last_trade_timestamp = Clock::get()?.unix_timestamp as u64;
+        msg!(
+            "Trade counts updated for {}. Active: {}, Requested: {}, Released: {}",
+            profile.authority,
+            profile.active_trades_count,
+            profile.requested_trades_count,
+            profile.released_trades_count
+        );
+        Ok(())
+    }
+
+    // Instructions like update_trades_count, update_active_offers
+    // will be added in subsequent tasks.
 }
 
 #[derive(Accounts)]
-pub struct Initialize<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
+pub struct InitializeProfileGlobalState<'info> {
     #[account(
-        init_if_needed,
-        payer = payer,
-        space = state::ProfileConfig::SPACE,
-        seeds = [b"profile-config"],
-        bump,
+        init,
+        payer = authority,
+        space = ProfileGlobalState::SPACE,
+        seeds = [b"profile_global_state"],
+        bump
     )]
-    pub profile_config: Account<'info, state::ProfileConfig>,
-
+    pub profile_global_state: Account<'info, ProfileGlobalState>,
+    #[account(mut)]
+    pub authority: Signer<'info>, // Typically the deployer or program admin
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct RegisterHub<'info> {
-    #[account(mut)]
+pub struct RegisterHubForProfile<'info> {
+    #[account(
+        mut,
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state.bump
+    )]
+    pub profile_global_state: Account<'info, ProfileGlobalState>,
+    // This authority should be the Hub program admin or the Hub program via CPI.
     pub authority: Signer<'info>,
-
-    #[account(
-        mut,
-        seeds = [b"profile-config"],
-        bump = profile_config.bump,
-    )]
-    pub profile_config: Account<'info, state::ProfileConfig>,
-
-    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
+#[instruction(contact_info: Option<String>, encryption_key_info: Option<String>)] // Required for space/rent if strings are Some
 pub struct UpdateContact<'info> {
-    /// CHECK: This is the authority (user/program) calling the instruction. Signer status is enforced by #[account(signer)].
-    #[account(mut, signer)]
-    pub caller: AccountInfo<'info>,
+    #[account(
+        init_if_needed, // Initialize the profile account if it doesn't exist
+        payer = payer,      // User (profile_authority) or CPI caller pays for init
+        space = 8 + Profile::INIT_SPACE, // 8 for discriminator
+        seeds = [b"profile", profile_authority.key().as_ref()],
+        bump
+    )]
+    pub profile: Account<'info, Profile>,
 
-    /// CHECK: This account doesn't need to sign if caller is a module
-    pub profile_owner: AccountInfo<'info>,
+    /// CHECK: This is the authority for whom the profile is being updated.
+    /// It's used as a seed and should be a signer if the user is calling this directly.
+    /// If a CPI is calling, this pubkey is passed, and the CPI program (e.g. Offer) is the signer.
+    pub profile_authority: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub payer: Signer<'info>, // The one paying for account creation/rent
 
     #[account(
-        mut,
-        seeds = [b"profile-config"],
-        bump = profile_config.bump,
-        constraint = profile_config.is_initialized @ ProfileError::NotInitialized,
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state.bump
     )]
-    pub profile_config: Account<'info, state::ProfileConfig>,
-
-    #[account(
-        init_if_needed,
-        payer = caller,
-        space = ProfileData::SPACE,
-        seeds = [b"profile", profile_owner.key().as_ref()],
-        bump,
-    )]
-    pub profile: Account<'info, ProfileData>,
-
+    pub profile_global_state: Account<'info, ProfileGlobalState>,
     pub system_program: Program<'info, System>,
 }
 
-#[derive(Accounts)]
-pub struct UpdateTradesCount<'info> {
-    /// CHECK: This is the authority (user/program) calling the instruction. Signer status is enforced by #[account(signer)].
-    #[account(signer)]
-    pub caller: AccountInfo<'info>,
-
-    /// CHECK: This doesn't need to be verified since the Trade program will verify
-    pub profile_owner: AccountInfo<'info>,
-
-    #[account(
-        seeds = [b"profile-config"],
-        bump = profile_config.bump,
-        constraint = profile_config.is_initialized @ ProfileError::NotInitialized,
-    )]
-    pub profile_config: Account<'info, state::ProfileConfig>,
-
-    /// CHECK: This is the hub config account that we need to read limits from
-    pub hub_config: AccountInfo<'info>,
-
-    #[account(
-        mut,
-        seeds = [b"profile", profile_owner.key().as_ref()],
-        bump = profile.bump,
-    )]
-    pub profile: Account<'info, ProfileData>,
-
-    pub system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct UpdateActiveOffers<'info> {
-    /// CHECK: This is the authority (user/program) calling the instruction. Signer status is enforced by #[account(signer)].
-    #[account(signer)]
-    pub caller: AccountInfo<'info>,
-
-    /// CHECK: This doesn't need to be verified since the Offer program will verify
-    pub profile_owner: AccountInfo<'info>,
-
-    #[account(
-        seeds = [b"profile-config"],
-        bump = profile_config.bump,
-        constraint = profile_config.is_initialized @ ProfileError::NotInitialized,
-    )]
-    pub profile_config: Account<'info, state::ProfileConfig>,
-
-    /// CHECK: This is the hub config account that we need to read limits from
-    pub hub_config: AccountInfo<'info>,
-
-    #[account(
-        mut,
-        seeds = [b"profile", profile_owner.key().as_ref()],
-        bump = profile.bump,
-    )]
-    pub profile: Account<'info, ProfileData>,
-
-    pub system_program: Program<'info, System>,
-}
-
+// Account to store global state for the Profile program, like the Hub address.
+// PDA seeds: [b"profile_global_state"]
 #[account]
-pub struct ProfileData {
-    pub address: Pubkey,
-    pub contact: String,        // Max 100 chars
-    pub encryption_key: String, // Max 255 chars
-    pub active_offers_count: u8,
-    pub active_trades_count: u8,
-    pub requested_trades_count: u64,
-    pub released_trades_count: u64,
-    pub last_trade: i64, // Unix timestamp
-    pub created_at: i64, // Unix timestamp
-    pub updated_at: i64, // Unix timestamp
-    pub bump: u8,
+pub struct ProfileGlobalState {
+    pub hub_address: Pubkey, // Address of the central Hub program, Pubkey::default() if not registered
+    pub bump: u8,            // PDA bump seed
 }
 
-impl ProfileData {
-    pub const SPACE: usize = 8 +   // Discriminator
-        32 +                       // address
-        4 + 100 +                  // contact (String with max 100 chars)
-        4 + 255 +                  // encryption_key (String with max 255 chars)
-        1 +                        // active_offers_count
-        1 +                        // active_trades_count
-        8 +                        // requested_trades_count
-        8 +                        // released_trades_count
-        8 +                        // last_trade
-        8 +                        // created_at
-        8 +                        // updated_at
-        1; // bump
+impl ProfileGlobalState {
+    // Anchor discriminator + Pubkey + u8
+    pub const SPACE: usize = 8 + 32 + 1;
+}
+
+// Represents a user's profile on the platform.
+// PDA seeds: [b"profile", authority.key().as_ref()]
+#[account]
+#[derive(InitSpace)]
+pub struct Profile {
+    pub authority: Pubkey, // The user this profile belongs to (also part of seed)
+    #[max_len(100)]
+    pub contact: Option<String>, // Optional contact information (e.g., email, telegram)
+    #[max_len(100)]
+    pub encryption_key: Option<String>, // Optional public encryption key for secure communication
+    pub active_offers_count: u8, // Number of active offers by the user
+    pub active_trades_count: u8, // Number of active trades the user is part of
+    pub requested_trades_count: u64, // Total trades requested by/to the user
+    pub released_trades_count: u64, // Total trades successfully released/completed
+    pub last_trade_timestamp: u64, // Timestamp of the last trade activity
+    pub created_at_timestamp: u64, // Timestamp when the profile was first interacted with (e.g. first contact update)
+    pub bump: u8,                  // PDA bump seed
 }
 
 #[error_code]
 pub enum ProfileError {
-    #[msg("Unauthorized access")]
-    Unauthorized,
-
-    #[msg("Counter overflow")]
-    CounterOverflow,
-
-    #[msg("Contact too long")]
+    #[msg("Contact string is too long.")]
     ContactTooLong,
-
-    #[msg("Encryption key too long")]
+    #[msg("Encryption key string is too long.")]
     EncryptionKeyTooLong,
-
-    #[msg("Invalid offer state")]
-    InvalidOfferState,
-
-    #[msg("Active offers limit reached")]
+    #[msg("Hub already registered for Profile program.")]
+    HubAlreadyRegistered,
+    #[msg("Hub not registered for Profile program. Cannot perform action.")]
+    HubNotRegistered,
+    #[msg("Unauthorized caller. Expected Hub, Offer, or Trade program with valid signature.")]
+    UnauthorizedCaller,
+    #[msg("Active offers limit reached as per Hub configuration.")]
     ActiveOffersLimitReached,
+    #[msg("Active trades limit reached as per Hub configuration.")]
+    ActiveTradesLimitReached,
+    #[msg("Profile account is not initialized.")]
+    ProfileNotInitialized,
+    #[msg("Numeric overflow occurred.")]
+    NumericOverflow,
+}
 
-    #[msg("Profile program not initialized with hub")]
-    NotInitialized,
+// Add #[account] and bump field to HubConfigStub
+#[account]
+pub struct HubConfigStub {
+    pub active_offers_limit: u8,
+    pub active_trades_limit: u8,
+    pub bump: u8, // Assuming this bump is the one stored by the Hub program in its HubConfig PDA
+                  // ... other hub config fields that might be relevant for profile, if any
+}
 
-    #[msg("Profile program already initialized")]
-    AlreadyInitialized,
+#[derive(Accounts)]
+#[instruction(action: CounterAction)]
+pub struct UpdateActiveOffers<'info> {
+    #[account(
+        mut,
+        seeds = [b"profile", profile_authority.key().as_ref()],
+        bump = profile.bump,
+        constraint = profile.authority == profile_authority.key() @ ProfileError::ProfileNotInitialized // Ensures profile is for this authority
+    )]
+    pub profile: Account<'info, Profile>,
+
+    /// CHECK: The authority (user) whose profile is being updated.
+    pub profile_authority: AccountInfo<'info>,
+
+    // TODO: Add account for Offer Program for authorization
+    // pub offer_program: Program<'info, OfferProgram>, // Assuming OfferProgram type is defined
+    // pub offer_program_signer: Signer<'info>, // If Offer program calls this via CPI, it signs.
+
+    // Account for HubConfig to check limits.
+    // This assumes HubConfig PDA seeds are known, e.g. [b"hub_config_seed_from_hub_program"]
+    // Or it could be passed as a non-PDA account if its address is obtained differently.
+    #[account(seeds = [b"hub"], bump = hub_config.bump, seeds::program = hub_program_id.key())]
+    pub hub_config: Account<'info, HubConfigStub>, // Using HubConfigStub for now
+    /// CHECK: The Hub Program ID, needed for hub_config PDA derivation.
+    pub hub_program_id: AccountInfo<'info>,
+
+    #[account(seeds = [b"profile_global_state"], bump = profile_global_state.bump)]
+    pub profile_global_state: Account<'info, ProfileGlobalState>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum CounterAction {
+    Increment,
+    Decrement,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_state_update: TradeStateForProfileUpdate)]
+pub struct UpdateTradesCount<'info> {
+    #[account(
+        mut,
+        seeds = [b"profile", profile_authority.key().as_ref()],
+        bump = profile.bump,
+        constraint = profile.authority == profile_authority.key() @ ProfileError::ProfileNotInitialized
+    )]
+    pub profile: Account<'info, Profile>,
+
+    /// CHECK: The authority (user) whose profile is being updated.
+    pub profile_authority: AccountInfo<'info>,
+
+    // TODO: Add account for Trade Program for authorization
+    // pub trade_program: Program<'info, TradeProgram>, // Assuming TradeProgram type defined
+    #[account(seeds = [b"hub"], bump = hub_config.bump, seeds::program = hub_program_id.key())]
+    pub hub_config: Account<'info, HubConfigStub>, // Using HubConfigStub for now
+    /// CHECK: The Hub Program ID, needed for hub_config PDA derivation.
+    pub hub_program_id: AccountInfo<'info>,
+
+    #[account(seeds = [b"profile_global_state"], bump = profile_global_state.bump)]
+    pub profile_global_state: Account<'info, ProfileGlobalState>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum TradeStateForProfileUpdate {
+    RequestCreated, // +requested_trades_count, check active_trades_limit (CosmWasm spec implies check here)
+    RequestAcceptedOrEscrowFunded, // +active_trades_count
+    EscrowReleased, // +released_trades_count, -active_trades_count
+    FinalizedErrorOrCancelled, // -active_trades_count (for Settled*, Refunded, Canceled)
 }

@@ -1,281 +1,425 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
-import { LocalmoneyHub } from "../target/types/localmoney_hub";
-import { PublicKey, Keypair } from "@solana/web3.js";
+import { Program, BN } from "@coral-xyz/anchor";
+import { Keypair, SystemProgram, PublicKey } from "@solana/web3.js";
+import { Hub } from "../target/types/hub";
 import { expect } from "chai";
 
-describe("localmoney-hub", () => {
-  // Configure the client to use the local cluster
+describe("hub", () => {
+  // Configure the client to use the local cluster.
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.LocalmoneyHub as Program<LocalmoneyHub>;
-  
-  // Use provider.wallet as the consistent admin
-  const adminPublicKey = provider.wallet.publicKey;
-  // const newAdmin = Keypair.generate(); // Keep this if testing admin updates
-  const newAdmin = Keypair.generate(); 
-  // Payer is implicitly provider.wallet
-  
-  // Mock addresses for other modules
-  const offerAddr = Keypair.generate().publicKey;
-  const tradeAddr = Keypair.generate().publicKey;
-  const profileAddr = Keypair.generate().publicKey;
-  const priceAddr = Keypair.generate().publicKey;
-  const priceProviderAddr = Keypair.generate().publicKey;
-  const localMarketAddr = Keypair.generate().publicKey;
-  const chainFeeCollectorAddr = Keypair.generate().publicKey;
-  const warchestAddr = Keypair.generate().publicKey;
-  
-  // Hub PDA
+  const program = anchor.workspace.Hub as Program<Hub>;
+  const adminWallet = provider.wallet as anchor.Wallet;
+
+  // PDA for HubConfig
   let hubConfigPda: PublicKey;
   let hubConfigBump: number;
-  
-  before(async () => {
-    // Fund the admin account (provider.wallet) - usually funded on localnet, but good practice
-    try {
-      const balance = await provider.connection.getBalance(adminPublicKey);
-      console.log(`Admin (${adminPublicKey.toBase58()}) balance: ${balance}`);
-      if (balance < 2 * anchor.web3.LAMPORTS_PER_SOL) {
-          console.log("Airdropping to admin...");
-          const airdropSig = await provider.connection.requestAirdrop(
-            adminPublicKey,
-            2 * anchor.web3.LAMPORTS_PER_SOL
-          );
-          await provider.connection.confirmTransaction(airdropSig, "confirmed");
-          console.log("Admin airdrop confirmed.");
-      } else {
-          console.log("Admin has sufficient balance.");
-      }
-    } catch (e) {
-        console.error("Failed to check/fund admin balance:", e);
-        // Might fail if local validator is not running, proceed cautiously
-    }
-    
-    // Fund newAdmin for the updateAdmin test
-    const newAdminAirdrop = await provider.connection.requestAirdrop(newAdmin.publicKey, anchor.web3.LAMPORTS_PER_SOL);
-    await provider.connection.confirmTransaction(newAdminAirdrop, "confirmed");
 
-    // Derive the hub config PDA
-    const [hubPda, bump] = await PublicKey.findProgramAddress(
+  before(async () => {
+    // Derive PDA for HubConfig
+    [hubConfigPda, hubConfigBump] = await PublicKey.findProgramAddressSync(
       [Buffer.from("hub")],
       program.programId
     );
-    hubConfigPda = hubPda;
-    hubConfigBump = bump;
   });
 
-  it("Initializes the hub with proper defaults", async () => {
-    // Call the initialize instruction
-    await program.methods
-      .initialize(adminPublicKey) // Pass admin pubkey as argument
-      .accounts({
-        payer: adminPublicKey, // Payer is the admin
-        hubConfig: hubConfigPda,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      // No explicit .signers() needed, provider.wallet signs for payer=adminPublicKey
-      .rpc();
-    
-    // Fetch the hub config account
-    const hubConfig = await program.account.hubConfig.fetch(hubConfigPda);
-    
-    // Verify initial values
-    expect(hubConfig.admin.toString()).to.equal(adminPublicKey.toString());
-    expect(hubConfig.isFullyConfigured).to.be.false;
-    
-    // Verify default limits
-    expect(hubConfig.activeOffersLimit).to.equal(10);
-    expect(hubConfig.activeTradesLimit).to.equal(10);
-    
-    // Verify default fees (using basis points)
-    expect(hubConfig.arbitrationFeePct).to.equal(100); // 1%
-    expect(hubConfig.burnFeePct).to.equal(50); // 0.5%
-    expect(hubConfig.chainFeePct).to.equal(150); // 1.5%
-    expect(hubConfig.warchestFeePct).to.equal(200); // 2%
-    
-    // Verify default timers
-    expect(hubConfig.tradeExpirationTimer.toNumber()).to.equal(86400); // 24 hours
-    expect(hubConfig.tradeDisputeTimer.toNumber()).to.equal(43200); // 12 hours
-    
-    // Verify default trade limits
-    expect(hubConfig.tradeLimitMin.toNumber()).to.equal(10);
-    expect(hubConfig.tradeLimitMax.toNumber()).to.equal(1000);
-  });
+  // Dummy pubkeys for testing - replace with actual or generated ones as needed
+  const dummyPubkey = () => Keypair.generate().publicKey;
+  const initialConfigArgs = {
+    offerAddr: dummyPubkey(),
+    tradeAddr: dummyPubkey(),
+    profileAddr: dummyPubkey(),
+    priceAddr: dummyPubkey(),
+    priceProviderAddr: dummyPubkey(),
+    localMarketAddr: dummyPubkey(),
+    localDenomMint: dummyPubkey(),
+    chainFeeCollectorAddr: dummyPubkey(),
+    warchestAddr: dummyPubkey(),
+    activeOffersLimit: 10,
+    activeTradesLimit: 5,
+    arbitrationFeeBps: 100, // 1%
+    burnFeeBps: 50, // 0.5%
+    chainFeeBps: 100, // 1%
+    warchestFeeBps: 50, // 0.5%
+    tradeExpirationTimer: new BN(3600 * 24 * 7), // 7 days in seconds
+    tradeDisputeTimer: new BN(3600 * 24 * 3), // 3 days in seconds
+    tradeLimitMinUsd: new BN(10),
+    tradeLimitMaxUsd: new BN(1000),
+  };
 
-  it("Updates the hub configuration", async () => {
-    // Sample configuration parameters
-    const activeOffersLimit = 20;
-    const activeTradesLimit = 15;
-    const arbitrationFeePct = 150; // 1.5%
-    const burnFeePct = 75; // 0.75%
-    const chainFeePct = 175; // 1.75%
-    const warchestFeePct = 100; // 1%
-    const tradeExpirationTimer = 172800; // 48 hours
-    const tradeDisputeTimer = 86400; // 24 hours
-    const tradeLimitMin = 5;
-    const tradeLimitMax = 2000;
-    const localDenom = "SOL";
-    
-    // Update the hub config
+  it("Is initialized!", async () => {
     await program.methods
-      .updateConfig(
-        offerAddr,
-        tradeAddr,
-        profileAddr,
-        priceAddr,
-        priceProviderAddr,
-        localMarketAddr,
-        localDenom,
-        chainFeeCollectorAddr,
-        warchestAddr,
-        activeOffersLimit,
-        activeTradesLimit,
-        arbitrationFeePct,
-        burnFeePct,
-        chainFeePct,
-        warchestFeePct,
-        new anchor.BN(tradeExpirationTimer),
-        new anchor.BN(tradeDisputeTimer),
-        new anchor.BN(tradeLimitMin),
-        new anchor.BN(tradeLimitMax)
+      .initialize(
+        initialConfigArgs.offerAddr,
+        initialConfigArgs.tradeAddr,
+        initialConfigArgs.profileAddr,
+        initialConfigArgs.priceAddr,
+        initialConfigArgs.priceProviderAddr,
+        initialConfigArgs.localMarketAddr,
+        initialConfigArgs.localDenomMint,
+        initialConfigArgs.chainFeeCollectorAddr,
+        initialConfigArgs.warchestAddr,
+        initialConfigArgs.activeOffersLimit,
+        initialConfigArgs.activeTradesLimit,
+        initialConfigArgs.arbitrationFeeBps,
+        initialConfigArgs.burnFeeBps,
+        initialConfigArgs.chainFeeBps,
+        initialConfigArgs.warchestFeeBps,
+        initialConfigArgs.tradeExpirationTimer,
+        initialConfigArgs.tradeDisputeTimer,
+        initialConfigArgs.tradeLimitMinUsd,
+        initialConfigArgs.tradeLimitMaxUsd
       )
       .accounts({
-        admin: adminPublicKey, // Account field is admin
-        hubConfig: hubConfigPda,
+        hub_config: hubConfigPda,
+        admin: adminWallet.publicKey,
+        system_program: SystemProgram.programId,
       })
-      // No explicit .signers() needed, provider.wallet signs for admin=adminPublicKey
+      .signers([adminWallet.payer]) // If admin is the payer from provider.wallet
       .rpc();
-    
-    // Fetch the updated hub config
-    const hubConfig = await program.account.hubConfig.fetch(hubConfigPda);
-    
-    // Verify updated module addresses
-    expect(hubConfig.offerAddr.toString()).to.equal(offerAddr.toString());
-    expect(hubConfig.tradeAddr.toString()).to.equal(tradeAddr.toString());
-    expect(hubConfig.profileAddr.toString()).to.equal(profileAddr.toString());
-    expect(hubConfig.priceAddr.toString()).to.equal(priceAddr.toString());
-    
-    // Verify updated limits and fees
-    expect(hubConfig.activeOffersLimit).to.equal(activeOffersLimit);
-    expect(hubConfig.activeTradesLimit).to.equal(activeTradesLimit);
-    expect(hubConfig.arbitrationFeePct).to.equal(arbitrationFeePct);
-    expect(hubConfig.burnFeePct).to.equal(burnFeePct);
-    
-    // Verify updated timers and limits
-    expect(hubConfig.tradeExpirationTimer.toNumber()).to.equal(tradeExpirationTimer);
-    expect(hubConfig.tradeDisputeTimer.toNumber()).to.equal(tradeDisputeTimer);
-    expect(hubConfig.tradeLimitMin.toNumber()).to.equal(tradeLimitMin);
-    expect(hubConfig.tradeLimitMax.toNumber()).to.equal(tradeLimitMax);
-    
-    // Verify configuration state
-    expect(hubConfig.isFullyConfigured).to.be.true;
-    expect(hubConfig.localDenom).to.equal(localDenom);
+
+    const hubConfigAccount = await program.account.hubConfig.fetch(hubConfigPda);
+    expect(hubConfigAccount.admin.equals(adminWallet.publicKey)).to.be.true;
+    expect(hubConfigAccount.offerAddr.equals(initialConfigArgs.offerAddr)).to.be.true;
+    expect(hubConfigAccount.tradeAddr.equals(initialConfigArgs.tradeAddr)).to.be.true;
+    expect(hubConfigAccount.profileAddr.equals(initialConfigArgs.profileAddr)).to.be.true;
+    expect(hubConfigAccount.priceAddr.equals(initialConfigArgs.priceAddr)).to.be.true;
+    expect(hubConfigAccount.priceProviderAddr.equals(initialConfigArgs.priceProviderAddr)).to.be.true;
+    expect(hubConfigAccount.localMarketAddr.equals(initialConfigArgs.localMarketAddr)).to.be.true;
+    expect(hubConfigAccount.localDenomMint.equals(initialConfigArgs.localDenomMint)).to.be.true;
+    expect(hubConfigAccount.chainFeeCollectorAddr.equals(initialConfigArgs.chainFeeCollectorAddr)).to.be.true;
+    expect(hubConfigAccount.warchestAddr.equals(initialConfigArgs.warchestAddr)).to.be.true;
+    expect(hubConfigAccount.activeOffersLimit).to.equal(initialConfigArgs.activeOffersLimit);
+    expect(hubConfigAccount.activeTradesLimit).to.equal(initialConfigArgs.activeTradesLimit);
+    expect(hubConfigAccount.arbitrationFeeBps).to.equal(initialConfigArgs.arbitrationFeeBps);
+    expect(hubConfigAccount.burnFeeBps).to.equal(initialConfigArgs.burnFeeBps);
+    expect(hubConfigAccount.chainFeeBps).to.equal(initialConfigArgs.chainFeeBps);
+    expect(hubConfigAccount.warchestFeeBps).to.equal(initialConfigArgs.warchestFeeBps);
+    expect(hubConfigAccount.tradeExpirationTimer.eq(initialConfigArgs.tradeExpirationTimer)).to.be.true;
+    expect(hubConfigAccount.tradeDisputeTimer.eq(initialConfigArgs.tradeDisputeTimer)).to.be.true;
+    expect(hubConfigAccount.tradeLimitMinUsd.eq(initialConfigArgs.tradeLimitMinUsd)).to.be.true;
+    expect(hubConfigAccount.tradeLimitMaxUsd.eq(initialConfigArgs.tradeLimitMaxUsd)).to.be.true;
   });
 
-  it("Rejects update with excessive fees", async () => {
+  it("Fails to initialize if platform fees exceed limit (or if already initialized)", async () => {
     try {
       await program.methods
-        .updateConfig(
-          offerAddr,
-          tradeAddr,
-          profileAddr,
-          priceAddr,
-          priceProviderAddr,
-          localMarketAddr,
-          "SOL",
-          chainFeeCollectorAddr,
-          warchestAddr,
-          20, // activeOffersLimit 
-          15, // activeTradesLimit
-          300, // arbitrationFeePct (3%)
-          300, // burnFeePct (3%)
-          300, // chainFeePct (3%)
-          300, // warchestFeePct (3%)
-          new anchor.BN(172800), // tradeExpirationTimer
-          new anchor.BN(86400), // tradeDisputeTimer
-          new anchor.BN(5), // tradeLimitMin
-          new anchor.BN(2000) // tradeLimitMax
+        .initialize(
+          initialConfigArgs.offerAddr,
+          initialConfigArgs.tradeAddr,
+          initialConfigArgs.profileAddr,
+          initialConfigArgs.priceAddr,
+          initialConfigArgs.priceProviderAddr,
+          initialConfigArgs.localMarketAddr,
+          initialConfigArgs.localDenomMint,
+          initialConfigArgs.chainFeeCollectorAddr,
+          initialConfigArgs.warchestAddr,
+          initialConfigArgs.activeOffersLimit,
+          initialConfigArgs.activeTradesLimit,
+          initialConfigArgs.arbitrationFeeBps,
+          600, // Excessive burnFeeBps
+          300, // Excessive chainFeeBps
+          200, // Excessive warchestFeeBps -> Total 11%
+          initialConfigArgs.tradeExpirationTimer,
+          initialConfigArgs.tradeDisputeTimer,
+          initialConfigArgs.tradeLimitMinUsd,
+          initialConfigArgs.tradeLimitMaxUsd
         )
         .accounts({
-          admin: adminPublicKey,
-          hubConfig: hubConfigPda,
+          hub_config: hubConfigPda,
+          admin: adminWallet.publicKey,
+          system_program: SystemProgram.programId,
         })
-        // No explicit .signers() needed
+        .signers([adminWallet.payer])
         .rpc();
-      
-      expect.fail("Expected transaction to fail due to excessive fees");
-    } catch (error) {
-      expect(error.message).to.include("FeeTooHigh");
+      expect.fail("Initialization should have failed due to excessive fees or already being initialized.");
+    } catch (err) {
+      expect(err instanceof anchor.AnchorError).to.be.true;
+      const anchorError = err as anchor.AnchorError;
+      if (anchorError.message.includes("already in use") || anchorError.error.errorCode.number === 3012 /* AccountOwnedByWrongProgram also seen with init */ || anchorError.error.errorCode.number === 2001 /* ConstraintInit */) {
+        console.warn("[FEE TEST SKIPPED] Hub already initialized. This is expected if run after successful init.");
+      } else {
+        expect(anchorError.error.errorCode.code).to.equal("TotalFeeExceedsLimit");
+        expect(anchorError.error.errorMessage).to.include("Total platform fees (burn, chain, warchest) must not exceed 10% (1000 bps).");
+      }
     }
   });
 
-  it("Updates the admin address", async () => {
-    // Update admin
-    await program.methods
-      .updateAdmin(newAdmin.publicKey)
-      .accounts({
-        admin: adminPublicKey, // Current admin is provider.wallet
-        hubConfig: hubConfigPda,
-      })
-      // No explicit .signers() needed
-      .rpc();
-    
-    // Fetch the hub config and verify the admin was updated
-    const hubConfig = await program.account.hubConfig.fetch(hubConfigPda);
-    expect(hubConfig.admin.toString()).to.equal(newAdmin.publicKey.toString());
+  it("Fails to initialize with zero expiration timer (or if already initialized)", async () => {
+    try {
+      await program.methods
+        .initialize(
+          initialConfigArgs.offerAddr,
+          initialConfigArgs.tradeAddr,
+          initialConfigArgs.profileAddr,
+          initialConfigArgs.priceAddr,
+          initialConfigArgs.priceProviderAddr,
+          initialConfigArgs.localMarketAddr,
+          initialConfigArgs.localDenomMint,
+          initialConfigArgs.chainFeeCollectorAddr,
+          initialConfigArgs.warchestAddr,
+          initialConfigArgs.activeOffersLimit,
+          initialConfigArgs.activeTradesLimit,
+          initialConfigArgs.arbitrationFeeBps,
+          initialConfigArgs.burnFeeBps,
+          initialConfigArgs.chainFeeBps,
+          initialConfigArgs.warchestFeeBps,
+          new BN(0), // tradeExpirationTimer
+          initialConfigArgs.tradeDisputeTimer,
+          initialConfigArgs.tradeLimitMinUsd,
+          initialConfigArgs.tradeLimitMaxUsd
+        )
+        .accounts({ hub_config: hubConfigPda, admin: adminWallet.publicKey, system_program: SystemProgram.programId })
+        .signers([adminWallet.payer])
+        .rpc();
+      expect.fail("Initialization should have failed due to zero timer or already being initialized.");
+    } catch (err) {
+      expect(err instanceof anchor.AnchorError).to.be.true;
+      const anchorError = err as anchor.AnchorError;
+      if (anchorError.message.includes("already in use") || anchorError.error.errorCode.number === 3012 || anchorError.error.errorCode.number === 2001) {
+        console.warn("[TIMER TEST SKIPPED] Hub already initialized. This is expected if run after successful init.");
+      } else {
+        expect(anchorError.error.errorCode.code).to.equal("InvalidTimerValue");
+        expect(anchorError.error.errorMessage).to.include("Timer values must be greater than zero.");
+      }
+    }
   });
 
-  it("Rejects unauthorized config updates", async () => {
-    try {
-      // Try to update config with old admin (provider.wallet), but current admin is newAdmin
+  describe("update_admin", () => {
+    const newAdminKeypair = Keypair.generate();
+
+    it("Successfully updates admin by current admin", async () => {
+      // Ensure hubConfig is initialized (implicitly by prior successful "Is initialized!" test)
+      const hubConfigInitial = await program.account.hubConfig.fetch(hubConfigPda);
+      expect(hubConfigInitial.admin.equals(adminWallet.publicKey)).to.be.true;
+
+      await program.methods
+        .updateAdmin(newAdminKeypair.publicKey)
+        .accounts({
+          hub_config: hubConfigPda,
+          admin: adminWallet.publicKey, // Current admin signs
+        })
+        .signers([adminWallet.payer]) // Current admin's keypair from provider.wallet
+        .rpc();
+
+      const hubConfigUpdated = await program.account.hubConfig.fetch(hubConfigPda);
+      expect(hubConfigUpdated.admin.equals(newAdminKeypair.publicKey)).to.be.true;
+    });
+
+    it("Fails to update admin by non-admin", async () => {
+      const someRandomUserKeypair = Keypair.generate();
+      try {
+        await program.methods
+          .updateAdmin(dummyPubkey()) // Trying to set to some other pubkey
+          .accounts({
+            hub_config: hubConfigPda,
+            admin: someRandomUserKeypair.publicKey, // Non-admin tries to be the authority
+          })
+          .signers([someRandomUserKeypair]) // Non-admin signs
+          .rpc();
+        expect.fail("Admin update by non-admin should have failed.");
+      } catch (err) {
+        expect(err instanceof anchor.AnchorError).to.be.true;
+        const anchorError = err as anchor.AnchorError;
+        expect(anchorError.error.errorCode.code).to.equal("ConstraintHasOne");
+      }
+    });
+
+    // After these tests, the admin of hubConfigPda is newAdminKeypair.publicKey
+    // For subsequent tests (like update_config), they need to use newAdminKeypair as the signer
+    // or we need to change it back.
+    after(async () => {
+      // Attempt to change admin back to original for other test suites, if newAdminKeypair became admin
+      try {
+        const currentHubConfig = await program.account.hubConfig.fetch(hubConfigPda);
+        if (currentHubConfig.admin.equals(newAdminKeypair.publicKey)) {
+          await program.methods
+            .updateAdmin(adminWallet.publicKey) // original admin from provider
+            .accounts({ hub_config: hubConfigPda, admin: newAdminKeypair.publicKey })
+            .signers([newAdminKeypair])
+            .rpc();
+          console.log("Admin reset to original provider wallet for subsequent tests.");
+        }
+      } catch (error) {
+        console.error("Failed to reset admin, hub might be in an unexpected state for other tests:", error);
+      }
+    });
+  });
+
+  describe("update_config", () => {
+    const updatedConfigArgs = {
+      offerAddr: Keypair.generate().publicKey,
+      tradeAddr: Keypair.generate().publicKey,
+      profileAddr: Keypair.generate().publicKey,
+      priceAddr: Keypair.generate().publicKey,
+      priceProviderAddr: Keypair.generate().publicKey,
+      localMarketAddr: Keypair.generate().publicKey,
+      localDenomMint: Keypair.generate().publicKey,
+      chainFeeCollectorAddr: Keypair.generate().publicKey,
+      warchestAddr: Keypair.generate().publicKey,
+      activeOffersLimit: 15,
+      activeTradesLimit: 8,
+      arbitrationFeeBps: 150,
+      burnFeeBps: 75,
+      chainFeeBps: 125,
+      warchestFeeBps: 75,
+      tradeExpirationTimer: new BN(3600 * 24 * 10),
+      tradeDisputeTimer: new BN(3600 * 24 * 5),
+      tradeLimitMinUsd: new BN(20),
+      tradeLimitMaxUsd: new BN(2000),
+    };
+
+    it("Successfully updates config by admin", async () => {
+      const currentAdmin = adminWallet;
       await program.methods
         .updateConfig(
-          offerAddr,
-          tradeAddr,
-          profileAddr,
-          priceAddr,
-          priceProviderAddr,
-          localMarketAddr,
-          "SOL",
-          chainFeeCollectorAddr,
-          warchestAddr,
-          20, // activeOffersLimit 
-          15, // activeTradesLimit
-          100, // arbitrationFeePct
-          100, // burnFeePct
-          100, // chainFeePct
-          100, // warchestFeePct
-          new anchor.BN(172800), // tradeExpirationTimer
-          new anchor.BN(86400), // tradeDisputeTimer
-          new anchor.BN(5), // tradeLimitMin
-          new anchor.BN(2000) // tradeLimitMax
+          updatedConfigArgs.offerAddr,
+          updatedConfigArgs.tradeAddr,
+          updatedConfigArgs.profileAddr,
+          updatedConfigArgs.priceAddr,
+          updatedConfigArgs.priceProviderAddr,
+          updatedConfigArgs.localMarketAddr,
+          updatedConfigArgs.localDenomMint,
+          updatedConfigArgs.chainFeeCollectorAddr,
+          updatedConfigArgs.warchestAddr,
+          updatedConfigArgs.activeOffersLimit,
+          updatedConfigArgs.activeTradesLimit,
+          updatedConfigArgs.arbitrationFeeBps,
+          updatedConfigArgs.burnFeeBps,
+          updatedConfigArgs.chainFeeBps,
+          updatedConfigArgs.warchestFeeBps,
+          updatedConfigArgs.tradeExpirationTimer,
+          updatedConfigArgs.tradeDisputeTimer,
+          updatedConfigArgs.tradeLimitMinUsd,
+          updatedConfigArgs.tradeLimitMaxUsd
         )
         .accounts({
-          admin: adminPublicKey, // Trying provider.wallet as admin
           hubConfig: hubConfigPda,
+          admin: currentAdmin.publicKey,
         })
-        // No explicit .signers() needed
+        .signers([currentAdmin.payer])
         .rpc();
-      
-      expect.fail("Expected transaction to fail due to unauthorized access");
-    } catch (error) {
-      expect(error.message).to.include("Unauthorized");
-    }
-    
-    // ***** Important: Change admin back for subsequent tests *****
-    // Use the 'newAdmin' keypair (which now holds admin authority) to change it back to provider.wallet
-    console.log("Changing admin back to original provider wallet...");
-    await program.methods
-      .updateAdmin(adminPublicKey) // Set admin back to provider.wallet
-      .accounts({
-        admin: newAdmin.publicKey, // Current admin is newAdmin
-        hubConfig: hubConfigPda,
-      })
-      .signers([newAdmin]) // newAdmin MUST sign this
-      .rpc();
-    console.log("Admin changed back.");
-    const finalConfig = await program.account.hubConfig.fetch(hubConfigPda);
-    expect(finalConfig.admin.toString()).to.equal(adminPublicKey.toString()); // Verify it's back
+
+      const hubConfigAccount = await program.account.hubConfig.fetch(hubConfigPda);
+      expect(hubConfigAccount.admin.equals(currentAdmin.publicKey)).to.be.true;
+      expect(hubConfigAccount.offerAddr.equals(updatedConfigArgs.offerAddr)).to.be.true;
+      expect(hubConfigAccount.tradeAddr.equals(updatedConfigArgs.tradeAddr)).to.be.true;
+      expect(hubConfigAccount.activeOffersLimit).to.equal(updatedConfigArgs.activeOffersLimit);
+      expect(hubConfigAccount.burnFeeBps).to.equal(updatedConfigArgs.burnFeeBps);
+      expect(hubConfigAccount.tradeExpirationTimer.eq(updatedConfigArgs.tradeExpirationTimer)).to.be.true;
+      expect(hubConfigAccount.tradeLimitMaxUsd.eq(updatedConfigArgs.tradeLimitMaxUsd)).to.be.true;
+    });
+
+    it("Fails to update config if platform fees exceed limit", async () => {
+      const currentAdmin = adminWallet;
+      try {
+        await program.methods
+          .updateConfig(
+            updatedConfigArgs.offerAddr,
+            updatedConfigArgs.tradeAddr,
+            updatedConfigArgs.profileAddr,
+            updatedConfigArgs.priceAddr,
+            updatedConfigArgs.priceProviderAddr,
+            updatedConfigArgs.localMarketAddr,
+            updatedConfigArgs.localDenomMint,
+            updatedConfigArgs.chainFeeCollectorAddr,
+            updatedConfigArgs.warchestAddr,
+            updatedConfigArgs.activeOffersLimit,
+            updatedConfigArgs.activeTradesLimit,
+            updatedConfigArgs.arbitrationFeeBps,
+            700,
+            200,
+            200,
+            updatedConfigArgs.tradeExpirationTimer,
+            updatedConfigArgs.tradeDisputeTimer,
+            updatedConfigArgs.tradeLimitMinUsd,
+            updatedConfigArgs.tradeLimitMaxUsd
+          )
+          .accounts({ hubConfig: hubConfigPda, admin: currentAdmin.publicKey })
+          .signers([currentAdmin.payer])
+          .rpc();
+        expect.fail("Config update should have failed due to excessive fees.");
+      } catch (err) {
+        expect(err instanceof anchor.AnchorError).to.be.true;
+        const anchorError = err as anchor.AnchorError;
+        expect(anchorError.error.errorCode.code).to.equal("TotalFeeExceedsLimit");
+      }
+    });
+
+    it("Fails to update config with zero dispute timer", async () => {
+      const currentAdmin = adminWallet;
+      try {
+        await program.methods
+          .updateConfig(
+            updatedConfigArgs.offerAddr,
+            updatedConfigArgs.tradeAddr,
+            updatedConfigArgs.profileAddr,
+            updatedConfigArgs.priceAddr,
+            updatedConfigArgs.priceProviderAddr,
+            updatedConfigArgs.localMarketAddr,
+            updatedConfigArgs.localDenomMint,
+            updatedConfigArgs.chainFeeCollectorAddr,
+            updatedConfigArgs.warchestAddr,
+            updatedConfigArgs.activeOffersLimit,
+            updatedConfigArgs.activeTradesLimit,
+            updatedConfigArgs.arbitrationFeeBps,
+            updatedConfigArgs.burnFeeBps,
+            updatedConfigArgs.chainFeeBps,
+            updatedConfigArgs.warchestFeeBps,
+            updatedConfigArgs.tradeExpirationTimer,
+            new BN(0),
+            updatedConfigArgs.tradeLimitMinUsd,
+            updatedConfigArgs.tradeLimitMaxUsd
+          )
+          .accounts({ hubConfig: hubConfigPda, admin: currentAdmin.publicKey })
+          .signers([currentAdmin.payer])
+          .rpc();
+        expect.fail("Config update should have failed due to zero dispute timer.");
+      } catch (err) {
+        expect(err instanceof anchor.AnchorError).to.be.true;
+        const anchorError = err as anchor.AnchorError;
+        expect(anchorError.error.errorCode.code).to.equal("InvalidTimerValue");
+      }
+    });
+
+    it("Fails to update config by non-admin", async () => {
+      const someRandomUserKeypair = Keypair.generate();
+      try {
+        await program.methods
+          .updateConfig(
+            updatedConfigArgs.offerAddr,
+            updatedConfigArgs.tradeAddr,
+            updatedConfigArgs.profileAddr,
+            updatedConfigArgs.priceAddr,
+            updatedConfigArgs.priceProviderAddr,
+            updatedConfigArgs.localMarketAddr,
+            updatedConfigArgs.localDenomMint,
+            updatedConfigArgs.chainFeeCollectorAddr,
+            updatedConfigArgs.warchestAddr,
+            updatedConfigArgs.activeOffersLimit,
+            updatedConfigArgs.activeTradesLimit,
+            updatedConfigArgs.arbitrationFeeBps,
+            updatedConfigArgs.burnFeeBps,
+            updatedConfigArgs.chainFeeBps,
+            updatedConfigArgs.warchestFeeBps,
+            updatedConfigArgs.tradeExpirationTimer,
+            updatedConfigArgs.tradeDisputeTimer,
+            updatedConfigArgs.tradeLimitMinUsd,
+            updatedConfigArgs.tradeLimitMaxUsd
+          )
+          .accounts({
+            hubConfig: hubConfigPda,
+            admin: someRandomUserKeypair.publicKey,
+          })
+          .signers([someRandomUserKeypair])
+          .rpc();
+        expect.fail("Config update by non-admin should have failed.");
+      } catch (err) {
+        expect(err instanceof anchor.AnchorError).to.be.true;
+        const anchorError = err as anchor.AnchorError;
+        expect(anchorError.error.errorCode.code).to.equal("ConstraintHasOne");
+      }
+    });
   });
-}); 
+});

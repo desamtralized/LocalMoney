@@ -1,19 +1,18 @@
 [package]
-name = "localmoney-profile"
+name = "profile"
 version = "0.1.0"
-description = "LocalMoney Profile - Manage user profiles, contacts, and counters"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "localmoney_profile"
+name = "profile"
 
 [features]
-default = []
-cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
