@@ -62,7 +62,7 @@ LocalMoney/contracts/solana/
   - [x] Initialize Anchor workspace skeleton and program directories
   - [x] Configure `Anchor.toml` and tsconfig for tests
   - [x] Stub GitHub Actions CI workflow with build and test steps
-  - [x] Run and verify `anchor build` succeeds locally
+  - [x] Run and verify `anchor build` succeeds locally *(Resolved stack overflow in trade program, build is now consistently successful)*
 
 - [x] M2: Hub Program
   - [x] Define `HubConfig` account struct and PDA seeds
@@ -86,16 +86,16 @@ LocalMoney/contracts/solana/
   - [x] Implement `get_price` query with pool CPI integration
   - [x] Write tests to verify on-chain and fiat price consistency
 
-- [-] M5: Trade Lifecycle
+- [x] M5: Trade Lifecycle
   - [x] Define Trade PDA and account struct
   - [x] Implement `create_trade` and `accept_trade` instructions
   - [x] Implement `fund_trade` and `deposit_trade` instructions *(corresponds to `fund_trade_escrow` and `confirm_payment_sent` which are implemented and compile)*
   - [x] Add state transition checks and profile CPI counters *(State checks and CPI calls to Profile implemented)*
-  - [x] Write integration tests for full trade lifecycle *(Integration test file trade.ts created; anchor build now successful, IDL should be stable for testing, CPIs added, basic lifecycle tests implemented)*
+  - [x] Write integration tests for full trade lifecycle *(Integration test file trade.ts created; anchor build now successful resolving stack overflow in release_escrow, IDL should be stable for testing, CPIs added, basic lifecycle tests implemented)*
 
 - [ ] M6: Trade Settlement & Dispute
-  - [x] Implement `release_escrow` with fee distribution logic *(Core instruction, fee logic, and Profile CPI calls implemented and compile)*
-  - [ ] Integrate SPL token transfers for CW20/native assets
+  - [x] Implement `release_escrow` with fee distribution logic *(Core instruction, fee logic, and Profile CPI calls implemented and compile; stack overflow confirmed resolved after boxing TokenAccount/Mint options)*
+  - [x] Integrate SPL token transfers for CW20/native assets *(Ensured `Offer` stores `token_mint`, `Trade` uses it for `escrow_mint_address`, `FundTradeEscrow` initializes PDA vault with `Trade` PDA as authority, `ReleaseEscrow` uses this vault PDA)*
   - [ ] Implement `dispute_trade`, `settle_trade`, and `refund_trade` instructions
   - [ ] Add arbitrator management instructions and validations
   - [ ] Write tests covering settlement and dispute scenarios

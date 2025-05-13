@@ -41,6 +41,7 @@ pub mod offer {
         fiat_currency: String,
         rate: u64,
         denom: String,
+        token_mint: Option<Pubkey>,
         min_amount: u64,
         max_amount: u64,
         description: String,
@@ -55,6 +56,13 @@ pub mod offer {
         );
         // Length checks for strings are implicitly handled by #[max_len] on Offer struct with #[derive(InitSpace)]
         // when using init. If not using init_if_needed or realloc, ensure inputs fit.
+
+        // Validation for token_mint based on denom
+        if denom.to_uppercase() == "SOL" {
+            require!(token_mint.is_none(), OfferError::SolOfferShouldNotHaveMint);
+        } else {
+            require!(token_mint.is_some(), OfferError::SplOfferMustHaveMint);
+        }
 
         let offer_global_state = &mut ctx.accounts.offer_global_state;
         let new_offer_id = offer_global_state.offers_count;
@@ -73,6 +81,7 @@ pub mod offer {
         offer.fiat_currency = fiat_currency;
         offer.rate = rate;
         offer.denom = denom;
+        offer.token_mint = token_mint;
         offer.min_amount = min_amount;
         offer.max_amount = max_amount;
         offer.description = description;
@@ -241,7 +250,7 @@ pub struct RegisterHub<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(owner_contact: String, owner_encryption_key: String, offer_type: OfferType, fiat_currency: String, rate: u64, denom: String, min_amount: u64, max_amount: u64, description: String)]
+#[instruction(owner_contact: String, owner_encryption_key: String, offer_type: OfferType, fiat_currency: String, rate: u64, denom: String, token_mint: Option<Pubkey>, min_amount: u64, max_amount: u64, description: String)]
 pub struct CreateOffer<'info> {
     #[account(
         init,
@@ -311,6 +320,7 @@ pub struct Offer {
     pub rate: u64,     // Exchange rate (e.g., fiat units per smallest unit of denom)
     #[max_len(8)]
     pub denom: String, // Cryptocurrency or token being traded (e.g., "SOL", "USDC")
+    pub token_mint: Option<Pubkey>, // Mint address if denom is an SPL token, None if SOL
     pub min_amount: u64, // Minimum amount of denom that can be traded
     pub max_amount: u64, // Maximum amount of denom that can be traded
     #[max_len(280)]
@@ -360,6 +370,10 @@ pub enum OfferError {
     OfferNotActive,
     #[msg("Only the owner can update the offer.")]
     NotOfferOwner,
+    #[msg("SOL offers should not have a token mint.")]
+    SolOfferShouldNotHaveMint,
+    #[msg("SPL token offers must have a token mint.")]
+    SplOfferMustHaveMint,
 }
 
 // Event emitted when an offer action requires a profile update.

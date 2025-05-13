@@ -22,9 +22,9 @@ describe("Trade Lifecycle", () => {
     const hubAdminForPriceProg = Keypair.generate(); // Authority for registering hub with price program
 
     // Programs
-    const tradeProgram = anchor.workspace.Trade as Program<Trade>;
-    const offerProgram = anchor.workspace.Offer as Program<Offer>;
-    const hubProgram = anchor.workspace.Hub as Program<Hub>;
+    const tradeProgram = anchor.workspace.Trade;
+    const offerProgram = anchor.workspace.Offer;
+    const hubProgram = anchor.workspace.Hub;
 
     let priceProgram: Program<Price>;
     let profileProgram: Program<Profile>;
@@ -57,6 +57,7 @@ describe("Trade Lifecycle", () => {
     let fiatPriceUsdPDA: PublicKey;
     let denomPriceRouteSolPDA: PublicKey;
     let calculatedPriceSolUsdPDA: PublicKey;
+    let profileGlobalStatePDAForProfileProg: PublicKey; // Added for Profile program's global state
 
     // Test data & shared state across tests
     let offerId: anchor.BN;
@@ -88,6 +89,7 @@ describe("Trade Lifecycle", () => {
 
         buyerProfilePDA = PublicKey.findProgramAddressSync([Buffer.from("profile"), buyer.publicKey.toBuffer()], PROFILE_PROGRAM_ID_PUBKEY)[0];
         sellerProfilePDA = PublicKey.findProgramAddressSync([Buffer.from("profile"), seller.publicKey.toBuffer()], PROFILE_PROGRAM_ID_PUBKEY)[0];
+        profileGlobalStatePDAForProfileProg = PublicKey.findProgramAddressSync([Buffer.from("profile_global_state")], PROFILE_PROGRAM_ID_PUBKEY)[0]; // Initialized here
 
         const tempChainFeeCollector = Keypair.generate();
         const tempWarchest = Keypair.generate();
@@ -355,7 +357,7 @@ describe("Trade Lifecycle", () => {
         expect(tradeAccountData.buyer.equals(buyer.publicKey)).to.be.true;
         expect(tradeAccountData.seller.equals(seller.publicKey)).to.be.true;
         expect(tradeAccountData.offerId.eq(offerId)).to.be.true;
-        expect(tradeAccountData.amount.eq(amountToTrade)).to.be.true;
+        expect(tradeAccountData.cryptoAmount.eq(amountToTrade)).to.be.true;
         expect(tradeAccountData.state.requestCreated).to.exist;
 
         const tradeGlobalDataAfter = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
@@ -366,17 +368,31 @@ describe("Trade Lifecycle", () => {
     it("Seller accepts the trade request", async () => {
         expect(tradePDA, "Trade PDA must be set").to.exist;
         const sellerContactForAccept = "seller_contact_accept@email.com";
-        const sellerEncKeyForAccept = "seller_enc_key_accept";
+
+        // Fetch necessary dynamic accounts for CPI contexts
+        const fetchedTradeAccount = await tradeProgram.account.trade.fetch(tradePDA);
+        const buyerProfileAuthority = fetchedTradeAccount.buyer;
+
+        const fetchedTradeGlobalState = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        // Assuming IDL converts hub_address to hubAddress for tradeGlobalState
+        const hubProgramIdForProfileCpi = fetchedTradeGlobalState.hubAddress; 
 
         await tradeProgram.methods
-            .acceptTrade(tradeId, sellerContactForAccept, sellerEncKeyForAccept)
+            .acceptTrade(tradeId, sellerContactForAccept) // Corrected arguments (removed sellerEncKeyForAccept)
             .accounts({
-                trade: tradePDA,
-                signer: seller.publicKey,
-                hubConfig: hubConfigPDA,
+                seller: seller.publicKey, // Corrected from signer
+                tradeAccount: tradePDA,  // Corrected from trade
+                
+                // Accounts for Profile CPI (as per Rust AcceptTrade struct)
                 profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
-                buyerProfile: buyerProfilePDA,
                 sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyerProfileAuthority, // Added
+                tradeGlobalState: tradeGlobalStatePDA, // Added
+                hubConfigForProfileCpi: hubConfigPDA, // Added (main hubConfig, Profile program expects ProfileHubConfigStub)
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi, // Added
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg, // Added
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg, // Added (can be same instance)
             })
             .signers([seller])
             .rpc();
@@ -386,50 +402,61 @@ describe("Trade Lifecycle", () => {
         console.log(`Trade ${tradeId.toString()} accepted by seller.`);
     });
 
-    it("Buyer funds the trade escrow with SOL", async () => {
+    it("Seller funds the trade escrow with SOL", async () => {
         expect(tradePDA, "Trade PDA must be set").to.exist;
-        expect(tradeEscrowPDA, "Trade Escrow PDA must be set").to.exist;
 
         const tradeAccountDataBefore = await tradeProgram.account.trade.fetch(tradePDA);
-        const amountToEscrow = tradeAccountDataBefore.amount;
-        const escrowInitialLamports = await provider.connection.getBalance(tradeEscrowPDA).catch(() => 0);
+        const amountToEscrow = tradeAccountDataBefore.cryptoAmount;
+        const tradeAccountLamportsBefore = await provider.connection.getBalance(tradePDA).catch(() => 0);
+
+        const buyerProfileAuthority = tradeAccountDataBefore.buyer;
+        const fetchedTradeGlobalState = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const hubProgramIdForProfileCpi = fetchedTradeGlobalState.hubAddress;
 
         await tradeProgram.methods
             .fundTradeEscrow(tradeId)
             .accounts({
-                trade: tradePDA,
-                buyer: buyer.publicKey,
-                tradeEscrowVault: tradeEscrowPDA,
-                hubConfig: hubConfigPDA,
-                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
-                buyerProfile: buyerProfilePDA,
-                sellerProfile: sellerProfilePDA,
+                funder: seller.publicKey,
+                tradeAccount: tradePDA,
                 systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyerProfileAuthority,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
             })
-            .signers([buyer])
+            .signers([seller])
             .rpc();
 
         const tradeAccountDataAfter = await tradeProgram.account.trade.fetch(tradePDA);
         expect(tradeAccountDataAfter.state.escrowFunded).to.exist;
+        expect(tradeAccountDataAfter.escrowCryptoFundedAmount.eq(amountToEscrow)).to.be.true;
 
-        const escrowLamportsAfter = await provider.connection.getBalance(tradeEscrowPDA);
-        expect(escrowLamportsAfter - escrowInitialLamports).to.equal(amountToEscrow.toNumber());
-        console.log(`Escrow for trade ${tradeId.toString()} funded. Escrow balance: ${escrowLamportsAfter}`);
+        const tradeAccountLamportsAfter = await provider.connection.getBalance(tradePDA);
+        expect(tradeAccountLamportsAfter - tradeAccountLamportsBefore).to.equal(amountToEscrow.toNumber());
+        console.log(`Escrow for trade ${tradeId.toString()} funded by seller. Trade account balance: ${tradeAccountLamportsAfter}`);
     });
 
-    it("Seller confirms fiat payment sent (FiatDeposited)", async () => {
+    it("Buyer confirms fiat payment sent (FiatDeposited)", async () => {
         expect(tradePDA, "Trade PDA must be set").to.exist;
         await tradeProgram.methods
             .confirmPaymentSent(tradeId)
             .accounts({
                 trade: tradePDA,
-                signer: seller.publicKey,
+                signer: buyer.publicKey,
                 hubConfig: hubConfigPDA,
                 profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
                 buyerProfile: buyerProfilePDA,
                 sellerProfile: sellerProfilePDA,
             })
-            .signers([seller])
+            .signers([buyer])
             .rpc();
 
         const tradeAccountData = await tradeProgram.account.trade.fetch(tradePDA);
@@ -439,58 +466,75 @@ describe("Trade Lifecycle", () => {
 
     it("Buyer releases the escrow to the seller", async () => {
         expect(tradePDA, "Trade PDA must be set").to.exist;
-        expect(tradeEscrowPDA, "Trade Escrow PDA must be set").to.exist;
         expect(chainFeeCollectorKey, "Chain fee collector key must be set").to.exist;
         expect(warchestKey, "Warchest key must be set").to.exist;
 
-        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        // Fetch dynamic accounts
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA); // For fees calculation
+        const tradeGlobalStateData = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const hubProgramIdForProfileCpi = tradeGlobalStateData.hubAddress;
 
         const sellerBalanceBefore = await provider.connection.getBalance(seller.publicKey);
-        const escrowBalanceBefore = await provider.connection.getBalance(tradeEscrowPDA);
+        // For native SOL, the funds are in the tradeAccount PDA itself
+        const tradeAccountLamportsBefore = await provider.connection.getBalance(tradePDA); 
         const chainFeeCollectorBalanceBefore = await provider.connection.getBalance(chainFeeCollectorKey);
         const warchestBalanceBefore = await provider.connection.getBalance(warchestKey);
 
         const tradeAccountDataBefore = await tradeProgram.account.trade.fetch(tradePDA);
-        const tradeAmount = tradeAccountDataBefore.amount;
+        const tradeAmount = tradeAccountDataBefore.cryptoAmount;
 
         await tradeProgram.methods
-            .releaseEscrow(tradeId)
+            .releaseEscrow(tradeId) // tradeId is _trade_id_arg
             .accounts({
-                trade: tradePDA,
-                signer: buyer.publicKey,
-                buyer: buyer.publicKey,
-                seller: seller.publicKey,
-                tradeEscrowVault: tradeEscrowPDA,
-                hubConfig: hubConfigPDA,
+                buyer: buyer.publicKey, // Signer is buyer
+                tradeAccount: tradePDA, // Escrowed SOL is here
+                tradeGlobalState: tradeGlobalStatePDA, // Added
+                seller: seller.publicKey, // Beneficiary of the trade
+                
+                hubConfigAccount: hubConfigPDA, // Name change
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi, // Added
                 chainFeeCollector: chainFeeCollectorKey,
                 warchest: warchestKey,
+                
                 profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
                 buyerProfile: buyerProfilePDA,
                 sellerProfile: sellerProfilePDA,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg, // Added
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg, // Added
+                
+                // SPL Token accounts are null for native SOL escrow
+                escrowVaultTokenAccount: null, // Added
+                sellerTokenAccount: null, // Added
+                tokenProgram: null, // Added
+
                 systemProgram: SystemProgram.programId,
             })
             .signers([buyer])
             .rpc();
 
         const tradeAccountDataAfter = await tradeProgram.account.trade.fetch(tradePDA);
-        expect(tradeAccountDataAfter.state.escrowReleased || tradeAccountDataAfter.state.settledForMaker || tradeAccountDataAfter.state.settledForSeller).to.exist;
+        // Check state. For release, it should be escrowReleased (or settled states if fees are zero/specific conditions)
+        expect(tradeAccountDataAfter.state.escrowReleased || tradeAccountDataAfter.state.settledForMaker || tradeAccountDataAfter.state.settledForSeller).to.exist; 
 
         const sellerBalanceAfter = await provider.connection.getBalance(seller.publicKey);
-        const escrowBalanceAfter = await provider.connection.getBalance(tradeEscrowPDA).catch(() => 0);
+        // Trade account PDA should be (nearly) zeroed out after release for native SOL
+        const tradeAccountLamportsAfter = await provider.connection.getBalance(tradePDA).catch(() => 0); 
         const chainFeeCollectorBalanceAfter = await provider.connection.getBalance(chainFeeCollectorKey);
         const warchestBalanceAfter = await provider.connection.getBalance(warchestKey);
 
         const chainFeeBps = hubConfigData.chainFeeBps;
         const warchestFeeBps = hubConfigData.warchestFeeBps;
-        const burnFeeBps = hubConfigData.burnFeeBps;
+        const burnFeeBps = hubConfigData.burnFeeBps; // Assuming burn fee is handled internally by sending to a dead address or similar
 
         const expectedChainFee = tradeAmount.mul(new anchor.BN(chainFeeBps)).div(new anchor.BN(10000));
         const expectedWarchestFee = tradeAmount.mul(new anchor.BN(warchestFeeBps)).div(new anchor.BN(10000));
-        const expectedBurnAmount = tradeAmount.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000));
-        const totalFees = expectedChainFee.add(expectedWarchestFee).add(expectedBurnAmount);
-        const expectedSellerAmount = tradeAmount.sub(totalFees);
+        const expectedBurnAmount = tradeAmount.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000)); // Burn does not go to an external account
+        const totalFeesExcludingBurn = expectedChainFee.add(expectedWarchestFee); // Seller receives amount after all fees (incl. burn)
+        const totalFeesIncludingBurn = totalFeesExcludingBurn.add(expectedBurnAmount);
+        const expectedSellerAmount = tradeAmount.sub(totalFeesIncludingBurn);
 
-        expect(escrowBalanceAfter < LAMPORTS_PER_SOL * 0.001).to.be.true;
+        // Check that the trade account is now (nearly) empty
+        expect(tradeAccountLamportsAfter < LAMPORTS_PER_SOL * 0.001, "Trade account should be nearly empty after release").to.be.true;
 
         expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(expectedSellerAmount.toNumber());
         expect(chainFeeCollectorBalanceAfter - chainFeeCollectorBalanceBefore).to.equal(expectedChainFee.toNumber());
@@ -499,6 +543,7 @@ describe("Trade Lifecycle", () => {
         console.log(`Escrow released for trade ${tradeId.toString()}. Seller received SOL: ${expectedSellerAmount.toNumber() / LAMPORTS_PER_SOL}`);
         console.log(`Chain fee collector received SOL: ${expectedChainFee.toNumber() / LAMPORTS_PER_SOL}`);
         console.log(`Warchest received SOL: ${expectedWarchestFee.toNumber() / LAMPORTS_PER_SOL}`);
+        console.log(`Burned amount (not transferred): ${expectedBurnAmount.toNumber() / LAMPORTS_PER_SOL}`);
     });
 
 }); 
