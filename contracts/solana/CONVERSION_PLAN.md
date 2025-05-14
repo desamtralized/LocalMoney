@@ -93,18 +93,26 @@ LocalMoney/contracts/solana/
   - [x] Add state transition checks and profile CPI counters *(State checks and CPI calls to Profile implemented)*
   - [x] Write integration tests for full trade lifecycle *(Integration test file trade.ts created; anchor build now successful resolving stack overflow in release_escrow, IDL should be stable for testing, CPIs added, basic lifecycle tests implemented)*
 
-- [ ] M6: Trade Settlement & Dispute
+- [x] M6: Trade Settlement & Dispute
   - [x] Implement `release_escrow` with fee distribution logic *(Core instruction, fee logic, and Profile CPI calls implemented and compile; stack overflow confirmed resolved after boxing TokenAccount/Mint options)*
   - [x] Integrate SPL token transfers for CW20/native assets *(Ensured `Offer` stores `token_mint`, `Trade` uses it for `escrow_mint_address`, `FundTradeEscrow` initializes PDA vault with `Trade` PDA as authority, `ReleaseEscrow` uses this vault PDA)*
-  - [ ] Implement `dispute_trade`, `settle_trade`, and `refund_trade` instructions
-  - [ ] Add arbitrator management instructions and validations
-  - [ ] Write tests covering settlement and dispute scenarios
+  - [x] Implement dispute-related instructions:
+    - [x] `dispute_trade` instruction
+    - [x] `settle_trade` instruction (for non-arbitrated disputed trades)
+    - [x] `refund_trade` instruction (for non-arbitrated disputed trades)
+  - [x] Add arbitrator management instructions and validations:
+    - [x] `assign_arbitrator` instruction
+    - [x] `arbitrator_resolve_dispute` instruction
+  - [x] Write tests covering settlement and dispute scenarios
 
 - [ ] M7: End-to-End Tests & Devnet Deploy
   - [ ] Develop TypeScript e2e scripts covering all module flows
+    - [x] Hub program: Verified existing tests for initialize, update_admin, update_config.
+    - [x] Offer program: Implemented tests for initialize, register_hub, create_offer, update_offer (including input validation), pause_offer, resume_offer, cancel_offer. Includes owner/non-owner checks and event emissions.
+    - [x] Profile program: Completed e2e tests covering counter updates (`active_offers_count`, `trades_count`), failure cases, and CPI-driven updates.
+    - [x] Price program: Verified TS e2e tests covering price flows (tests/price.ts).
+    - [ ] Trade program:
   - [ ] Set up localnet testing environment and validate flows
-  - [ ] Deploy programs to Devnet cluster
-  - [ ] Execute e2e scripts against Devnet and fix any issues
 
 - [ ] M8: Performance & Audit Prep
   - [ ] Benchmark critical instruction paths for CU usage

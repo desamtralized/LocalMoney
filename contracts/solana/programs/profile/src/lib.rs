@@ -129,10 +129,6 @@ pub mod profile {
                     .requested_trades_count
                     .checked_add(1)
                     .ok_or(ProfileError::NumericOverflow)?;
-                // Check active_trades_limit here if RequestCreated implies an active trade slot immediately
-                // Spec says: `RequestCreated` → +`requested_trades_count`, check `active_trades_limit`.
-                // This implies active_trades_limit might be checked against a potential increment to active_trades_count, not requested_trades_count.
-                // For now, let's assume active_trades_limit applies to actual active_trades_count.
             }
             TradeStateForProfileUpdate::RequestAcceptedOrEscrowFunded => {
                 require!(
@@ -155,24 +151,29 @@ pub mod profile {
                     .ok_or(ProfileError::NumericOverflow)?;
             }
             TradeStateForProfileUpdate::FinalizedErrorOrCancelled => {
-                // For states like Settled*, Refunded, Canceled which might just decrement active_trades_count
                 if profile.active_trades_count > 0 {
-                    // Ensure not to underflow if already 0
                     profile.active_trades_count = profile
                         .active_trades_count
                         .checked_sub(1)
                         .ok_or(ProfileError::NumericOverflow)?;
                 }
             }
+            TradeStateForProfileUpdate::DisputeOpened => {
+                profile.disputes_opened_count = profile
+                    .disputes_opened_count
+                    .checked_add(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+            }
         }
 
         profile.last_trade_timestamp = Clock::get()?.unix_timestamp as u64;
         msg!(
-            "Trade counts updated for {}. Active: {}, Requested: {}, Released: {}",
+            "Trade counts updated for {}. Active: {}, Requested: {}, Released: {}, Disputes Opened: {}",
             profile.authority,
             profile.active_trades_count,
             profile.requested_trades_count,
-            profile.released_trades_count
+            profile.released_trades_count,
+            profile.disputes_opened_count
         );
         Ok(())
     }
@@ -263,6 +264,8 @@ pub struct Profile {
     pub active_trades_count: u8, // Number of active trades the user is part of
     pub requested_trades_count: u64, // Total trades requested by/to the user
     pub released_trades_count: u64, // Total trades successfully released/completed
+    pub disputes_opened_count: u64, // Added: Total disputes opened by/against the user
+    pub disputes_resolved_count: u64, // Added: Total disputes resolved for the user
     pub last_trade_timestamp: u64, // Timestamp of the last trade activity
     pub created_at_timestamp: u64, // Timestamp when the profile was first interacted with (e.g. first contact update)
     pub bump: u8,                  // PDA bump seed
@@ -366,4 +369,5 @@ pub enum TradeStateForProfileUpdate {
     RequestAcceptedOrEscrowFunded, // +active_trades_count
     EscrowReleased, // +released_trades_count, -active_trades_count
     FinalizedErrorOrCancelled, // -active_trades_count (for Settled*, Refunded, Canceled)
+    DisputeOpened,  // Added: +disputes_opened_count
 }

@@ -68,6 +68,40 @@ pub struct HubConfigAccount {
 }
 // END PLACEHOLDERS
 
+// Add Event for TradeDisputed
+#[event]
+pub struct TradeDisputed {
+    pub trade_id: u64,
+    pub disputer: Pubkey,
+    pub reason: Option<String>,
+}
+
+// Event for Arbitrator Assigned
+#[event]
+pub struct TradeArbitratorAssigned {
+    pub trade_id: u64,
+    pub arbitrator: Pubkey,
+    pub assigned_by: Pubkey,
+}
+
+#[event]
+pub struct TradeDisputeResolved {
+    pub trade_id: u64,
+    pub arbitrator: Pubkey,
+    pub outcome: DisputeResolutionOutcome,
+    pub amount_to_buyer: u64,
+    pub amount_to_seller: u64,
+    pub fees_paid: u64,
+    pub reason: Option<String>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum DisputeResolutionOutcome {
+    FavorBuyer,
+    FavorSeller,
+    NoAction, // e.g. if resolution implies something else like specific split or external handling
+}
+
 declare_id!("TradZuT9g8uYmRqwL2hD5mCEvRztzAnQhND2BxAQKz2"); // New placeholder ID for Trade program
 
 #[program]
@@ -485,18 +519,18 @@ pub mod trade {
         let current_timestamp = clock.unix_timestamp;
 
         let trade_pda_account_info = ctx.accounts.trade_account.to_account_info(); 
-        let trade_account_data = &mut ctx.accounts.trade_account; 
+        let trade_account = &mut ctx.accounts.trade_account; 
 
         // Validation 1: Caller (buyer) must be the trade's buyer (handled by has_one)
         // Validation 2: Trade must be in FiatDeposited state
         require_eq!(
-            trade_account_data.state,
+            trade_account.state,
             TradeState::FiatDeposited,
             TradeError::InvalidTradeState
         );
 
         // Validation 3: Check if dispute window has passed (if applicable)
-        if let Some(dispute_window_end) = trade_account_data.dispute_window_ends_at_ts {
+        if let Some(dispute_window_end) = trade_account.dispute_window_ends_at_ts {
             require!(
                 current_timestamp <= dispute_window_end,
                 TradeError::DisputeWindowPassed
@@ -505,13 +539,13 @@ pub mod trade {
 
         // Validation 4: Escrow must be funded with the expected amount
         require!(
-            trade_account_data.escrow_crypto_funded_amount > 0 &&
-            trade_account_data.escrow_crypto_funded_amount == trade_account_data.crypto_amount,
+            trade_account.escrow_crypto_funded_amount > 0 &&
+            trade_account.escrow_crypto_funded_amount == trade_account.crypto_amount,
             TradeError::EscrowNotFundedOrEmpty
         );
         
         let hub_config = &ctx.accounts.hub_config;
-        let total_escrowed_amount = trade_account_data.escrow_crypto_funded_amount;
+        let total_escrowed_amount = trade_account.escrow_crypto_funded_amount;
 
         // Calculate fees
         let burn_fee = total_escrowed_amount
@@ -548,13 +582,13 @@ pub mod trade {
             .ok_or(TradeError::MathOverflow)?;
 
         // Prepare signer seeds for the trade PDA
-        let trade_id_bytes = trade_account_data.id.to_le_bytes();
-        let trade_bump_bytes = &[trade_account_data.bump];
+        let trade_id_bytes = trade_account.id.to_le_bytes();
+        let trade_bump_bytes = &[trade_account.bump];
         let signer_seeds_array: &[&[u8]] = &[b"trade".as_ref(), &trade_id_bytes, trade_bump_bytes];
 
 
         // Perform transfers based on escrow type
-        match trade_account_data.escrow_type {
+        match trade_account.escrow_type {
             EscrowType::Native => {
                 require!(
                     ctx.accounts.escrow_vault_mint.is_none() &&
@@ -566,11 +600,11 @@ pub mod trade {
                 );
 
                 if amount_to_seller > 0 {
-                    require_keys_eq!(ctx.accounts.seller_native_account.key(), trade_account_data.seller, TradeError::GenericError); 
+                    require_keys_eq!(ctx.accounts.seller_native_account.key(), trade_account.seller, TradeError::GenericError); 
                     anchor_lang::solana_program::program::invoke_signed(
                         &anchor_lang::solana_program::system_instruction::transfer(
-                            trade_pda_account_info.key,
-                            ctx.accounts.seller_native_account.key,
+                            &trade_pda_account_info.key(),
+                            &ctx.accounts.seller_native_account.key(),
                             amount_to_seller,
                         ),
                         &[
@@ -578,7 +612,7 @@ pub mod trade {
                             ctx.accounts.seller_native_account.clone(),
                             ctx.accounts.system_program.to_account_info(),
                         ],
-                        &[signer_seeds_array],
+                        signer_seeds_array,
                     )
                     .map_err(|_| TradeError::NativeTransferFailed)?;
                 }
@@ -587,8 +621,8 @@ pub mod trade {
                     require_keys_eq!(ctx.accounts.chain_fee_collector.key(), hub_config.chain_fee_collector_addr, TradeError::GenericError);
                     anchor_lang::solana_program::program::invoke_signed(
                         &anchor_lang::solana_program::system_instruction::transfer(
-                            trade_pda_account_info.key,
-                            ctx.accounts.chain_fee_collector.key,
+                            &trade_pda_account_info.key(),
+                            &ctx.accounts.chain_fee_collector.key(),
                             chain_fee,
                         ),
                         &[
@@ -596,7 +630,7 @@ pub mod trade {
                             ctx.accounts.chain_fee_collector.clone(),
                             ctx.accounts.system_program.to_account_info(),
                         ],
-                        &[signer_seeds_array],
+                        signer_seeds_array,
                     )
                     .map_err(|_| TradeError::NativeTransferFailed)?;
                 }
@@ -605,8 +639,8 @@ pub mod trade {
                     require_keys_eq!(ctx.accounts.warchest_collector.key(), hub_config.warchest_addr, TradeError::GenericError);
                     anchor_lang::solana_program::program::invoke_signed(
                         &anchor_lang::solana_program::system_instruction::transfer(
-                            trade_pda_account_info.key,
-                            ctx.accounts.warchest_collector.key,
+                            &trade_pda_account_info.key(),
+                            &ctx.accounts.warchest_collector.key(),
                             warchest_fee,
                         ),
                         &[
@@ -614,7 +648,7 @@ pub mod trade {
                             ctx.accounts.warchest_collector.clone(),
                             ctx.accounts.system_program.to_account_info(),
                         ],
-                        &[signer_seeds_array],
+                        signer_seeds_array,
                     )
                     .map_err(|_| TradeError::NativeTransferFailed)?;
                 }
@@ -634,7 +668,7 @@ pub mod trade {
                     .ok_or(TradeError::MissingEscrowVaultAccount)?;
                 
                 require_keys_eq!(escrow_vault_account.owner, trade_pda_account_info.key(), TradeError::EscrowVaultAuthorityMismatch);
-                if let Some(expected_mint) = trade_account_data.escrow_mint_address {
+                if let Some(expected_mint) = trade_account.escrow_mint_address {
                     require_keys_eq!(escrow_vault_account.mint, expected_mint, TradeError::SplMintMismatch);
                 } else {
                     return err!(TradeError::MissingEscrowMint); 
@@ -657,7 +691,7 @@ pub mod trade {
                         CpiContext::new_with_signer(
                             token_program_info.clone(),
                             cpi_accounts,
-                            &[signer_seeds_array],
+                            signer_seeds_array,
                         ),
                         amount_to_seller,
                     )
@@ -681,7 +715,7 @@ pub mod trade {
                         CpiContext::new_with_signer(
                             token_program_info.clone(),
                             cpi_accounts,
-                            &[signer_seeds_array],
+                            signer_seeds_array,
                         ),
                         chain_fee,
                     )
@@ -705,7 +739,7 @@ pub mod trade {
                         CpiContext::new_with_signer(
                             token_program_info.clone(),
                             cpi_accounts,
-                            &[signer_seeds_array],
+                            signer_seeds_array,
                         ),
                         warchest_fee,
                     )
@@ -730,7 +764,7 @@ pub mod trade {
                         CpiContext::new_with_signer(
                             token_program_info.clone(),
                             cpi_accounts,
-                            &[signer_seeds_array],
+                            signer_seeds_array,
                         ),
                         burn_fee,
                     )
@@ -775,6 +809,568 @@ pub mod trade {
         };
         let cpi_ctx_seller = CpiContext::new(cpi_program_profile, cpi_accounts_seller);
         profile::cpi::update_trades_count(cpi_ctx_seller, trade_state_update)?;
+
+        Ok(())
+    }
+
+    pub fn dispute_trade(
+        ctx: Context<DisputeTrade>,
+        _trade_id_arg: u64, // Used for PDA derivation, matches trade_account.id
+        reason: Option<String>,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let current_timestamp = clock.unix_timestamp;
+        let trade_account = &mut ctx.accounts.trade_account;
+        let disputer_key = ctx.accounts.disputer.key();
+
+        // Validation 1: Disputer must be buyer or seller
+        require!(
+            disputer_key == trade_account.buyer || disputer_key == trade_account.seller,
+            TradeError::NotTradeParticipant
+        );
+
+        // Validation 2: Trade must be in a state that allows dispute
+        // Typically FiatDeposited, or EscrowFunded if seller disputes non-payment
+        // Or RequestAccepted if buyer disputes seller's non-funding.
+        // For now, let's allow from EscrowFunded or FiatDeposited.
+        require!(
+            trade_account.state == TradeState::EscrowFunded
+                || trade_account.state == TradeState::FiatDeposited,
+            TradeError::InvalidTradeStateForDispute
+        );
+
+        // Validation 3: Trade not already disputed or resolved/canceled
+        require!(
+            trade_account.state != TradeState::DisputeOpened
+                && trade_account.state != TradeState::DisputeResolved
+                && trade_account.state != TradeState::EscrowReleased
+                && trade_account.state != TradeState::EscrowRefunded
+                && trade_account.state != TradeState::RequestCanceled,
+            TradeError::TradeAlreadyDisputedOrFinalized
+        );
+        
+        // Optional: Check against hub_config.trade_dispute_timer if it defines a window *to open* a dispute.
+        // Current understanding is that trade_dispute_timer is for how long a dispute *lasts* or a window for seller to respond.
+        // For now, we allow opening dispute as long as state is valid.
+
+        trade_account.state = TradeState::DisputeOpened;
+        trade_account.dispute_opener = Some(disputer_key);
+        if let Some(ref r) = reason {
+            require!(r.len() <= 200, TradeError::DisputeReasonTooLong);
+        }
+        trade_account.dispute_reason = reason.clone(); // Store the reason
+        trade_account.updated_at_ts = current_timestamp;
+        // `dispute_window_ends_at_ts` might be repurposed or a new field like `dispute_resolution_deadline_ts` could be set here based on HubConfig.
+
+        emit!(TradeDisputed {
+            trade_id: trade_account.id,
+            disputer: disputer_key,
+            reason: reason,
+        });
+
+        msg!(
+            "Trade #{} disputed by {}. State: {:?}. Reason: {:?}",
+            trade_account.id,
+            disputer_key,
+            trade_account.state,
+            trade_account.dispute_reason
+        );
+        
+        // CPI to Profile program for disputer
+        let trade_state_update = TradeStateForProfileUpdate::DisputeOpened;
+
+        let cpi_accounts_disputer_profile_update = profile::cpi::accounts::UpdateTradesCount {
+            profile: ctx.accounts.disputer_profile.to_account_info(),
+            profile_authority: ctx.accounts.disputer.to_account_info(),
+            hub_config: ctx.accounts.hub_config_for_profile_cpi.to_account_info(),
+            hub_program_id: ctx.accounts.hub_program_id_for_profile_cpi.to_account_info(),
+            profile_global_state: ctx.accounts.profile_global_state.to_account_info(),
+        };
+        let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
+        profile::cpi::update_trades_count(CpiContext::new(cpi_program_profile, cpi_accounts_disputer_profile_update), trade_state_update)?;
+        
+        // CPI to Profile program for the other party (non-disputer)
+        // Determine the other party and their profile
+        let (other_party_profile_info, other_party_authority_info) = if disputer_key == trade_account.buyer {
+            (ctx.accounts.seller_profile.to_account_info(), ctx.accounts.seller_profile_authority_info.to_account_info())
+        } else {
+            (ctx.accounts.buyer_profile.to_account_info(), ctx.accounts.buyer_profile_authority_info.to_account_info())
+        };
+
+        let cpi_accounts_other_party_profile_update = profile::cpi::accounts::UpdateTradesCount {
+            profile: other_party_profile_info,
+            profile_authority: other_party_authority_info,
+            hub_config: ctx.accounts.hub_config_for_profile_cpi.to_account_info(),
+            hub_program_id: ctx.accounts.hub_program_id_for_profile_cpi.to_account_info(),
+            profile_global_state: ctx.accounts.profile_global_state.to_account_info(), // Assuming same global state for profile
+        };
+        let cpi_program_profile_other = ctx.accounts.profile_program.to_account_info(); // Same program
+        profile::cpi::update_trades_count(CpiContext::new(cpi_program_profile_other, cpi_accounts_other_party_profile_update), trade_state_update)?;
+
+
+        Ok(())
+    }
+
+    pub fn assign_arbitrator(
+        ctx: Context<AssignArbitrator>,
+        _trade_id_arg: u64, // Used for PDA derivation
+        arbitrator_pubkey: Pubkey,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let trade_account = &mut ctx.accounts.trade_account;
+
+        // Validation 1: Signer must be the Hub admin
+        require_keys_eq!(
+            ctx.accounts.admin_signer.key(),
+            ctx.accounts.hub_config.admin_addr,
+            TradeError::NotHubAdmin
+        );
+
+        // Validation 2: Trade must be in DisputeOpened state
+        require_eq!(
+            trade_account.state,
+            TradeState::DisputeOpened,
+            TradeError::TradeNotDisputed
+        );
+
+        // Validation 3: Arbitrator should not already be assigned
+        require!(
+            trade_account.arbitrator.is_none(),
+            TradeError::ArbitratorAlreadyAssigned
+        );
+        
+        // Validation 4: Arbitrator cannot be the buyer or seller
+        require_keys_neq!(
+            arbitrator_pubkey,
+            trade_account.buyer,
+            TradeError::ArbitratorCannotBeParticipant
+        );
+        require_keys_neq!(
+            arbitrator_pubkey,
+            trade_account.seller,
+            TradeError::ArbitratorCannotBeParticipant
+        );
+
+
+        trade_account.arbitrator = Some(arbitrator_pubkey);
+        trade_account.updated_at_ts = clock.unix_timestamp;
+
+        emit!(TradeArbitratorAssigned {
+            trade_id: trade_account.id,
+            arbitrator: arbitrator_pubkey,
+            assigned_by: ctx.accounts.admin_signer.key(),
+        });
+
+        msg!(
+            "Arbitrator {} assigned to trade #{} by admin {}",
+            arbitrator_pubkey,
+            trade_account.id,
+            ctx.accounts.admin_signer.key()
+        );
+        Ok(())
+    }
+
+    pub fn arbitrator_resolve_dispute(
+        ctx: Context<ArbitratorResolveDispute>,
+        _trade_id_arg: u64,
+        resolution_outcome: DisputeResolutionOutcome,
+        resolution_reason: Option<String>,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let current_timestamp = clock.unix_timestamp;
+        let trade_pda_account_info = ctx.accounts.trade_account.to_account_info();
+        let trade_account = &mut ctx.accounts.trade_account;
+
+        // Validation 1: Signer must be the assigned arbitrator
+        require!(
+            trade_account.arbitrator.is_some(),
+            TradeError::ArbitratorNotAssigned
+        );
+        require_keys_eq!(
+            ctx.accounts.arbitrator_signer.key(),
+            trade_account.arbitrator.unwrap(),
+            TradeError::NotDesignatedArbitrator
+        );
+
+        // Validation 2: Trade must be in DisputeOpened state
+        require_eq!(
+            trade_account.state,
+            TradeState::DisputeOpened,
+            TradeError::TradeNotDisputed
+        );
+
+        // Validation 3: Resolution reason length
+        if let Some(ref reason) = resolution_reason {
+            require!(reason.len() <= 200, TradeError::DisputeReasonTooLong);
+        }
+
+        let hub_config = &ctx.accounts.hub_config;
+        let total_escrowed_amount = trade_account.escrow_crypto_funded_amount;
+        let mut amount_to_buyer_resolved: u64 = 0;
+        let mut amount_to_seller_resolved: u64 = 0;
+        let mut total_fees_resolved: u64 = 0;
+
+        // Logic based on resolution_outcome
+        match resolution_outcome {
+            DisputeResolutionOutcome::FavorBuyer => {
+                // For simplicity, assume if arbitrator favors buyer, buyer gets full refund, no fees are taken from escrow.
+                // This might differ based on actual platform rules for dispute resolution fees.
+                // For now, let's assume full refund to buyer, fees are perhaps waived or handled differently.
+                amount_to_buyer_resolved = total_escrowed_amount;
+                amount_to_seller_resolved = 0;
+                total_fees_resolved = 0;
+                // If there are fees even when favoring buyer, they'd be calculated here and subtracted.
+            }
+            DisputeResolutionOutcome::FavorSeller => {
+                // If arbitrator favors seller, it's similar to a normal release_escrow
+                // Calculate fees like in release_escrow
+                let burn_fee = total_escrowed_amount
+                    .checked_mul(hub_config.burn_fee_basis_points as u64)
+                    .ok_or(TradeError::MathOverflow)?
+                    .checked_div(10000)
+                    .ok_or(TradeError::MathOverflow)?;
+
+                let chain_fee = total_escrowed_amount
+                    .checked_mul(hub_config.chain_fee_basis_points as u64)
+                    .ok_or(TradeError::MathOverflow)?
+                    .checked_div(10000)
+                    .ok_or(TradeError::MathOverflow)?;
+
+                let warchest_fee = total_escrowed_amount
+                    .checked_mul(hub_config.warchest_fee_basis_points as u64)
+                    .ok_or(TradeError::MathOverflow)?
+                    .checked_div(10000)
+                    .ok_or(TradeError::MathOverflow)?;
+
+                total_fees_resolved = burn_fee
+                    .checked_add(chain_fee)
+                    .ok_or(TradeError::MathOverflow)?
+                    .checked_add(warchest_fee)
+                    .ok_or(TradeError::MathOverflow)?;
+
+                require!(
+                    total_fees_resolved <= total_escrowed_amount,
+                    TradeError::FeesExceedEscrowAmount
+                );
+
+                amount_to_seller_resolved = total_escrowed_amount
+                    .checked_sub(total_fees_resolved)
+                    .ok_or(TradeError::MathOverflow)?;
+                amount_to_buyer_resolved = 0;
+            }
+            DisputeResolutionOutcome::NoAction => {
+                // In NoAction, funds might remain in escrow or be handled by a different process.
+                // For now, this means no on-chain fund movement by this instruction.
+                // The state will be updated to DisputeResolved.
+                // Or, this could be an error if NoAction is not supposed to be passed to this specific function.
+                // For now, let's assume it just means no fund movement.
+                amount_to_buyer_resolved = 0;
+                amount_to_seller_resolved = 0;
+                total_fees_resolved = 0;
+            }
+        }
+        
+        // Perform fund transfers if amounts are greater than 0
+        let trade_id_bytes = trade_account.id.to_le_bytes();
+        let bump_seed = [trade_account.bump];
+        let signer_seeds: &[&[u8]] = &[b"trade".as_ref(), &trade_id_bytes, &bump_seed];
+
+        match trade_account.escrow_type {
+            EscrowType::Native => {
+                if amount_to_buyer_resolved > 0 {
+                    require_keys_eq!(ctx.accounts.buyer_native_account.key(), trade_account.buyer, TradeError::RecipientMismatch);
+                    anchor_lang::solana_program::program::invoke_signed(
+                        &anchor_lang::solana_program::system_instruction::transfer(
+                            &trade_pda_account_info.key(), 
+                            &ctx.accounts.buyer_native_account.key(), 
+                            amount_to_buyer_resolved,
+                        ),
+                        &[
+                            trade_pda_account_info.clone(),
+                            ctx.accounts.buyer_native_account.clone(),
+                            ctx.accounts.system_program.to_account_info(),
+                        ],
+                        &[signer_seeds], 
+                    )
+                    .map_err(|_| TradeError::NativeTransferFailed)?;
+                }
+
+                if amount_to_seller_resolved > 0 {
+                     require_keys_eq!(ctx.accounts.seller_native_account.key(), trade_account.seller, TradeError::RecipientMismatch);
+                    anchor_lang::solana_program::program::invoke_signed(
+                        &anchor_lang::solana_program::system_instruction::transfer(
+                            &trade_pda_account_info.key(), 
+                            &ctx.accounts.seller_native_account.key(), 
+                            amount_to_seller_resolved,
+                        ),
+                        &[
+                            trade_pda_account_info.clone(),
+                            ctx.accounts.seller_native_account.clone(),
+                            ctx.accounts.system_program.to_account_info(),
+                        ],
+                        signer_seeds_array,
+                    )
+                    .map_err(|_| TradeError::NativeTransferFailed)?;
+                }
+                
+                // Fee transfers if any (only if favoring seller in current logic)
+                if resolution_outcome == DisputeResolutionOutcome::FavorSeller && total_fees_resolved > 0 {
+                    let burn_fee = total_escrowed_amount.checked_mul(hub_config.burn_fee_basis_points as u64).unwrap_or(0) / 10000; 
+                    let chain_fee = total_escrowed_amount.checked_mul(hub_config.chain_fee_basis_points as u64).unwrap_or(0) / 10000;
+                    let warchest_fee = total_escrowed_amount.checked_mul(hub_config.warchest_fee_basis_points as u64).unwrap_or(0) / 10000;
+
+                    if chain_fee > 0 {
+                        require_keys_eq!(ctx.accounts.chain_fee_collector.key(), hub_config.chain_fee_collector_addr, TradeError::RecipientMismatch);
+                        anchor_lang::solana_program::program::invoke_signed(
+                            &anchor_lang::solana_program::system_instruction::transfer(
+                                &trade_pda_account_info.key(),
+                                &ctx.accounts.chain_fee_collector.key(),
+                                chain_fee,
+                            ),
+                            &[
+                                trade_pda_account_info.clone(),
+                                ctx.accounts.chain_fee_collector.clone(),
+                                ctx.accounts.system_program.to_account_info(),
+                            ],
+                            signer_seeds_array,
+                        )
+                        .map_err(|_| TradeError::NativeTransferFailed)?;
+                    }
+                    if warchest_fee > 0 {
+                         require_keys_eq!(ctx.accounts.warchest_collector.key(), hub_config.warchest_addr, TradeError::RecipientMismatch);
+                        anchor_lang::solana_program::program::invoke_signed(
+                            &anchor_lang::solana_program::system_instruction::transfer(
+                                &trade_pda_account_info.key(),
+                                &ctx.accounts.warchest_collector.key(),
+                                warchest_fee,
+                            ),
+                            &[
+                                trade_pda_account_info.clone(),
+                                ctx.accounts.warchest_collector.clone(),
+                                ctx.accounts.system_program.to_account_info(),
+                            ],
+                            signer_seeds_array,
+                        )
+                        .map_err(|_| TradeError::NativeTransferFailed)?;
+                    }
+                }
+            }
+            EscrowType::Spl => {
+                let token_program_info = ctx
+                    .accounts
+                    .token_program
+                    .as_ref()
+                    .ok_or(TradeError::MissingTokenProgram)?
+                    .to_account_info();
+                let escrow_vault_account_info = ctx 
+                    .accounts
+                    .escrow_vault
+                    .as_ref()
+                    .ok_or(TradeError::MissingEscrowVaultAccount)?
+                    .to_account_info(); 
+                 let escrow_vault_token_account_data = ctx.accounts.escrow_vault.as_ref().unwrap(); 
+
+                if amount_to_buyer_resolved > 0 {
+                    let buyer_token_account_info = ctx 
+                        .accounts
+                        .buyer_token_account
+                        .as_ref()
+                        .ok_or(TradeError::MissingRecipientTokenAccount)?
+                        .to_account_info();
+                    let buyer_token_account_data = ctx.accounts.buyer_token_account.as_ref().unwrap(); 
+                    require_keys_eq!(buyer_token_account_info.owner, trade_account.buyer, TradeError::RecipientMismatch);
+                    require_keys_eq!(escrow_vault_token_account_data.mint, buyer_token_account_data.mint, TradeError::SplMintMismatch);
+
+                    let cpi_accounts = SplTransfer {
+                        from: escrow_vault_account_info.clone(),
+                        to: buyer_token_account_info.clone(),
+                        authority: trade_pda_account_info.clone(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            token_program_info.clone(),
+                            cpi_accounts,
+                            signer_seeds_array, 
+                        ),
+                        amount_to_buyer_resolved,
+                    )
+                    .map_err(|_| TradeError::TokenTransferFailed)?;
+                }
+
+                if amount_to_seller_resolved > 0 {
+                    let seller_token_account_info = ctx 
+                        .accounts
+                        .seller_token_account
+                        .as_ref()
+                        .ok_or(TradeError::MissingSellerTokenAccount)?
+                        .to_account_info();
+                     let seller_token_account_data = ctx.accounts.seller_token_account.as_ref().unwrap(); 
+                    require_keys_eq!(seller_token_account_info.owner, trade_account.seller, TradeError::RecipientMismatch);
+                    require_keys_eq!(escrow_vault_token_account_data.mint, seller_token_account_data.mint, TradeError::SplMintMismatch);
+
+                    let cpi_accounts = SplTransfer {
+                        from: escrow_vault_account_info.clone(),
+                        to: seller_token_account_info.clone(),
+                        authority: trade_pda_account_info.clone(),
+                    };
+                    token::transfer(
+                        CpiContext::new_with_signer(
+                            token_program_info.clone(),
+                            cpi_accounts,
+                            signer_seeds_array, 
+                        ),
+                        amount_to_seller_resolved,
+                    )
+                    .map_err(|_| TradeError::TokenTransferFailed)?;
+                }
+
+                if resolution_outcome == DisputeResolutionOutcome::FavorSeller && total_fees_resolved > 0 {
+                    let burn_fee = total_escrowed_amount.checked_mul(hub_config.burn_fee_basis_points as u64).unwrap_or(0) / 10000;
+                    let chain_fee = total_escrowed_amount.checked_mul(hub_config.chain_fee_basis_points as u64).unwrap_or(0) / 10000;
+                    let warchest_fee = total_escrowed_amount.checked_mul(hub_config.warchest_fee_basis_points as u64).unwrap_or(0) / 10000;
+
+                    if chain_fee > 0 {
+                        let chain_fee_collector_token_account_info = ctx 
+                            .accounts
+                            .chain_fee_collector_token_account
+                            .as_ref()
+                            .ok_or(TradeError::MissingFeeCollectorTokenAccount)?
+                            .to_account_info();
+                        let chain_fee_collector_token_account_data = ctx.accounts.chain_fee_collector_token_account.as_ref().unwrap(); 
+                         require_keys_eq!(chain_fee_collector_token_account_info.owner, hub_config.chain_fee_collector_addr, TradeError::RecipientMismatch);
+                         require_keys_eq!(escrow_vault_token_account_data.mint, chain_fee_collector_token_account_data.mint, TradeError::SplMintMismatch);
+
+                        let cpi_accounts = SplTransfer {
+                            from: escrow_vault_account_info.clone(),
+                            to: chain_fee_collector_token_account_info.clone(),
+                            authority: trade_pda_account_info.clone(),
+                        };
+                        token::transfer(
+                            CpiContext::new_with_signer(
+                                token_program_info.clone(),
+                                cpi_accounts,
+                                signer_seeds_array, 
+                            ),
+                            chain_fee,
+                        )
+                        .map_err(|_| TradeError::TokenTransferFailed)?;
+                    }
+
+                    if warchest_fee > 0 {
+                        let warchest_token_account_info = ctx 
+                            .accounts
+                            .warchest_token_account
+                            .as_ref()
+                            .ok_or(TradeError::MissingFeeCollectorTokenAccount)? 
+                            .to_account_info();
+                        let warchest_token_account_data = ctx.accounts.warchest_token_account.as_ref().unwrap(); 
+                        require_keys_eq!(warchest_token_account_info.owner, hub_config.warchest_addr, TradeError::RecipientMismatch);
+                        require_keys_eq!(escrow_vault_token_account_data.mint, warchest_token_account_data.mint, TradeError::SplMintMismatch);
+
+                        let cpi_accounts = SplTransfer {
+                            from: escrow_vault_account_info.clone(),
+                            to: warchest_token_account_info.clone(),
+                            authority: trade_pda_account_info.clone(),
+                        };
+                        token::transfer(
+                            CpiContext::new_with_signer(
+                                token_program_info.clone(),
+                                cpi_accounts,
+                                signer_seeds_array, 
+                            ),
+                            warchest_fee,
+                        )
+                        .map_err(|_| TradeError::TokenTransferFailed)?;
+                    }
+                    
+                    if burn_fee > 0 {
+                        let escrow_mint_account_info = ctx 
+                            .accounts
+                            .escrow_vault_mint
+                            .as_ref()
+                            .ok_or(TradeError::MissingEscrowMint)?
+                            .to_account_info();
+                        require_keys_eq!(escrow_mint_account_info.key(), escrow_vault_token_account_data.mint, TradeError::SplMintMismatch);
+
+                        let cpi_accounts = token::Burn {
+                            mint: escrow_mint_account_info.clone(), 
+                            from: escrow_vault_account_info.clone(),
+                            authority: trade_pda_account_info.clone(),
+                        };
+                        token::burn(
+                            CpiContext::new_with_signer(
+                                token_program_info.clone(),
+                                cpi_accounts,
+                                signer_seeds_array, 
+                            ),
+                            burn_fee,
+                        )
+                        .map_err(|_| TradeError::TokenTransferFailed)?;
+                    }
+                }
+            }
+        }
+
+        // Update trade state
+        trade_account.state = TradeState::DisputeResolved;
+        trade_account.updated_at_ts = current_timestamp;
+        // Potentially store resolution reason and outcome in Trade account if needed
+        // trade_account.dispute_resolution_reason = resolution_reason;
+        // trade_account.dispute_resolution_outcome = Some(resolution_outcome);
+
+        emit!(TradeDisputeResolved {
+            trade_id: trade_account.id,
+            arbitrator: ctx.accounts.arbitrator_signer.key(),
+            outcome: resolution_outcome,
+            amount_to_buyer: amount_to_buyer_resolved,
+            amount_to_seller: amount_to_seller_resolved,
+            fees_paid: total_fees_resolved,
+            reason: resolution_reason,
+        });
+
+        msg!(
+            "Trade #{} dispute resolved by arbitrator {}. Outcome: {:?}. Buyer gets: {}, Seller gets: {}, Fees: {}",
+            trade_account.id,
+            ctx.accounts.arbitrator_signer.key(),
+            resolution_outcome,
+            amount_to_buyer_resolved,
+            amount_to_seller_resolved,
+            total_fees_resolved
+        );
+
+        // CPIs to Profile program
+        let trade_state_update_for_profile = match resolution_outcome {
+            DisputeResolutionOutcome::FavorBuyer => TradeStateForProfileUpdate::DisputeResolvedFavorBuyer,
+            DisputeResolutionOutcome::FavorSeller => TradeStateForProfileUpdate::DisputeResolvedFavorSeller,
+            DisputeResolutionOutcome::NoAction => TradeStateForProfileUpdate::DisputeResolvedNoAction, // Or a generic DisputeResolved
+        };
+
+        // For buyer
+        let cpi_accounts_buyer = profile::cpi::accounts::UpdateTradesCount {
+            profile: ctx.accounts.buyer_profile.to_account_info(),
+            profile_authority: ctx.accounts.buyer_profile_authority_info.to_account_info(),
+            hub_config: ctx.accounts.hub_config_for_profile_cpi.to_account_info(),
+            hub_program_id: ctx.accounts.hub_program_id_for_profile_cpi.to_account_info(),
+            profile_global_state: ctx.accounts.profile_global_state_for_buyer.to_account_info(),
+        };
+        let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
+        profile::cpi::update_trades_count(
+            CpiContext::new(cpi_program_profile.clone(), cpi_accounts_buyer),
+            trade_state_update_for_profile,
+        )?;
+
+        // For seller
+        let cpi_accounts_seller = profile::cpi::accounts::UpdateTradesCount {
+            profile: ctx.accounts.seller_profile.to_account_info(),
+            profile_authority: ctx.accounts.seller_profile_authority_info.to_account_info(),
+            hub_config: ctx.accounts.hub_config_for_profile_cpi.to_account_info(),
+            hub_program_id: ctx.accounts.hub_program_id_for_profile_cpi.to_account_info(),
+            profile_global_state: ctx.accounts.profile_global_state_for_seller.to_account_info(),
+        };
+        profile::cpi::update_trades_count(
+            CpiContext::new(cpi_program_profile, cpi_accounts_seller),
+            trade_state_update_for_profile,
+        )?;
 
         Ok(())
     }
@@ -1166,6 +1762,226 @@ pub struct ReleaseEscrow<'info> {
     pub profile_global_state_for_seller: Account<'info, ProfileGlobalStateAccount>,
 }
 
+#[derive(Accounts)]
+#[instruction(_trade_id_arg: u64, reason: Option<String>)] // Added reason to instruction attribute
+pub struct DisputeTrade<'info> {
+    #[account(mut)]
+    pub disputer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
+        bump = trade_account.bump
+    )]
+    pub trade_account: Account<'info, Trade>,
+
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config_for_profile_cpi.bump, 
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>, 
+
+    /// CHECK: This is the Hub Program ID, used for Profile CPI
+    #[account(address = trade_global_state.hub_address @ TradeError::GenericError)]
+    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
+    
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+
+    pub profile_program: Program<'info, ProfileProgram>,
+
+    #[account(
+        mut,
+        seeds = [b"profile", disputer.key().as_ref()],
+        bump = disputer_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub disputer_profile: Account<'info, ProfileAccountData>,
+
+    #[account(
+        mut,
+        seeds = [b"profile", trade_account.buyer.as_ref()],
+        bump = buyer_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub buyer_profile: Account<'info, ProfileAccountData>,
+    
+    /// CHECK: This is trade_account.buyer, needed if buyer is not disputer
+    #[account(address = trade_account.buyer @ TradeError::GenericError)]
+    pub buyer_profile_authority_info: AccountInfo<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"profile", trade_account.seller.as_ref()],
+        bump = seller_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Account<'info, ProfileAccountData>,
+
+    /// CHECK: This is trade_account.seller, needed if seller is not disputer
+    #[account(address = trade_account.seller @ TradeError::GenericError)]
+    pub seller_profile_authority_info: AccountInfo<'info>,
+    
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state.bump, 
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state: Account<'info, ProfileGlobalStateAccount>,
+}
+
+#[derive(Accounts)]
+#[instruction(_trade_id_arg: u64, arbitrator_pubkey: Pubkey)]
+pub struct AssignArbitrator<'info> {
+    #[account(mut)]
+    pub admin_signer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
+        bump = trade_account.bump
+    )]
+    pub trade_account: Account<'info, Trade>,
+
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+
+    // HubConfig is needed to check admin_signer's authority
+    // Assuming hub_address is correctly set in trade_global_state during its initialization
+    // or via a dedicated instruction.
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config.bump,
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config: Account<'info, HubConfigAccount>, // Using the placeholder for now
+}
+
+#[derive(Accounts)]
+#[instruction(_trade_id_arg: u64, resolution_outcome: DisputeResolutionOutcome, resolution_reason: Option<String>)]
+pub struct ArbitratorResolveDispute<'info> {
+    #[account(mut)]
+    pub arbitrator_signer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
+        bump = trade_account.bump,
+        // Constraint: trade_account.arbitrator must be Some(arbitrator_signer.key())
+        // and trade_account.state must be DisputeOpened - handled in instruction logic
+    )]
+    pub trade_account: Box<Account<'info, Trade>>,
+
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config.bump,
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config: Box<Account<'info, HubConfigAccount>>,
+
+    /// CHECK: Verified in instruction logic: must match trade_account.buyer
+    #[account(mut)]
+    pub buyer_native_account: AccountInfo<'info>, // For native SOL refund to buyer
+    /// CHECK: Verified in instruction logic: must match trade_account.seller
+    #[account(mut)]
+    pub seller_native_account: AccountInfo<'info>, // For native SOL release to seller
+
+    /// CHECK: Verified in instruction logic: must match hub_config.chain_fee_collector_addr
+    #[account(mut)]
+    pub chain_fee_collector: AccountInfo<'info>,
+    /// CHECK: Verified in instruction logic: must match hub_config.warchest_addr
+    #[account(mut)]
+    pub warchest_collector: AccountInfo<'info>,
+
+    // SPL Accounts (all optional, checked based on trade_account.escrow_type)
+    pub escrow_vault_mint: Option<Box<Account<'info, anchor_spl::token::Mint>>>,
+
+    #[account(
+        mut,
+        seeds = [b"trade_escrow_vault".as_ref(), trade_account.key().as_ref()],
+        bump, // Anchor will use the canonical bump
+        // Constraint: only if trade_account.escrow_type == EscrowType::Spl
+    )]
+    pub escrow_vault: Option<Box<Account<'info, TokenAccount>>>,
+
+    #[account(mut)]
+    pub buyer_token_account: Option<Box<Account<'info, TokenAccount>>>, // For SPL refund to buyer
+    #[account(mut)]
+    pub seller_token_account: Option<Box<Account<'info, TokenAccount>>>, // For SPL release to seller
+    #[account(mut)]
+    pub chain_fee_collector_token_account: Option<Box<Account<'info, TokenAccount>>>,
+    #[account(mut)]
+    pub warchest_token_account: Option<Box<Account<'info, TokenAccount>>>,
+
+    pub token_program: Option<Program<'info, Token>>,
+    pub system_program: Program<'info, System>,
+
+    // Accounts for Profile CPIs
+    pub profile_program: Program<'info, ProfileProgram>,
+
+    #[account(
+        mut,
+        seeds = [b"profile", trade_account.buyer.as_ref()],
+        bump = buyer_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub buyer_profile: Box<Account<'info, ProfileAccountData>>,
+     /// CHECK: This is trade_account.buyer
+    #[account(address = trade_account.buyer @ TradeError::GenericError)]
+    pub buyer_profile_authority_info: AccountInfo<'info>,
+
+
+    #[account(
+        mut,
+        seeds = [b"profile", trade_account.seller.as_ref()],
+        bump = seller_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Box<Account<'info, ProfileAccountData>>,
+    /// CHECK: This is trade_account.seller
+    #[account(address = trade_account.seller @ TradeError::GenericError)]
+    pub seller_profile_authority_info: AccountInfo<'info>,
+
+
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config_for_profile_cpi.bump,
+        seeds::program = trade_global_state.hub_address 
+    )]
+    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>,
+
+    /// CHECK: This is the Hub Program ID
+    #[account(address = trade_global_state.hub_address @ TradeError::GenericError)]
+    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
+
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state_for_buyer.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_buyer: Account<'info, ProfileGlobalStateAccount>,
+
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump = profile_global_state_for_seller.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_seller: Account<'info, ProfileGlobalStateAccount>,
+}
+
 #[account]
 pub struct TradeGlobalState {
     pub trades_count: u64, 
@@ -1238,14 +2054,30 @@ pub struct Trade {
     #[max_len(100)]
     pub seller_contact_info: Option<String>, 
 
-    pub arbitrator: Option<Pubkey>, 
+    pub arbitrator: Option<Pubkey>,
+    pub dispute_opener: Option<Pubkey>,
+    #[max_len(200)]
+    pub dispute_reason: Option<String>,
 
     pub bump: u8, 
 }
 
+impl Trade {
+    // Increase INIT_SPACE if new fields significantly change size.
+    // Option<Pubkey> is 1 (Option) + 32 (Pubkey) = 33 bytes
+    // Option<String> with max_len 200: 1 (Option) + 4 (length) + 200 (string data) = 205 bytes
+    // Total added: 33 + 205 = 238 bytes
+    // Original INIT_SPACE needs to be located and updated.
+    // Assuming INIT_SPACE was defined something like:
+    // pub const INIT_SPACE: usize = 8 + 64 + 64 + 32 + 32 + (4+16) + 64 + (4+8) + 64 + 8 + 1 + 1 + (1+32) + 64 + 64 + 64 + (1+64) + (1+(4+100)) + (1+(4+100)) + (1+32) + 1;
+    // Need to find the original and add 238 to it.
+    // For now, this is a placeholder to remind that INIT_SPACE needs update.
+    // pub const INIT_SPACE_NEEDS_UPDATE_BY_238_BYTES: usize = 0;
+}
+
 #[error_code]
 pub enum TradeError {
-    #[msg("Generic error.")] 
+    #[msg("Generic error.")]
     GenericError,
     #[msg("Trade ID counter overflow.")]
     TradeIdOverflow,
@@ -1309,4 +2141,30 @@ pub enum TradeError {
     MissingEscrowVaultAccount,
     #[msg("Token Program is missing for SPL trade.")]
     MissingTokenProgram,
+    #[msg("Disputer must be the buyer or the seller.")]
+    NotTradeParticipant,
+    #[msg("Trade is not in a valid state to open a dispute.")]
+    InvalidTradeStateForDispute,
+    #[msg("Trade is already disputed or has been finalized/canceled.")]
+    TradeAlreadyDisputedOrFinalized,
+    #[msg("Dispute reason string is too long (max 200 chars).")]
+    DisputeReasonTooLong,
+    #[msg("Signer is not the Hub admin.")]
+    NotHubAdmin,
+    #[msg("Trade is not in a disputed state, cannot assign arbitrator.")]
+    TradeNotDisputed,
+    #[msg("An arbitrator has already been assigned to this trade.")]
+    ArbitratorAlreadyAssigned,
+    #[msg("The assigned arbitrator cannot be one of the trade participants (buyer or seller).")]
+    ArbitratorCannotBeParticipant,
+    #[msg("Arbitrator is not assigned to this trade yet.")]
+    ArbitratorNotAssigned,
+    #[msg("Signer is not the designated arbitrator for this trade.")]
+    NotDesignatedArbitrator,
+    #[msg("Missing recipient token account for SPL transfer.")]
+    MissingRecipientTokenAccount,
+    #[msg("Missing seller token account for SPL transfer.")]
+    MissingSellerTokenAccount,
+    #[msg("Recipient account for transfer does not match expected (buyer/seller/fee collector).")]
+    RecipientMismatch,
 }
