@@ -164,16 +164,29 @@ pub mod profile {
                     .checked_add(1)
                     .ok_or(ProfileError::NumericOverflow)?;
             }
+            TradeStateForProfileUpdate::DisputeResolvedFavorBuyer
+            | TradeStateForProfileUpdate::DisputeResolvedFavorSeller
+            | TradeStateForProfileUpdate::DisputeResolvedNoAction => {
+                profile.disputes_resolved_count = profile
+                    .disputes_resolved_count
+                    .checked_add(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+                profile.active_trades_count = profile
+                    .active_trades_count
+                    .checked_sub(1)
+                    .ok_or(ProfileError::NumericOverflow)?;
+            }
         }
 
         profile.last_trade_timestamp = Clock::get()?.unix_timestamp as u64;
         msg!(
-            "Trade counts updated for {}. Active: {}, Requested: {}, Released: {}, Disputes Opened: {}",
+            "Trade counts updated for {}. Active: {}, Requested: {}, Released: {}, Disputes Opened: {}, Disputes Resolved: {}",
             profile.authority,
             profile.active_trades_count,
             profile.requested_trades_count,
             profile.released_trades_count,
-            profile.disputes_opened_count
+            profile.disputes_opened_count,
+            profile.disputes_resolved_count
         );
         Ok(())
     }
@@ -363,11 +376,14 @@ pub struct UpdateTradesCount<'info> {
     pub profile_global_state: Account<'info, ProfileGlobalState>,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum TradeStateForProfileUpdate {
     RequestCreated, // +requested_trades_count, check active_trades_limit (CosmWasm spec implies check here)
     RequestAcceptedOrEscrowFunded, // +active_trades_count
     EscrowReleased, // +released_trades_count, -active_trades_count
     FinalizedErrorOrCancelled, // -active_trades_count (for Settled*, Refunded, Canceled)
     DisputeOpened,  // Added: +disputes_opened_count
+    DisputeResolvedFavorBuyer, // Added: +disputes_resolved_count
+    DisputeResolvedFavorSeller, // Added: +disputes_resolved_count
+    DisputeResolvedNoAction, // Added: +disputes_resolved_count
 }

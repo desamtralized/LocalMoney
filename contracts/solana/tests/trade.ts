@@ -546,4 +546,1377 @@ describe("Trade Lifecycle", () => {
         console.log(`Burned amount (not transferred): ${expectedBurnAmount.toNumber() / LAMPORTS_PER_SOL}`);
     });
 
+    it("Buyer can dispute the trade", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Seller not responding to messages";
+
+        // Create a new trade for dispute testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_dispute@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_dispute@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Dispute the trade
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.disputeOpened).to.exist;
+        expect(tradeAccountData.disputeOpener.equals(buyer.publicKey)).to.be.true;
+        expect(tradeAccountData.disputeReason).to.equal(disputeReason);
+        console.log(`Trade ${newTradeId.toString()} disputed by buyer. Reason: ${disputeReason}`);
+    });
+
+    it("Seller can dispute the trade", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Buyer not confirming payment";
+
+        // Create a new trade for dispute testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_dispute2@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_dispute2@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Dispute the trade
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: seller.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.disputeOpened).to.exist;
+        expect(tradeAccountData.disputeOpener.equals(seller.publicKey)).to.be.true;
+        expect(tradeAccountData.disputeReason).to.equal(disputeReason);
+        console.log(`Trade ${newTradeId.toString()} disputed by seller. Reason: ${disputeReason}`);
+    });
+
+    it("Cannot dispute a trade that is already disputed", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Second dispute attempt";
+
+        // Create a new trade for dispute testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_dispute3@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_dispute3@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // First dispute
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, "First dispute")
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Second dispute attempt should fail
+        try {
+            await tradeProgram.methods
+                .disputeTrade(newTradeId, disputeReason)
+                .accounts({
+                    disputer: seller.publicKey,
+                    tradeAccount: newTradePDA,
+                    hubConfigForProfileCpi: hubConfigPDA,
+                    hubProgramIdForProfileCpi: hubProgram.programId,
+                    tradeGlobalState: tradeGlobalStatePDA,
+                    profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                    disputer_profile: sellerProfilePDA,
+                    buyerProfile: buyerProfilePDA,
+                    buyerProfileAuthorityInfo: buyer.publicKey,
+                    sellerProfile: sellerProfilePDA,
+                    sellerProfileAuthorityInfo: seller.publicKey,
+                    profileGlobalState: profileGlobalStatePDAForProfileProg,
+                })
+                .signers([seller])
+                .rpc();
+            assert.fail("Should have thrown error");
+        } catch (err) {
+            expect(err.error.errorCode.code).to.equal("TradeAlreadyDisputedOrFinalized");
+            console.log("Successfully caught error when trying to dispute an already disputed trade");
+        }
+    });
+
+    it("Can settle a disputed trade without arbitrator", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Dispute to be settled";
+
+        // Create a new trade for settlement testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_settle@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_settle@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Get balances before settlement
+        const sellerBalanceBefore = await provider.connection.getBalance(seller.publicKey);
+        const tradeAccountLamportsBefore = await provider.connection.getBalance(newTradePDA);
+        const chainFeeCollectorBalanceBefore = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceBefore = await provider.connection.getBalance(warchestKey);
+
+        // Settle trade (can be done by either party, let's use seller)
+        await tradeProgram.methods
+            .settleTrade(newTradeId)
+            .accounts({
+                settler: seller.publicKey,
+                tradeAccount: newTradePDA,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                chainFeeCollector: chainFeeCollectorKey,
+                warchest: warchestKey,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Verify trade state and balances
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.settledForSeller).to.exist;
+
+        const sellerBalanceAfter = await provider.connection.getBalance(seller.publicKey);
+        const tradeAccountLamportsAfter = await provider.connection.getBalance(newTradePDA);
+        const chainFeeCollectorBalanceAfter = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceAfter = await provider.connection.getBalance(warchestKey);
+
+        // Verify balances changed correctly
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        const chainFeeBps = hubConfigData.chainFeeBps;
+        const warchestFeeBps = hubConfigData.warchestFeeBps;
+        const burnFeeBps = hubConfigData.burnFeeBps;
+
+        const tradeAmount = cryptoAmountToTrade;
+        const expectedChainFee = tradeAmount.mul(new anchor.BN(chainFeeBps)).div(new anchor.BN(10000));
+        const expectedWarchestFee = tradeAmount.mul(new anchor.BN(warchestFeeBps)).div(new anchor.BN(10000));
+        const expectedBurnAmount = tradeAmount.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000));
+        const totalFeesExcludingBurn = expectedChainFee.add(expectedWarchestFee);
+        const totalFeesIncludingBurn = totalFeesExcludingBurn.add(expectedBurnAmount);
+        const expectedSellerAmount = tradeAmount.sub(totalFeesIncludingBurn);
+
+        expect(tradeAccountLamportsAfter < LAMPORTS_PER_SOL * 0.001, "Trade account should be nearly empty after settlement").to.be.true;
+        expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(expectedSellerAmount.toNumber());
+        expect(chainFeeCollectorBalanceAfter - chainFeeCollectorBalanceBefore).to.equal(expectedChainFee.toNumber());
+        expect(warchestBalanceAfter - warchestBalanceBefore).to.equal(expectedWarchestFee.toNumber());
+
+        console.log(`Trade ${newTradeId.toString()} settled successfully. Seller received: ${expectedSellerAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
+    it("Can refund a disputed trade to seller without arbitrator", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Dispute to be refunded";
+
+        // Create a new trade for refund testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_refund@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_refund@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Get balances before refund
+        const sellerBalanceBefore = await provider.connection.getBalance(seller.publicKey);
+        const tradeAccountLamportsBefore = await provider.connection.getBalance(newTradePDA);
+
+        // Refund trade to seller (can be done by either party, let's use buyer)
+        await tradeProgram.methods
+            .refundTrade(newTradeId)
+            .accounts({
+                refunder: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Verify trade state and balances
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.refundedToSeller).to.exist;
+
+        const sellerBalanceAfter = await provider.connection.getBalance(seller.publicKey);
+        const tradeAccountLamportsAfter = await provider.connection.getBalance(newTradePDA);
+
+        // For refund, the full amount should go back to seller without fees
+        const expectedRefundAmount = cryptoAmountToTrade;
+        
+        expect(tradeAccountLamportsAfter < LAMPORTS_PER_SOL * 0.001, "Trade account should be nearly empty after refund").to.be.true;
+        expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(expectedRefundAmount.toNumber());
+
+        console.log(`Trade ${newTradeId.toString()} refunded successfully. Seller received full refund: ${expectedRefundAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
+    it("Can assign an arbitrator to a disputed trade", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Dispute requiring arbitration";
+        const arbitrator = Keypair.generate();
+
+        // Airdrop SOL to arbitrator for rent
+        await provider.connection.requestAirdrop(arbitrator.publicKey, 1 * LAMPORTS_PER_SOL);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Create a new trade for arbitration testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_arbitration@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_arbitration@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Assign arbitrator (must be done by admin)
+        await tradeProgram.methods
+            .assignArbitrator(newTradeId)
+            .accounts({
+                admin: admin.publicKey,
+                tradeAccount: newTradePDA,
+                arbitrator: arbitrator.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([admin])
+            .rpc();
+
+        // Verify trade state and arbitrator assignment
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.arbitratorAssigned).to.exist;
+        expect(tradeAccountData.arbitrator.equals(arbitrator.publicKey)).to.be.true;
+
+        // Verify that the arbitration fee was taken from the escrow amount
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        const arbitrationFeeBps = hubConfigData.arbitrationFeeBps;
+        const expectedArbitrationFee = cryptoAmountToTrade.mul(new anchor.BN(arbitrationFeeBps)).div(new anchor.BN(10000));
+        const expectedRemainingEscrow = cryptoAmountToTrade.sub(expectedArbitrationFee);
+
+        expect(tradeAccountData.escrowCryptoFundedAmount.eq(expectedRemainingEscrow)).to.be.true;
+        expect(tradeAccountData.arbitrationFeeAmount.eq(expectedArbitrationFee)).to.be.true;
+
+        console.log(`Trade ${newTradeId.toString()} assigned to arbitrator: ${arbitrator.publicKey.toBase58()}`);
+        console.log(`Arbitration fee: ${expectedArbitrationFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`Remaining escrow: ${expectedRemainingEscrow.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
+    it("Arbitrator can resolve dispute in favor of buyer or seller", async () => {
+        expect(tradePDA, "Trade PDA must be set").to.exist;
+        const disputeReason = "Dispute for arbitration resolution";
+        const arbitrator = Keypair.generate();
+
+        // Airdrop SOL to arbitrator for rent
+        await provider.connection.requestAirdrop(arbitrator.publicKey, 1 * LAMPORTS_PER_SOL);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Create a new trade for arbitration testing
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const newTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const newTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), newTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Create trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_arb_resolve@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: newTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Accept trade
+        await tradeProgram.methods
+            .acceptTrade(newTradeId, "seller_contact_arb_resolve@email.com")
+            .accounts({
+                seller: seller.publicKey,
+                tradeAccount: newTradePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Fund escrow
+        await tradeProgram.methods
+            .fundTradeEscrow(newTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: newTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(newTradeId, disputeReason)
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: newTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Assign arbitrator
+        await tradeProgram.methods
+            .assignArbitrator(newTradeId)
+            .accounts({
+                admin: admin.publicKey,
+                tradeAccount: newTradePDA,
+                arbitrator: arbitrator.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([admin])
+            .rpc();
+
+        // Get balances before resolution
+        const buyerBalanceBefore = await provider.connection.getBalance(buyer.publicKey);
+        const sellerBalanceBefore = await provider.connection.getBalance(seller.publicKey);
+        const arbitratorBalanceBefore = await provider.connection.getBalance(arbitrator.publicKey);
+        const chainFeeCollectorBalanceBefore = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceBefore = await provider.connection.getBalance(warchestKey);
+
+        // Resolve dispute in favor of buyer
+        const resolution = { buyerWins: {} }; // or { sellerWins: {} }
+        const resolutionReason = "Evidence shows buyer's claim is valid";
+
+        await tradeProgram.methods
+            .arbitratorResolveDispute(newTradeId, resolution, resolutionReason)
+            .accounts({
+                arbitrator: arbitrator.publicKey,
+                tradeAccount: newTradePDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                chainFeeCollector: chainFeeCollectorKey,
+                warchest: warchestKey,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([arbitrator])
+            .rpc();
+
+        // Verify trade state and balances
+        const tradeAccountData = await tradeProgram.account.trade.fetch(newTradePDA);
+        expect(tradeAccountData.state.settledByArbitrator).to.exist;
+        expect(tradeAccountData.arbitratorResolution).to.deep.equal(resolution);
+        expect(tradeAccountData.arbitratorResolutionReason).to.equal(resolutionReason);
+
+        const buyerBalanceAfter = await provider.connection.getBalance(buyer.publicKey);
+        const sellerBalanceAfter = await provider.connection.getBalance(seller.publicKey);
+        const arbitratorBalanceAfter = await provider.connection.getBalance(arbitrator.publicKey);
+        const chainFeeCollectorBalanceAfter = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceAfter = await provider.connection.getBalance(warchestKey);
+
+        // Calculate expected amounts
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        const arbitrationFeeBps = hubConfigData.arbitrationFeeBps;
+        const chainFeeBps = hubConfigData.chainFeeBps;
+        const warchestFeeBps = hubConfigData.warchestFeeBps;
+        const burnFeeBps = hubConfigData.burnFeeBps;
+
+        const arbitrationFee = cryptoAmountToTrade.mul(new anchor.BN(arbitrationFeeBps)).div(new anchor.BN(10000));
+        const remainingAmount = cryptoAmountToTrade.sub(arbitrationFee);
+        const chainFee = remainingAmount.mul(new anchor.BN(chainFeeBps)).div(new anchor.BN(10000));
+        const warchestFee = remainingAmount.mul(new anchor.BN(warchestFeeBps)).div(new anchor.BN(10000));
+        const burnAmount = remainingAmount.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000));
+        const totalFeesExcludingArbitration = chainFee.add(warchestFee).add(burnAmount);
+        const winnerAmount = remainingAmount.sub(totalFeesExcludingArbitration);
+
+        // Since resolution was in favor of buyer
+        expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(winnerAmount.toNumber());
+        expect(arbitratorBalanceAfter - arbitratorBalanceBefore).to.equal(arbitrationFee.toNumber());
+        expect(chainFeeCollectorBalanceAfter - chainFeeCollectorBalanceBefore).to.equal(chainFee.toNumber());
+        expect(warchestBalanceAfter - warchestBalanceBefore).to.equal(warchestFee.toNumber());
+        expect(sellerBalanceAfter).to.equal(sellerBalanceBefore); // Seller gets nothing
+
+        console.log(`Trade ${newTradeId.toString()} resolved by arbitrator in favor of buyer`);
+        console.log(`Arbitrator fee: ${arbitrationFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`Winner (buyer) received: ${winnerAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`Chain fee: ${chainFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`Warchest fee: ${warchestFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`Burned amount: ${burnAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
+    it("Completes full trade lifecycle (happy path)", async () => {
+        // 1. Setup: Create a new trade
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const happyPathTradeId = tradeGlobalDataBefore.tradesCount;
+
+        const happyPathTradePDA = PublicKey.findProgramAddressSync(
+            [Buffer.from("trade"), happyPathTradeId.toBuffer("le", 8)],
+            tradeProgram.programId
+        )[0];
+
+        // Record initial balances
+        const sellerBalanceInitial = await provider.connection.getBalance(seller.publicKey);
+        const chainFeeCollectorBalanceInitial = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceInitial = await provider.connection.getBalance(warchestKey);
+
+        // 2. Create Trade
+        await tradeProgram.methods
+            .createTrade(offerId, cryptoAmountToTrade, "buyer_contact_happy@email.com")
+            .accounts({
+                tradeGlobalState: tradeGlobalStatePDA,
+                trade: happyPathTradePDA,
+                offer: offerPDA,
+                buyer: buyer.publicKey,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                priceAccount: calculatedPriceSolUsdPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        let tradeData = await tradeProgram.account.trade.fetch(happyPathTradePDA);
+        expect(tradeData.state.requestCreated).to.exist;
+        expect(tradeData.buyer.equals(buyer.publicKey)).to.be.true;
+        expect(tradeData.seller.equals(seller.publicKey)).to.be.true;
+        console.log(`Happy path: Trade ${happyPathTradeId.toString()} created`);
+
+        // 3. Seller accepts trade
+        await tradeProgram.methods
+            .acceptTrade(happyPathTradeId, "seller_contact_happy@email.com")
+            .accounts({
+                trade: happyPathTradePDA,
+                signer: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+            })
+            .signers([seller])
+            .rpc();
+
+        tradeData = await tradeProgram.account.trade.fetch(happyPathTradePDA);
+        expect(tradeData.state.accepted).to.exist;
+        console.log("Happy path: Trade accepted by seller");
+
+        // 4. Seller funds escrow
+        const tradeAccountLamportsBefore = await provider.connection.getBalance(happyPathTradePDA);
+        const fetchedTradeGlobalState = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const hubProgramIdForProfileCpi = fetchedTradeGlobalState.hubAddress;
+
+        await tradeProgram.methods
+            .fundTradeEscrow(happyPathTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: happyPathTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        tradeData = await tradeProgram.account.trade.fetch(happyPathTradePDA);
+        expect(tradeData.state.escrowFunded).to.exist;
+        const tradeAccountLamportsAfterFunding = await provider.connection.getBalance(happyPathTradePDA);
+        expect(tradeAccountLamportsAfterFunding - tradeAccountLamportsBefore).to.equal(cryptoAmountToTrade.toNumber());
+        console.log("Happy path: Escrow funded by seller");
+
+        // 5. Buyer confirms fiat payment sent
+        await tradeProgram.methods
+            .confirmPaymentSent(happyPathTradeId)
+            .accounts({
+                trade: happyPathTradePDA,
+                signer: buyer.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+            })
+            .signers([buyer])
+            .rpc();
+
+        tradeData = await tradeProgram.account.trade.fetch(happyPathTradePDA);
+        expect(tradeData.state.fiatDeposited).to.exist;
+        console.log("Happy path: Fiat payment confirmed by buyer");
+
+        // 6. Release escrow to complete trade
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        const chainFeeBps = hubConfigData.chainFeeBps;
+        const warchestFeeBps = hubConfigData.warchestFeeBps;
+        const burnFeeBps = hubConfigData.burnFeeBps;
+
+        await tradeProgram.methods
+            .releaseEscrow(happyPathTradeId)
+            .accounts({
+                trade: happyPathTradePDA,
+                signer: buyer.publicKey,
+                seller: seller.publicKey,
+                chainFeeCollector: chainFeeCollectorKey,
+                warchest: warchestKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // 7. Verify final state and balances
+        tradeData = await tradeProgram.account.trade.fetch(happyPathTradePDA);
+        expect(tradeData.state.completed).to.exist;
+
+        const sellerBalanceFinal = await provider.connection.getBalance(seller.publicKey);
+        const chainFeeCollectorBalanceFinal = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceFinal = await provider.connection.getBalance(warchestKey);
+        const tradeAccountLamportsFinal = await provider.connection.getBalance(happyPathTradePDA);
+
+        // Calculate expected amounts
+        const expectedChainFee = cryptoAmountToTrade.mul(new anchor.BN(chainFeeBps)).div(new anchor.BN(10000));
+        const expectedWarchestFee = cryptoAmountToTrade.mul(new anchor.BN(warchestFeeBps)).div(new anchor.BN(10000));
+        const expectedBurnAmount = cryptoAmountToTrade.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000));
+        const totalFeesExcludingBurn = expectedChainFee.add(expectedWarchestFee);
+        const totalFeesIncludingBurn = totalFeesExcludingBurn.add(expectedBurnAmount);
+        const expectedSellerAmount = cryptoAmountToTrade.sub(totalFeesIncludingBurn);
+
+        // Verify final balances
+        expect(tradeAccountLamportsFinal < LAMPORTS_PER_SOL * 0.001, "Trade account should be nearly empty after completion").to.be.true;
+        expect(sellerBalanceFinal - sellerBalanceInitial).to.equal(expectedSellerAmount.toNumber());
+        expect(chainFeeCollectorBalanceFinal - chainFeeCollectorBalanceInitial).to.equal(expectedChainFee.toNumber());
+        expect(warchestBalanceFinal - warchestBalanceInitial).to.equal(expectedWarchestFee.toNumber());
+
+        console.log(`Happy path: Trade ${happyPathTradeId.toString()} completed successfully`);
+        console.log(`- Seller received: ${expectedSellerAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Chain fee: ${expectedChainFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Warchest fee: ${expectedWarchestFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Burned: ${expectedBurnAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
+    it("Handles various dispute and resolution scenarios", async () => {
+        // Test setup: Create multiple trades for different dispute scenarios
+        const tradeGlobalDataBefore = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const baseTradeId = tradeGlobalDataBefore.tradesCount;
+
+        // Helper function to create a new trade
+        const createNewTrade = async (contactSuffix: string) => {
+            const tradeId = (await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA)).tradesCount;
+            const tradePDA = PublicKey.findProgramAddressSync(
+                [Buffer.from("trade"), tradeId.toBuffer("le", 8)],
+                tradeProgram.programId
+            )[0];
+
+            await tradeProgram.methods
+                .createTrade(offerId, cryptoAmountToTrade, `buyer_contact_${contactSuffix}@email.com`)
+                .accounts({
+                    tradeGlobalState: tradeGlobalStatePDA,
+                    trade: tradePDA,
+                    offer: offerPDA,
+                    buyer: buyer.publicKey,
+                    seller: seller.publicKey,
+                    hubConfig: hubConfigPDA,
+                    priceAccount: calculatedPriceSolUsdPDA,
+                    profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                    buyerProfile: buyerProfilePDA,
+                    sellerProfile: sellerProfilePDA,
+                    systemProgram: SystemProgram.programId,
+                })
+                .signers([buyer])
+                .rpc();
+
+            return { tradeId, tradePDA };
+        };
+
+        // Scenario 1: Buyer disputes before escrow funding
+        console.log("\nScenario 1: Buyer disputes before escrow funding");
+        const { tradeId: earlyDisputeTradeId, tradePDA: earlyDisputeTradePDA } = await createNewTrade("early_dispute");
+        
+        await tradeProgram.methods
+            .disputeTrade(earlyDisputeTradeId, "Seller not responding to messages")
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: earlyDisputeTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        let tradeData = await tradeProgram.account.trade.fetch(earlyDisputeTradePDA);
+        expect(tradeData.state.disputeOpened).to.exist;
+        expect(tradeData.disputeOpener.equals(buyer.publicKey)).to.be.true;
+        console.log("Early dispute opened successfully");
+
+        // Scenario 2: Dispute after escrow funding, resolved with refund
+        console.log("\nScenario 2: Dispute after escrow funding, resolved with refund");
+        const { tradeId: fundedDisputeTradeId, tradePDA: fundedDisputeTradePDA } = await createNewTrade("funded_dispute");
+        
+        // Accept and fund the trade
+        await tradeProgram.methods
+            .acceptTrade(fundedDisputeTradeId, "seller_contact_funded_dispute@email.com")
+            .accounts({
+                trade: fundedDisputeTradePDA,
+                signer: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+            })
+            .signers([seller])
+            .rpc();
+
+        const fetchedTradeGlobalState = await tradeProgram.account.tradeGlobalState.fetch(tradeGlobalStatePDA);
+        const hubProgramIdForProfileCpi = fetchedTradeGlobalState.hubAddress;
+
+        await tradeProgram.methods
+            .fundTradeEscrow(fundedDisputeTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: fundedDisputeTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Record seller's balance before dispute and refund
+        const sellerBalanceBeforeRefund = await provider.connection.getBalance(seller.publicKey);
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(fundedDisputeTradeId, "Payment method unavailable")
+            .accounts({
+                disputer: buyer.publicKey,
+                tradeAccount: fundedDisputeTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: buyerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Refund the trade
+        await tradeProgram.methods
+            .refundTrade(fundedDisputeTradeId)
+            .accounts({
+                refunder: buyer.publicKey,
+                tradeAccount: fundedDisputeTradePDA,
+                seller: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([buyer])
+            .rpc();
+
+        // Verify refund
+        tradeData = await tradeProgram.account.trade.fetch(fundedDisputeTradePDA);
+        expect(tradeData.state.refundedToSeller).to.exist;
+        const sellerBalanceAfterRefund = await provider.connection.getBalance(seller.publicKey);
+        expect(sellerBalanceAfterRefund - sellerBalanceBeforeRefund).to.equal(cryptoAmountToTrade.toNumber());
+        console.log("Funded trade disputed and refunded successfully");
+
+        // Scenario 3: Dispute with arbitrator resolution
+        console.log("\nScenario 3: Dispute with arbitrator resolution");
+        const { tradeId: arbitratedTradeId, tradePDA: arbitratedTradePDA } = await createNewTrade("arbitrated");
+        const arbitrator = Keypair.generate();
+
+        // Airdrop SOL to arbitrator for rent
+        await provider.connection.requestAirdrop(arbitrator.publicKey, 1 * LAMPORTS_PER_SOL);
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Accept and fund the trade
+        await tradeProgram.methods
+            .acceptTrade(arbitratedTradeId, "seller_contact_arbitrated@email.com")
+            .accounts({
+                trade: arbitratedTradePDA,
+                signer: seller.publicKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+            })
+            .signers([seller])
+            .rpc();
+
+        await tradeProgram.methods
+            .fundTradeEscrow(arbitratedTradeId)
+            .accounts({
+                funder: seller.publicKey,
+                tradeAccount: arbitratedTradePDA,
+                systemProgram: SystemProgram.programId,
+                funderTokenAccount: null,
+                escrowVaultTokenAccount: null,
+                tokenProgram: null,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                sellerProfile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityAccountInfo: buyer.publicKey,
+                tradeGlobalState: tradeGlobalStatePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgramIdForProfileCpi,
+                profileGlobalStateForSeller: profileGlobalStatePDAForProfileProg,
+                profileGlobalStateForBuyer: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Open dispute
+        await tradeProgram.methods
+            .disputeTrade(arbitratedTradeId, "Dispute requiring arbitration")
+            .accounts({
+                disputer: seller.publicKey,
+                tradeAccount: arbitratedTradePDA,
+                hubConfigForProfileCpi: hubConfigPDA,
+                hubProgramIdForProfileCpi: hubProgram.programId,
+                tradeGlobalState: tradeGlobalStatePDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                disputer_profile: sellerProfilePDA,
+                buyerProfile: buyerProfilePDA,
+                buyerProfileAuthorityInfo: buyer.publicKey,
+                sellerProfile: sellerProfilePDA,
+                sellerProfileAuthorityInfo: seller.publicKey,
+                profileGlobalState: profileGlobalStatePDAForProfileProg,
+            })
+            .signers([seller])
+            .rpc();
+
+        // Assign arbitrator
+        await tradeProgram.methods
+            .assignArbitrator(arbitratedTradeId)
+            .accounts({
+                trade: arbitratedTradePDA,
+                arbitrator: arbitrator.publicKey,
+                admin: admin.publicKey,
+                hubConfig: hubConfigPDA,
+            })
+            .signers([admin])
+            .rpc();
+
+        tradeData = await tradeProgram.account.trade.fetch(arbitratedTradePDA);
+        expect(tradeData.arbitrator.equals(arbitrator.publicKey)).to.be.true;
+        console.log("Arbitrator assigned successfully");
+
+        // Record balances before arbitrator resolution
+        const sellerBalanceBeforeResolution = await provider.connection.getBalance(seller.publicKey);
+        const chainFeeCollectorBalanceBeforeResolution = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceBeforeResolution = await provider.connection.getBalance(warchestKey);
+
+        // Arbitrator resolves dispute in favor of seller
+        await tradeProgram.methods
+            .arbitratorResolveDispute(arbitratedTradeId, { seller: {} })
+            .accounts({
+                trade: arbitratedTradePDA,
+                arbitrator: arbitrator.publicKey,
+                seller: seller.publicKey,
+                chainFeeCollector: chainFeeCollectorKey,
+                warchest: warchestKey,
+                hubConfig: hubConfigPDA,
+                profileProgram: PROFILE_PROGRAM_ID_PUBKEY,
+                buyerProfile: buyerProfilePDA,
+                sellerProfile: sellerProfilePDA,
+                systemProgram: SystemProgram.programId,
+            })
+            .signers([arbitrator])
+            .rpc();
+
+        // Verify arbitrator resolution
+        tradeData = await tradeProgram.account.trade.fetch(arbitratedTradePDA);
+        expect(tradeData.state.arbitratedForSeller).to.exist;
+
+        // Calculate and verify fee distribution
+        const hubConfigData = await hubProgram.account.hubConfig.fetch(hubConfigPDA);
+        const chainFeeBps = hubConfigData.chainFeeBps;
+        const warchestFeeBps = hubConfigData.warchestFeeBps;
+        const burnFeeBps = hubConfigData.burnFeeBps;
+        const arbitrationFeeBps = hubConfigData.arbitrationFeeBps;
+
+        const expectedChainFee = cryptoAmountToTrade.mul(new anchor.BN(chainFeeBps)).div(new anchor.BN(10000));
+        const expectedWarchestFee = cryptoAmountToTrade.mul(new anchor.BN(warchestFeeBps)).div(new anchor.BN(10000));
+        const expectedBurnAmount = cryptoAmountToTrade.mul(new anchor.BN(burnFeeBps)).div(new anchor.BN(10000));
+        const expectedArbitrationFee = cryptoAmountToTrade.mul(new anchor.BN(arbitrationFeeBps)).div(new anchor.BN(10000));
+        const totalFeesIncludingBurn = expectedChainFee.add(expectedWarchestFee).add(expectedBurnAmount).add(expectedArbitrationFee);
+        const expectedSellerAmount = cryptoAmountToTrade.sub(totalFeesIncludingBurn);
+
+        const sellerBalanceAfterResolution = await provider.connection.getBalance(seller.publicKey);
+        const chainFeeCollectorBalanceAfterResolution = await provider.connection.getBalance(chainFeeCollectorKey);
+        const warchestBalanceAfterResolution = await provider.connection.getBalance(warchestKey);
+
+        expect(sellerBalanceAfterResolution - sellerBalanceBeforeResolution).to.equal(expectedSellerAmount.toNumber());
+        expect(chainFeeCollectorBalanceAfterResolution - chainFeeCollectorBalanceBeforeResolution).to.equal(expectedChainFee.toNumber());
+        expect(warchestBalanceAfterResolution - warchestBalanceBeforeResolution).to.equal(expectedWarchestFee.toNumber());
+
+        console.log("Arbitrated dispute resolved successfully");
+        console.log(`- Seller received: ${expectedSellerAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Chain fee: ${expectedChainFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Warchest fee: ${expectedWarchestFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Arbitration fee: ${expectedArbitrationFee.toNumber() / LAMPORTS_PER_SOL} SOL`);
+        console.log(`- Burned: ${expectedBurnAmount.toNumber() / LAMPORTS_PER_SOL} SOL`);
+    });
+
 }); 

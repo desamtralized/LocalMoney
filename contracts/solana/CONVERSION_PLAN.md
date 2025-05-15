@@ -106,13 +106,29 @@ LocalMoney/contracts/solana/
   - [x] Write tests covering settlement and dispute scenarios
 
 - [ ] M7: End-to-End Tests & Devnet Deploy
-  - [ ] Develop TypeScript e2e scripts covering all module flows
+  - [x] Develop TypeScript e2e scripts covering all module flows
     - [x] Hub program: Verified existing tests for initialize, update_admin, update_config.
     - [x] Offer program: Implemented tests for initialize, register_hub, create_offer, update_offer (including input validation), pause_offer, resume_offer, cancel_offer. Includes owner/non-owner checks and event emissions.
     - [x] Profile program: Completed e2e tests covering counter updates (`active_offers_count`, `trades_count`), failure cases, and CPI-driven updates.
     - [x] Price program: Verified TS e2e tests covering price flows (tests/price.ts).
-    - [ ] Trade program:
-  - [ ] Set up localnet testing environment and validate flows
+    - [x] Trade program:
+      - [x] Test `create_trade` instruction
+      - [x] Test `accept_trade` instruction
+      - [x] Test `fund_trade` (or `fund_trade_escrow`) instruction
+      - [x] Test `deposit_trade` (or `confirm_payment_sent`) instruction
+      - [x] Test `release_escrow` instruction, including fee distribution and SPL token transfers
+      - [x] Test `dispute_trade` instruction
+      - [x] Test `settle_trade` instruction (for non-arbitrated disputed trades)
+      - [x] Test `refund_trade` instruction (for non-arbitrated disputed trades)
+      - [x] Test `assign_arbitrator` instruction
+      - [x] Test `arbitrator_resolve_dispute` instruction
+      - [x] Test full trade lifecycle happy path
+      - [x] Test various dispute and resolution scenarios
+  - [x] Set up localnet testing environment and validate flows
+    - [x] Configure Anchor.toml for localnet testing
+    - [x] Add required program dependencies (Token, Token Metadata)
+    - [x] Create start-localnet.sh script for consistent test execution
+    - [x] Set up proper test validator configuration
 
 - [ ] M8: Performance & Audit Prep
   - [ ] Benchmark critical instruction paths for CU usage
