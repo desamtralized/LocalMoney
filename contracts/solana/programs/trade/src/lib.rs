@@ -18,27 +18,6 @@ use profile::{
     ProfileGlobalState as ProfileGlobalStateAccount,
 };
 
-// PLACEHOLDER: These would normally be imported from the hub crate
-// mod hub_program_placeholder {
-//     use anchor_lang::prelude::*;
-//     declare_id!("HubProg1111111111111111111111111111111111"); // Placeholder Hub Program ID
-//     #[program]
-//     pub mod hub {
-//         // Define hub program functions if needed for CPI, not for account deserialization
-//     }
-// }
-// #[derive(Clone)]
-// pub struct Hub; // Placeholder for HubProgram type for Program<'info, Hub>
-// impl anchor_lang::Id for Hub {
-//     fn id() -> Pubkey {
-//         // This should be the actual Hub Program ID, fetched from trade_global_state.hub_address if it stores it,
-//         // or hardcoded/imported if known at compile time. For now, a placeholder.
-//         // For accessing HubConfigAccount, we'll use trade_global_state.hub_address as the program_id.
-//         Pubkey::new_from_array([0u8; 32]) // Default, will be replaced by actual hub_address
-//     }
-// }
-
-
 // This placeholder should align with the actual HubConfig definition in the Hub program.
 // It's defined here temporarily to allow Trade program development.
 #[account]
@@ -69,6 +48,49 @@ pub struct HubConfigAccount {
     pub bump: u8, // PDA bump for HubConfig itself
 }
 // END PLACEHOLDERS
+
+// Updated Trade account struct
+#[account]
+#[derive(InitSpace, Debug)]
+pub struct Trade {
+    pub id: u64,
+    pub offer_id: u64,
+    pub buyer: Pubkey,
+    pub seller: Pubkey,
+
+    #[max_len(10)] // Placeholder length for crypto symbol
+    pub crypto_denom_symbol: String,
+    pub crypto_amount: u64,
+
+    #[max_len(10)] // Placeholder length for fiat symbol
+    pub fiat_currency_symbol: String,
+    // fiat_amount is calculated, not stored: price * crypto_amount
+
+    pub exchange_rate: u64, // Price from oracle at time of trade creation
+    pub exchange_rate_decimals: u8, // Decimals for the exchange_rate
+
+    pub state: TradeState,
+    pub escrow_type: EscrowType,
+    pub escrow_mint_address: Option<Pubkey>, // For SPL tokens, Some(mint_address) or None for Native
+    pub escrow_crypto_funded_amount: u64,    // Amount of crypto actually funded into escrow
+    // pub escrow_vault_bump: Option<u8>, // Bump of the escrow PDA if applicable, might not be stored on Trade directly
+
+    pub created_at_ts: i64,      // Unix timestamp of creation
+    pub updated_at_ts: i64,      // Unix timestamp of last update
+    pub expires_at_ts: i64,      // Unix timestamp when the trade offer acceptance/funding expires
+    pub dispute_window_ends_at_ts: Option<i64>, // Unix timestamp when dispute window closes after payment confirmation
+
+    #[max_len(100)] // Placeholder max length for contact info
+    pub buyer_contact_info: Option<String>,
+    #[max_len(100)] // Placeholder max length for contact info
+    pub seller_contact_info: Option<String>,
+
+    pub arbitrator: Option<Pubkey>, // Assigned arbitrator if disputed
+    pub dispute_opener: Option<Pubkey>, // Added: Who opened the dispute
+    #[max_len(280)] // Added: Reason for dispute (e.g. Twitter length)
+    pub dispute_reason: Option<String>,
+    pub bump: u8,                   // Bump for the Trade account PDA itself
+}
 
 // Add Event for TradeDisputed
 #[event]
@@ -104,7 +126,383 @@ pub enum DisputeResolutionOutcome {
     NoAction, // e.g. if resolution implies something else like specific split or external handling
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum TradeState {
+    RequestCreated,      // Buyer initiates, pending seller acceptance
+    RequestAccepted,     // Seller accepts
+    EscrowFunded,        // Seller funds escrow (crypto)
+    FiatDeposited,       // Buyer confirms fiat payment sent
+    EscrowReleased,      // Seller releases crypto to buyer (trade complete)
+    RequestCanceled,     // Buyer or Seller cancels before funding
+    TradeExpired,        // Trade expires due to timeout
+    DisputeOpened,       // A dispute is opened by buyer or seller
+    DisputeResolved,     // Arbitrator resolves dispute (implies final state like EscrowReleased/Refunded)
+    TradeSettledMaker,   // For dispute resolution: maker (seller) receives funds
+    TradeSettledTaker,   // For dispute resolution: taker (buyer) receives funds
+    EscrowRefunded,      // For dispute resolution or cancellation: escrow returned to seller
+}
+
+impl std::fmt::Display for TradeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self) // Default to Debug representation for Display
+    }
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
+pub enum EscrowType {
+    Native, // For SOL
+    Spl,    // For SPL Tokens
+}
+
+#[account]
+#[derive(InitSpace, Debug)]
+pub struct TradeGlobalState {
+    // Authority that can update global settings, typically an admin or multisig
+    pub admin: Pubkey,
+    // Counter for total trades created, used for generating unique trade IDs
+    pub trades_count: u64,
+    // Pubkey of the Hub program, used for CPIs to fetch HubConfig
+    pub hub_address: Pubkey,
+    // Bump seed for this PDA
+    pub bump: u8,
+}
+
 declare_id!("TradZuT9g8uYmRqwL2hD5mCEvRztzAnQhND2BxAQKz2"); // New placeholder ID for Trade program
+
+#[error_code]
+pub enum TradeError {
+    #[msg("Generic error.")]
+    GenericError,
+    #[msg("Buyer cannot trade with themselves.")]
+    BuyerIsOfferOwner,
+    #[msg("Offer is not active.")]
+    OfferNotActive,
+    #[msg("Amount is out of offer range.")]
+    AmountOutOfOfferRange,
+    #[msg("Price account details mismatch offer details.")]
+    PriceAccountMismatch,
+    #[msg("Trade ID counter overflowed.")]
+    TradeIdOverflow,
+    #[msg("Timestamp calculation overflowed.")]
+    TimestampOverflow,
+    #[msg("SPL Escrow mint address is missing from the offer when it's required.")]
+    MissingEscrowMintFromOffer,
+    #[msg("The trade has expired.")]
+    TradeExpired,
+    #[msg("The trade is not in a state where it can be accepted.")]
+    TradeNotAcceptable,
+    #[msg("The signer is not the seller of this trade.")]
+    NotTradeSeller,
+    #[msg("The trade is not in a state where it can be funded.")]
+    TradeNotFundable,
+    #[msg("The escrow mint on the trade does not match the provided mint account.")]
+    EscrowMintMismatch,
+    #[msg("The escrow vault token account is missing for an SPL trade.")]
+    MissingEscrowVault,
+    #[msg("The funder token account is missing for an SPL trade.")]
+    MissingFunderTokenAccount,
+    #[msg("The token program is missing when required for SPL operations.")]
+    MissingTokenProgram,
+    #[msg("The system program is missing when required.")]
+    MissingSystemProgram,
+    #[msg("The rent sysvar is missing when required.")]
+    MissingRentSysvar,
+    #[msg("Insufficient funds in the funder's token account.")]
+    InsufficientFunds,
+    #[msg("The trade is not in a state where payment can be confirmed.")]
+    TradeNotConfirmable,
+    #[msg("The signer is not the buyer of this trade.")]
+    NotTradeBuyer,
+    #[msg("Dispute window has not been configured.")]
+    DisputeWindowNotConfigured,
+    #[msg("The trade is not in a state where it can be released.")]
+    TradeNotReleasable,
+    #[msg("The buyer is not the signer trying to release the escrow.")]
+    BuyerNotSignerForRelease,
+    #[msg("The trade is not yet eligible for release (still within dispute window).")]
+    TradeInDisputeWindow,
+    #[msg("The trade has already been disputed.")]
+    TradeAlreadyDisputed,
+    #[msg("Native SOL transfer failed.")]
+    NativeTransferFailed,
+    #[msg("SPL token transfer failed.")]
+    SplTransferFailed,
+    #[msg("Fee calculation resulted in an overflow.")]
+    FeeOverflow,
+    #[msg("Seller native account for SOL release does not match trade.seller.")]
+    SellerNativeAccountMismatch,
+    #[msg("Chain fee collector address in HubConfig does not match provided account.")]
+    ChainFeeCollectorMismatch,
+    #[msg("Warchest collector address in HubConfig does not match provided account.")]
+    WarchestCollectorMismatch,
+    #[msg("Escrow vault mint does not match trade_account.escrow_mint_address.")]
+    EscrowVaultMintMismatch,
+    #[msg("Escrow vault is missing when SPL token transfer is expected.")]
+    EscrowVaultMissingForSpl,
+    #[msg("Seller token account is missing for SPL token release.")]
+    SellerTokenAccountMissingForSpl,
+    #[msg("Chain fee collector token account is missing for SPL token fee collection.")]
+    ChainFeeTokenAccountMissingForSpl,
+    #[msg("Warchest token account is missing for SPL token fee collection.")]
+    WarchestTokenAccountMissingForSpl,
+    #[msg("The trade is not in a state where it can be disputed.")]
+    TradeNotDisputable,
+    #[msg("The disputer is neither the buyer nor the seller of the trade.")]
+    DisputerNotPartyToTrade,
+    #[msg("The trade is not in a state where an arbitrator can be assigned.")]
+    TradeNotAssignableForArbitration,
+    #[msg("Only the admin can assign an arbitrator.")]
+    ArbitratorNotAdmin,
+    #[msg("The trade is not in a state for dispute resolution by an arbitrator.")]
+    TradeNotResolvableByArbitrator,
+    #[msg("The signer is not the assigned arbitrator for this trade.")]
+    NotAssignedArbitrator,
+    #[msg("The arbitrator account is not initialized.")]
+    ArbitratorAccountNotInitialized,
+    #[msg("The arbitrator profile account is not initialized.")]
+    ArbitratorProfileNotInitialized,
+    #[msg("Cannot resolve with NoAction if trade is not already settled or refunded.")]
+    InvalidNoActionResolution,
+    #[msg("The trade is not in a state where it can be settled by parties.")]
+    TradeNotSettlableByParties,
+    #[msg("Signer is not a party to the trade (buyer or seller).")]
+    SignerNotPartyToTradeForSettle,
+    #[msg("The trade is not in a state where it can be refunded by parties.")]
+    TradeNotRefundableByParties,
+    #[msg("Fee collector token account not found")]
+    MissingFeeCollectorTokenAccount,
+
+    // Added missing variants from build log
+    #[msg("Invalid offer data provided.")]
+    InvalidOfferData,
+    #[msg("SPL mint does not match expected mint.")]
+    SplMintMismatch,
+    // TokenTransferFailed already covered by SplTransferFailed
+    #[msg("Trade is in an invalid state for this operation.")]
+    InvalidTradeState,
+    #[msg("The dispute window for this trade has passed.")]
+    DisputeWindowPassed,
+    #[msg("Escrow is not funded or is empty.")]
+    EscrowNotFundedOrEmpty,
+    // MathOverflow already covered by FeeOverflow
+    #[msg("Calculated fees exceed the total escrow amount.")]
+    FeesExceedEscrowAmount,
+    #[msg("The specified escrow type is not supported for this operation.")]
+    EscrowTypeNotSupported,
+    #[msg("Missing escrow vault account.")]
+    MissingEscrowVaultAccount, // Distinct from MissingEscrowVault which is for SPL trades
+    #[msg("Escrow vault authority does not match expected authority.")]
+    EscrowVaultAuthorityMismatch,
+    // MissingEscrowMint covered by MissingEscrowMintFromOffer or implies specific SPL context
+    #[msg("Seller account is missing.")]
+    MissingSellerAccount,
+    #[msg("Fee collector mint does not match expected mint.")]
+    FeeCollectorMintMismatch,
+    #[msg("Missing fee collector account.")]
+    MissingFeeCollectorAccount, // Distinct from MissingFeeCollectorTokenAccount
+    #[msg("Signer is not a participant in this trade.")]
+    NotTradeParticipant,
+    #[msg("Trade is in an invalid state to be disputed.")]
+    InvalidTradeStateForDispute,
+    #[msg("Trade has already been disputed or is finalized.")]
+    TradeAlreadyDisputedOrFinalized,
+    #[msg("Dispute reason exceeds maximum allowed length.")]
+    DisputeReasonTooLong,
+    #[msg("Signer is not the Hub admin.")]
+    NotHubAdmin,
+    #[msg("Trade is not currently disputed.")]
+    TradeNotDisputed,
+    #[msg("An arbitrator has already been assigned to this trade.")]
+    ArbitratorAlreadyAssigned,
+    #[msg("The proposed arbitrator cannot be a participant in the trade.")]
+    ArbitratorCannotBeParticipant,
+    #[msg("No arbitrator has been assigned to this trade yet.")]
+    ArbitratorNotAssigned,
+    #[msg("Signer is not the designated arbitrator for this trade.")]
+    NotDesignatedArbitrator,
+    #[msg("Recipient account does not match the expected recipient.")]
+    RecipientMismatch,
+    #[msg("Missing recipient token account.")]
+    MissingRecipientTokenAccount,
+    #[msg("Missing seller token account.")] // This seems specific enough to keep
+    MissingSellerTokenAccount,
+
+    // Additional variants based on recent linter errors and initial build log
+    #[msg("Escrow has already been funded.")]
+    EscrowAlreadyFunded,
+    #[msg("Escrow amount does not match expected amount or is invalid.")]
+    EscrowAmountMismatch,
+    #[msg("Escrow type (Native/SPL) mismatch for the operation.")]
+    EscrowTypeMismatch,
+    #[msg("Native escrow should not have a mint address specified.")]
+    NativeEscrowShouldNotHaveMint,
+    #[msg("SPL escrow is missing a required mint address.")]
+    MissingEscrowMint, // General missing mint for SPL, distinct from MissingEscrowMintFromOffer
+    #[msg("Token transfer operation failed.")]
+    TokenTransferFailed, // General token transfer error
+    #[msg("Mathematical operation resulted in an overflow.")]
+    MathOverflow, // General math overflow, distinct from FeeOverflow
+
+    // Profile CPI specific errors - can be more granular if needed
+    #[msg("Profile CPI: Hub config account mismatch for profile update.")]
+    ProfileCpiHubConfigMismatch,
+    #[msg("Profile CPI: Hub program ID mismatch for profile update.")]
+    ProfileCpiHubProgramIdMismatch,
+    #[msg("Profile CPI: Profile global state account mismatch for profile update.")]
+    ProfileCpiGlobalStateMismatch,
+    #[msg("Profile CPI: Buyer profile account mismatch for profile update.")]
+    ProfileCpiBuyerProfileMismatch,
+    #[msg("Profile CPI: Seller profile account mismatch for profile update.")]
+    ProfileCpiSellerProfileMismatch,
+    #[msg("Profile CPI: Seller profile authority mismatch.")]
+    ProfileCpiSellerProfileAuthorityMismatch,
+    #[msg("Profile CPI: Buyer profile authority mismatch.")]
+    ProfileCpiBuyerProfileAuthorityMismatch,
+} // THIS CLOSES TradeError ENUM
+
+// Placeholder for AssignArbitrator accounts struct
+#[derive(Accounts)]
+#[instruction(_trade_id_arg: u64, arbitrator_pubkey: Pubkey)] // Added instruction args
+pub struct AssignArbitrator<'info> {
+    #[account(mut,
+        seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
+        bump = trade_account.bump
+    )]
+    pub trade_account: Account<'info, Trade>,
+
+    // Authority that can assign arbitrator (e.g. Hub admin)
+    pub admin_signer: Signer<'info>, // Renamed from admin_or_authority
+
+    // Need TradeGlobalState to get hub_address for hub_config constraint
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump // Ensuring trade_global_state is defined with its bump
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+
+    // Hub Config to check if admin_signer is the actual admin
+    #[account(
+        seeds = [b"hub"], 
+        bump = hub_config.bump, // Ensuring hub_config is defined with its bump
+        seeds::program = trade_global_state.hub_address // Use hub_address from trade_global_state
+    )]
+    pub hub_config: Account<'info, HubConfigAccount>,
+}
+
+// Placeholder for ArbitratorResolveDispute accounts struct
+#[derive(Accounts)]
+#[instruction(_trade_id_arg: u64, resolution_outcome: DisputeResolutionOutcome, resolution_reason: Option<String>)]
+pub struct ArbitratorResolveDispute<'info> {
+    #[account(mut,
+        seeds = [b"trade".as_ref(), &_trade_id_arg.to_le_bytes()],
+        bump = trade_account.bump
+    )]
+    pub trade_account: Box<Account<'info, Trade>>,
+
+    // The arbitrator signing the transaction
+    pub arbitrator_signer: Signer<'info>, // Renamed from 'arbitrator' to match instruction usage
+
+    // Trade Global State (to get hub_address for hub_config and for Profile CPIs)
+    #[account(
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump
+    )]
+    pub trade_global_state: Box<Account<'info, TradeGlobalState>>, // Boxed
+
+    // Hub Config for fees and admin checks if needed here (though admin not directly used)
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config.bump,
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config: Box<Account<'info, HubConfigAccount>>, // Boxed as it's large
+
+    // Native SOL transfer accounts (receiver + fee collectors)
+    /// CHECK: Verified in instruction logic: must match trade_account.buyer or trade_account.seller
+    #[account(mut)]
+    pub buyer_native_account: AccountInfo<'info>,
+    /// CHECK: Verified in instruction logic: must match trade_account.seller or trade_account.buyer
+    #[account(mut)]
+    pub seller_native_account: AccountInfo<'info>,
+    /// CHECK: Verified in instruction logic: must match hub_config.chain_fee_collector_addr
+    #[account(mut)]
+    pub chain_fee_collector: AccountInfo<'info>,
+    /// CHECK: Verified in instruction logic: must match hub_config.warchest_addr
+    #[account(mut)]
+    pub warchest_collector: AccountInfo<'info>,
+
+    // SPL Token transfer accounts
+    // Mint of the escrowed token. Required if SPL. Must match trade_account.escrow_mint_address and escrow_vault.mint.
+    pub escrow_vault_mint: Option<Account<'info, Mint>>,
+
+    #[account(mut,
+        seeds = [b"trade_escrow_vault".as_ref(), trade_account.key().as_ref()],
+        bump // Anchor will use the canonical bump for this PDA
+    )]
+    pub escrow_vault: Option<Account<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub buyer_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub seller_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub chain_fee_collector_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub warchest_token_account: Option<Account<'info, TokenAccount>>,
+
+    // System Programs
+    pub token_program: Option<Program<'info, Token>>,
+    pub system_program: Program<'info, System>,
+
+    // Accounts for Profile CPI (similar to ReleaseEscrow but for both parties)
+    pub profile_program: Program<'info, ProfileProgram>,
+
+    #[account(mut,
+        seeds = [b"profile", trade_account.buyer.as_ref()],
+        bump = buyer_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub buyer_profile: Box<Account<'info, ProfileAccountData>>,
+    /// CHECK: This is trade_account.buyer
+    #[account(address = trade_account.buyer @ TradeError::ProfileCpiBuyerProfileAuthorityMismatch)]
+    pub buyer_profile_authority_info: AccountInfo<'info>,
+
+    #[account(mut,
+        seeds = [b"profile", trade_account.seller.as_ref()],
+        bump = seller_profile.bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Box<Account<'info, ProfileAccountData>>,
+    /// CHECK: This is trade_account.seller
+    #[account(address = trade_account.seller @ TradeError::ProfileCpiSellerProfileAuthorityMismatch)]
+    pub seller_profile_authority_info: AccountInfo<'info>,
+
+    // Hub Config and Program ID specifically for Profile CPI (can reuse trade_global_state.hub_address)
+    #[account(
+        seeds = [b"hub"],
+        bump = hub_config_for_profile_cpi.bump,
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>,
+    /// CHECK: This is the Hub Program ID for Profile CPI
+    #[account(address = trade_global_state.hub_address @ TradeError::ProfileCpiHubProgramIdMismatch)]
+    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
+
+    // Profile Global States for CPI
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump, // Anchor infers bump
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_buyer: Box<Account<'info, ProfileGlobalStateAccount>>, // Boxed
+
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump, // Anchor infers bump
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state_for_seller: Box<Account<'info, ProfileGlobalStateAccount>>, // Boxed
+}
 
 #[program]
 pub mod trade {
@@ -1366,7 +1764,7 @@ pub mod trade {
         let cpi_program_profile = ctx.accounts.profile_program.to_account_info();
         profile::cpi::update_trades_count(
             CpiContext::new(cpi_program_profile.clone(), cpi_accounts_buyer),
-            trade_state_update_for_profile,
+            trade_state_update_for_profile.clone(),
         )?;
 
         // For seller
@@ -1391,7 +1789,7 @@ pub struct InitializeTradeGlobalState<'info> {
     #[account(
         init,
         payer = authority,
-        space = TradeGlobalState::SPACE,
+        space = 8 + TradeGlobalState::INIT_SPACE, // Corrected from SPACE to INIT_SPACE
         seeds = [b"trade_global_state"],
         bump
     )]
@@ -1773,7 +2171,7 @@ pub struct ReleaseEscrow<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(_trade_id_arg: u64, reason: Option<String>)] // Added reason to instruction attribute
+#[instruction(_trade_id_arg: u64, reason: Option<String>)]
 pub struct DisputeTrade<'info> {
     #[account(mut)]
     pub disputer: Signer<'info>,
@@ -1785,31 +2183,63 @@ pub struct DisputeTrade<'info> {
     )]
     pub trade_account: Account<'info, Trade>,
 
-    #[account(
-        seeds = [b"hub"],
-        bump = hub_config_for_profile_cpi.bump, 
-        seeds::program = trade_global_state.hub_address
-    )]
-    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>, 
+    // Accounts for Profile CPI
+    pub profile_program: Program<'info, ProfileProgram>,
 
-    /// CHECK: This is the Hub Program ID, used for Profile CPI
-    #[account(address = trade_global_state.hub_address @ TradeError::GenericError)]
-    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
+    // Disputer's Profile (could be buyer or seller)
+    #[account(mut,
+        seeds = [b"profile", disputer.key().as_ref()],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub disputer_profile: Account<'info, ProfileAccountData>,
+
+    // Buyer's Profile & Authority
+    #[account(mut,
+        seeds = [b"profile", trade_account.buyer.as_ref()],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub buyer_profile: Account<'info, ProfileAccountData>,
+    /// CHECK: Authority for buyer's profile, must be trade_account.buyer
+    #[account(address = trade_account.buyer @ TradeError::ProfileCpiBuyerProfileAuthorityMismatch)]
+    pub buyer_profile_authority_info: AccountInfo<'info>,
+
+    // Seller's Profile & Authority
+    #[account(mut,
+        seeds = [b"profile", trade_account.seller.as_ref()],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub seller_profile: Account<'info, ProfileAccountData>,
+    /// CHECK: Authority for seller's profile, must be trade_account.seller
+    #[account(address = trade_account.seller @ TradeError::ProfileCpiSellerProfileAuthorityMismatch)]
+    pub seller_profile_authority_info: AccountInfo<'info>,
     
+    // Profile Global State for CPI
+    #[account(
+        seeds = [b"profile_global_state"],
+        bump,
+        seeds::program = profile_program.key()
+    )]
+    pub profile_global_state: Account<'info, ProfileGlobalStateAccount>,
+
+    // Trade Global State (to get hub_address for hub_config_for_profile_cpi and hub_program_id_for_profile_cpi)
     #[account(
         seeds = [b"trade_global_state"],
-        bump = trade_global_state.bump
+        bump
     )]
     pub trade_global_state: Account<'info, TradeGlobalState>,
 
-    pub profile_program: Program<'info, ProfileProgram>,
+    // Hub Config and Program ID for Profile CPI (use trade_global_state.hub_address for seeds::program and address check)
+    #[account(
+        seeds = [b"hub"],
+        bump,
+        seeds::program = trade_global_state.hub_address
+    )]
+    pub hub_config_for_profile_cpi: Account<'info, ProfileHubConfigStub>,
 
-    #[error_code]
-    pub enum TradeError {
-        #[msg("Generic error.")]
-        GenericError,
-        // ... other variants ...
-        #[msg("Fee collector token account not found")]
-        MissingFeeCollectorTokenAccount,
-    }
+    /// CHECK: This is the Hub Program ID, used for Profile CPI
+    #[account(address = trade_global_state.hub_address @ TradeError::ProfileCpiHubProgramIdMismatch)]
+    pub hub_program_id_for_profile_cpi: AccountInfo<'info>,
 }
