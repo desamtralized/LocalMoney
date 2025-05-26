@@ -1,0 +1,247 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# LocalMoney Solana - Testing Guidelines
+
+## Testing Philosophy
+- **No mocks**: Use real program interactions only
+- **Localnet only**: All tests run against local validator
+- **Integration focused**: Test cross-program interactions
+- **State verification**: Verify account states after operations
+
+## Test Setup
+
+### Configuration
+Main test config in [Anchor.toml](mdc:Anchor.toml):
+- **Startup wait**: 10 seconds for validator initialization
+- **Timeout**: 1,000,000ms for complex operations
+- **Commitment level**: Processed for faster feedback
+
+### Required Programs
+Tests automatically clone these programs to localnet:
+- SPL Token Program
+- Token Metadata Program
+
+## Test Structure
+
+### Test Files Location
+All tests in [tests/](mdc:tests/) directory following pattern:
+- `{program_name}.ts` - Main program tests
+- `integration.ts` - Cross-program tests
+- `utils/` - Shared test utilities
+
+### Test Organization
+```typescript
+describe("{Program} Tests", () => {
+  before(async () => {
+    // Setup accounts, airdrop SOL
+  });
+
+  beforeEach(async () => {
+    // Reset state if needed
+  });
+
+  describe("Instruction Tests", () => {
+    it("should handle normal case", async () => {
+      // Test implementation
+    });
+
+    it("should fail with invalid input", async () => {
+      // Error case testing
+    });
+  });
+
+  describe("State Tests", () => {
+    it("should maintain correct state", async () => {
+      // State verification
+    });
+  });
+});
+```
+
+## Running Tests
+
+### Commands
+```bash
+# Run all tests
+anchor test --skip-local-validator
+
+# Run specific test file
+anchor test tests/hub.ts --skip-local-validator
+
+# Run with detailed output
+anchor test --skip-local-validator -- --reporter spec
+
+# Use script alias
+yarn run local-test
+```
+
+### Prerequisites
+1. Local validator must be running: `anchor run start-local`
+2. Programs must be deployed: `anchor deploy`
+3. Test wallet needs SOL: `solana airdrop 10`
+
+## Test Best Practices
+
+### Account Management
+```typescript
+// Good: Proper account setup
+const userKeypair = Keypair.generate();
+await program.provider.connection.requestAirdrop(
+  userKeypair.publicKey,
+  2 * LAMPORTS_PER_SOL
+);
+
+// Generate PDAs correctly
+const [profilePda] = PublicKey.findProgramAddressSync(
+  [Buffer.from("profile"), userKeypair.publicKey.toBuffer()],
+  program.programId
+);
+```
+
+### State Verification
+```typescript
+// Always verify account state after operations
+const accountInfo = await program.account.profile.fetch(profilePda);
+expect(accountInfo.owner).to.eql(userKeypair.publicKey);
+expect(accountInfo.isActive).to.be.true;
+```
+
+### Error Testing
+```typescript
+// Test expected failures
+try {
+  await program.methods
+    .invalidOperation()
+    .accounts({ ... })
+    .signers([userKeypair])
+    .rpc();
+  expect.fail("Should have thrown error");
+} catch (error) {
+  expect(error.message).to.include("Expected error message");
+}
+```
+
+### Cross-Program Testing
+```typescript
+// Test CPI interactions
+const hubProgram = anchor.workspace.Hub;
+const tradeProgram = anchor.workspace.Trade;
+
+// Call hub to configure trade program
+await hubProgram.methods
+  .updateConfig()
+  .accounts({
+    tradeProgram: tradeProgram.programId,
+    // ... other accounts
+  })
+  .rpc();
+
+// Verify trade program received configuration
+const tradeConfig = await tradeProgram.account.config.fetch(configPda);
+expect(tradeConfig.hubProgram).to.eql(hubProgram.programId);
+```
+
+## Test Categories
+
+### Unit Tests
+- Individual instruction testing
+- Input validation
+- Basic state changes
+- Error conditions
+
+### Integration Tests
+- Multi-program workflows
+- Complete user journeys
+- Complex state transitions
+- Business logic validation
+
+### Regression Tests
+- Previously fixed bugs
+- Edge cases
+- Performance scenarios
+- Upgrade compatibility
+
+## Common Test Patterns
+
+### Setup Helper
+```typescript
+async function setupTestEnvironment() {
+  const user = Keypair.generate();
+  await airdrop(user.publicKey, 10 * LAMPORTS_PER_SOL);
+  
+  const [profilePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("profile"), user.publicKey.toBuffer()],
+    program.programId
+  );
+  
+  return { user, profilePda };
+}
+```
+
+### State Snapshot
+```typescript
+async function captureState(program, accounts) {
+  const state = {};
+  for (const [name, address] of Object.entries(accounts)) {
+    state[name] = await program.account[name].fetch(address);
+  }
+  return state;
+}
+```
+
+### Time Advancement
+```typescript
+async function advanceTime(seconds: number) {
+  // For time-based tests on localnet
+  const slot = await program.provider.connection.getSlot();
+  await program.provider.connection.confirmTransaction(
+    await program.provider.connection.requestAirdrop(
+      Keypair.generate().publicKey,
+      0
+    )
+  );
+}
+```
+
+## Debugging Tests
+
+### Logging
+```typescript
+// Add detailed logging
+console.log("Account state:", await program.account.profile.fetch(profilePda));
+console.log("Transaction signature:", signature);
+```
+
+### Account Inspection
+```typescript
+// Check account exists and has correct data
+const accountInfo = await program.provider.connection.getAccountInfo(profilePda);
+console.log("Account owner:", accountInfo?.owner.toString());
+console.log("Account data length:", accountInfo?.data.length);
+```
+
+### Transaction Analysis
+```typescript
+// Get detailed transaction info
+const tx = await program.provider.connection.getTransaction(signature, {
+  commitment: "confirmed",
+  maxSupportedTransactionVersion: 0
+});
+console.log("Transaction logs:", tx?.meta?.logMessages);
+```
+
+## Performance Testing
+- Measure compute units usage
+- Test with maximum account sizes
+- Verify rent exemption calculations
+- Test concurrent operations
+
+## Test Maintenance
+- Keep tests updated with program changes
+- Remove obsolete test cases
+- Add tests for new features
+- Document complex test scenarios
+- Review test coverage regularly

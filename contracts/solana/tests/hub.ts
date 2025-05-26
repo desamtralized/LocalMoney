@@ -72,9 +72,9 @@ describe("hub", () => {
         initialConfigArgs.tradeLimitMaxUsd
       )
       .accounts({
-        hub_config: hubConfigPda,
+        hubConfig: hubConfigPda,
         admin: adminWallet.publicKey,
-        system_program: SystemProgram.programId,
+        systemProgram: SystemProgram.programId,
       })
       .signers([adminWallet.payer]) // If admin is the payer from provider.wallet
       .rpc();
@@ -127,9 +127,9 @@ describe("hub", () => {
           initialConfigArgs.tradeLimitMaxUsd
         )
         .accounts({
-          hub_config: hubConfigPda,
+          hubConfig: hubConfigPda,
           admin: adminWallet.publicKey,
-          system_program: SystemProgram.programId,
+          systemProgram: SystemProgram.programId,
         })
         .signers([adminWallet.payer])
         .rpc();
@@ -170,7 +170,7 @@ describe("hub", () => {
           initialConfigArgs.tradeLimitMinUsd,
           initialConfigArgs.tradeLimitMaxUsd
         )
-        .accounts({ hub_config: hubConfigPda, admin: adminWallet.publicKey, system_program: SystemProgram.programId })
+        .accounts({ hubConfig: hubConfigPda, admin: adminWallet.publicKey, systemProgram: SystemProgram.programId })
         .signers([adminWallet.payer])
         .rpc();
       expect.fail("Initialization should have failed due to zero timer or already being initialized.");
@@ -197,7 +197,7 @@ describe("hub", () => {
       await program.methods
         .updateAdmin(newAdminKeypair.publicKey)
         .accounts({
-          hub_config: hubConfigPda,
+          hubConfig: hubConfigPda,
           admin: adminWallet.publicKey, // Current admin signs
         })
         .signers([adminWallet.payer]) // Current admin's keypair from provider.wallet
@@ -213,7 +213,7 @@ describe("hub", () => {
         await program.methods
           .updateAdmin(dummyPubkey()) // Trying to set to some other pubkey
           .accounts({
-            hub_config: hubConfigPda,
+            hubConfig: hubConfigPda,
             admin: someRandomUserKeypair.publicKey, // Non-admin tries to be the authority
           })
           .signers([someRandomUserKeypair]) // Non-admin signs
@@ -236,7 +236,7 @@ describe("hub", () => {
         if (currentHubConfig.admin.equals(newAdminKeypair.publicKey)) {
           await program.methods
             .updateAdmin(adminWallet.publicKey) // original admin from provider
-            .accounts({ hub_config: hubConfigPda, admin: newAdminKeypair.publicKey })
+            .accounts({ hubConfig: hubConfigPda, admin: newAdminKeypair.publicKey })
             .signers([newAdminKeypair])
             .rpc();
           console.log("Admin reset to original provider wallet for subsequent tests.");

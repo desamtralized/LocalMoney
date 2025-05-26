@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*; // Added to help macro resolution
 
-declare_id!("PricEZqVjG9t7LzLQjWJyYj1isrg6T3m21jXW3sWJGQ"); // Replace with actual Price Program ID
+declare_id!("8JuKMhng6xUdYNVAFbNN2vB6wALwLP8TpMxfLL65ibCi");
 
 #[program]
 pub mod price {

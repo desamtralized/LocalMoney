@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("HUBgibEhQSAJ7a4YhMyyY17n3AMR7fsk2r7CrN32yLh"); // Will be updated by anchor build if not already
+declare_id!("AHS2kqQDh8Zn3YTqsxJxm9X1uadUuuq7kdddH9BvVkMr");
 
 #[program]
 pub mod hub {
@@ -177,7 +177,7 @@ pub struct InitializeHub<'info> {
     #[account(
         init,
         payer = admin, // The admin pays for account creation
-        space = 8 + 32 * 9 + 1 * 2 + 2 * 4 + 8 * 2 + 8 * 2, // Discriminator + Pubkeys + u8s + u16s + u64s + u128s (approx)
+        space = 8 + 32 * 10 + 1 * 2 + 2 * 4 + 8 * 2 + 16 * 2, // Discriminator + Pubkeys + u8s + u16s + u64s + u128s
         seeds = [b"hub"],
         bump
     )]

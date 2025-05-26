@@ -9,9 +9,8 @@ anchor.setProvider(anchor.AnchorProvider.env());
 const program = anchor.workspace.Profile as Program<Profile>;
 const provider = anchor.getProvider();
 
-// Mock Hub Program ID and a keypair for its authority if needed for HubConfigStub initialization
-const MOCK_HUB_PROGRAM_ID = anchor.web3.Keypair.generate().publicKey;
-// const hubAdmin = anchor.web3.Keypair.generate(); // If HubConfigStub needs admin to init
+// Real Hub Program - using actual workspace program
+const hubProgram = anchor.workspace.Hub as Program<any>;
 
 describe("Profile Program Tests", () => {
     const authority = anchor.web3.Keypair.generate(); // Program deployer / admin for ProfileGlobalState
@@ -44,42 +43,51 @@ describe("Profile Program Tests", () => {
             program.programId
         );
 
-        // If HubConfigStub is a PDA of a mock Hub program, find its address
+        // Use real Hub config PDA instead of stub
         [hubConfigStubPda, hubConfigStubBump] = anchor.web3.PublicKey.findProgramAddressSync(
-            [Buffer.from("hub_config_stub")], // Assuming a unique seed for the stub
-            program.programId // Or MOCK_HUB_PROGRAM_ID if it's a separate mock program
+            [Buffer.from("hub")], // Real Hub config seed
+            hubProgram.programId // Real Hub program ID
         );
 
-        // Initialize the HubConfigStub account.
-        // This assumes HubConfigStub is a simple account type defined in the Profile IDL
-        // and that there's an instruction like `initializeHubConfigStub` or similar
-        // in the Profile program for test purposes, OR we simulate it if it's from another program.
-        // For this example, let's assume a direct way to create/set its data or an init instruction.
-        // If `HubConfigStub` is part of the Profile program and has an initializer:
+        // Initialize the real Hub program
         try {
-            // This is a hypothetical initializer. The actual mechanism might differ.
-            // If HubConfigStub is just an account type, we might need to use a different approach
-            // to set its data, or rely on it being passed from a mocked Hub program.
-            // For now, we'll assume an initializer in the Profile program for the stub.
-            await program.methods
-                .initializeHubConfigStub(new anchor.BN(5), new anchor.BN(10)) // active_offers_limit, max_trades_limit
+            await hubProgram.methods
+                .initialize(
+                    anchor.web3.Keypair.generate().publicKey, // offerAddr - placeholder
+                    anchor.web3.Keypair.generate().publicKey, // tradeAddr - placeholder
+                    program.programId,                        // profileAddr - this program
+                    anchor.web3.Keypair.generate().publicKey, // priceAddr - placeholder
+                    anchor.web3.Keypair.generate().publicKey, // priceProviderAddr
+                    anchor.web3.Keypair.generate().publicKey, // localMarketAddr
+                    anchor.web3.Keypair.generate().publicKey, // localDenomMint
+                    anchor.web3.Keypair.generate().publicKey, // chainFeeCollectorAddr
+                    anchor.web3.Keypair.generate().publicKey, // warchestAddr
+                    5,                                        // activeOffersLimit
+                    10,                                       // activeTradesLimit
+                    100,                                      // arbitrationFeeBps
+                    50,                                       // burnFeeBps
+                    100,                                      // chainFeeBps
+                    50,                                       // warchestFeeBps
+                    new anchor.BN(3600 * 24 * 7),           // tradeExpirationTimer
+                    new anchor.BN(3600 * 24 * 3),           // tradeDisputeTimer
+                    new anchor.BN(10),                       // tradeLimitMinUsd
+                    new anchor.BN(1000)                      // tradeLimitMaxUsd
+                )
                 .accounts({
-                    hubConfigStub: hubConfigStubPda,
-                    authority: hubAdmin.publicKey, // Or global authority
+                    hubConfig: hubConfigStubPda,
+                    admin: hubAdmin.publicKey,
                     systemProgram: anchor.web3.SystemProgram.programId,
                 })
-                .signers([hubAdmin]) // Or global authority
+                .signers([hubAdmin])
                 .rpc();
         } catch (e) {
-            console.log("HubConfigStub might already be initialized or initializer doesn't exist. Details:", e.message);
+            console.log("Hub might already be initialized. Details:", e.message);
             // Attempt to fetch to see if it exists and has data.
             try {
-                const config = await program.account.hubConfigStub.fetch(hubConfigStubPda);
-                console.log("Fetched existing HubConfigStub:", config);
+                const config = await hubProgram.account.hubConfig.fetch(hubConfigStubPda);
+                console.log("Fetched existing Hub config:", config);
             } catch (fetchError) {
-                console.log("Could not fetch HubConfigStub. Test for updateActiveOffers might be unreliable.", fetchError.message);
-                // If it truly doesn't exist and can't be initialized here, the test will likely fail
-                // or needs to be adapted to not depend on specific values from it.
+                console.log("Could not fetch Hub config. Tests might be unreliable.", fetchError.message);
             }
         }
     });
@@ -101,7 +109,7 @@ describe("Profile Program Tests", () => {
     });
 
     it("Registers Hub Address for Profile", async () => {
-        const testHubActualAddress = MOCK_HUB_PROGRAM_ID; // Or any other test Pubkey
+        const testHubActualAddress = hubProgram.programId; // Use real Hub program ID
         await program.methods
             .registerHubForProfile(testHubActualAddress)
             .accounts({
@@ -162,14 +170,13 @@ describe("Profile Program Tests", () => {
     });
 
     it("Updates Active Offers Count", async () => {
-        // Ensure HubConfigStub is initialized as expected.
-        // If initializeHubConfigStub failed or isn't suitable, this test needs adjustment.
+        // Ensure Hub config is initialized as expected.
         try {
-            const config = await program.account.hubConfigStub.fetch(hubConfigStubPda);
-            assert.isNotNull(config, "HubConfigStub should be initialized for this test");
-            // assert.equal(config.activeOffersLimit.toNumber(), 5, "HubConfigStub active_offers_limit incorrect");
+            const config = await hubProgram.account.hubConfig.fetch(hubConfigStubPda);
+            assert.isNotNull(config, "Hub config should be initialized for this test");
+            assert.equal(config.activeOffersLimit, 5, "Hub active_offers_limit incorrect");
         } catch (e) {
-            console.warn("Skipping HubConfigStub value check due to potential initialization issues. Test may not be robust.", e.message);
+            console.warn("Skipping Hub config value check due to potential initialization issues. Test may not be robust.", e.message);
         }
 
         // First, ensure the user profile is initialized by calling updateContact
@@ -199,24 +206,17 @@ describe("Profile Program Tests", () => {
             .updateActiveOffers({ increment: {} }) // or CounterAction.Increment
             .accounts({
                 profile: userProfilePda,
-                // Assuming the profileAuthority (user) needs to sign if not a CPI
-                // or if the CPI delegates authority appropriately.
-                // If this is meant to be called by Offer program via CPI,
-                // then the 'authority' for this instruction might be the Offer program's PDA
-                // or the signer would be the Offer program itself (via CPI).
-                // For direct testing, we might need a specific signer setup.
-                // Let's assume for now the userProfileOwner can call it or it's a test-only path.
                 profileAuthority: userProfileOwner.publicKey, 
                 hubConfig: hubConfigStubPda, 
-                // hubProgramId: MOCK_HUB_PROGRAM_ID, // May not be needed if hubConfig is from same program
+                hubProgramId: hubProgram.programId, // Required account
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner]) // Adjust signers based on actual instruction requirements
             .rpc();
         
         const profileAfter = await program.account.profile.fetch(userProfilePda);
-        // Adjust field name `activeOffersCount` as per actual IDL
-        assert.equal(profileAfter.activeOffersCount.toNumber(), initialOfferCount.toNumber() + 1);
+        // activeOffersCount is u8, not BN
+        assert.equal(profileAfter.activeOffersCount, initialOfferCount + 1);
 
         // Test decrement
         await program.methods
@@ -225,18 +225,19 @@ describe("Profile Program Tests", () => {
                 profile: userProfilePda,
                 profileAuthority: userProfileOwner.publicKey,
                 hubConfig: hubConfigStubPda,
+                hubProgramId: hubProgram.programId, // Required account
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner])
             .rpc();
         
         const profileAfterDecrement = await program.account.profile.fetch(userProfilePda);
-        assert.equal(profileAfterDecrement.activeOffersCount.toNumber(), initialOfferCount.toNumber());
+        assert.equal(profileAfterDecrement.activeOffersCount, initialOfferCount);
     });
 
     it("Updates Requested Trades Count", async () => {
         const profileBefore = await program.account.profile.fetch(userProfilePda);
-        const initialRequested = profileBefore.requestedTradesCount.toNumber();
+        const initialRequested = profileBefore.requestedTradesCount.toNumber(); // u64 has toNumber()
 
         await program.methods
             .updateTradesCount({ requestCreated: {} })
@@ -244,7 +245,7 @@ describe("Profile Program Tests", () => {
                 profile: userProfilePda,
                 profileAuthority: userProfileOwner.publicKey,
                 hubConfig: hubConfigStubPda,
-                hubProgramId: MOCK_HUB_PROGRAM_ID,
+                hubProgramId: hubProgram.programId,
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner])
@@ -252,12 +253,12 @@ describe("Profile Program Tests", () => {
 
         const profileAfter = await program.account.profile.fetch(userProfilePda);
         assert.equal(profileAfter.requestedTradesCount.toNumber(), initialRequested + 1);
-        assert.equal(profileAfter.activeTradesCount.toNumber(), profileBefore.activeTradesCount.toNumber());
+        assert.equal(profileAfter.activeTradesCount, profileBefore.activeTradesCount); // u8 comparison
     });
 
     it("Updates Active Trades Count and enforces limit", async () => {
         const before = await program.account.profile.fetch(userProfilePda);
-        const initialActive = before.activeTradesCount.toNumber();
+        const initialActive = before.activeTradesCount; // u8, no toNumber() needed
 
         // increment active trades within limit
         await program.methods
@@ -266,26 +267,26 @@ describe("Profile Program Tests", () => {
                 profile: userProfilePda,
                 profileAuthority: userProfileOwner.publicKey,
                 hubConfig: hubConfigStubPda,
-                hubProgramId: MOCK_HUB_PROGRAM_ID,
+                hubProgramId: hubProgram.programId,
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner])
             .rpc();
 
         let after = await program.account.profile.fetch(userProfilePda);
-        assert.equal(after.activeTradesCount.toNumber(), initialActive + 1);
+        assert.equal(after.activeTradesCount, initialActive + 1);
 
         // reach limit
-        const hubConfig = await program.account.hubConfigStub.fetch(hubConfigStubPda);
-        const limit = hubConfig.activeTradesLimit.toNumber();
-        for (let i = after.activeTradesCount.toNumber(); i < limit; i++) {
+        const hubConfig = await hubProgram.account.hubConfig.fetch(hubConfigStubPda);
+        const limit = hubConfig.activeTradesLimit.toNumber(); // BN field
+        for (let i = after.activeTradesCount; i < limit; i++) {
             await program.methods
                 .updateTradesCount({ requestAcceptedOrEscrowFunded: {} })
                 .accounts({
                     profile: userProfilePda,
                     profileAuthority: userProfileOwner.publicKey,
                     hubConfig: hubConfigStubPda,
-                    hubProgramId: MOCK_HUB_PROGRAM_ID,
+                    hubProgramId: hubProgram.programId,
                     profileGlobalState: profileGlobalStatePda,
                 })
                 .signers([userProfileOwner])
@@ -293,7 +294,7 @@ describe("Profile Program Tests", () => {
         }
 
         const atLimit = await program.account.profile.fetch(userProfilePda);
-        assert.equal(atLimit.activeTradesCount.toNumber(), limit);
+        assert.equal(atLimit.activeTradesCount, limit);
 
         try {
             await program.methods
@@ -302,7 +303,7 @@ describe("Profile Program Tests", () => {
                     profile: userProfilePda,
                     profileAuthority: userProfileOwner.publicKey,
                     hubConfig: hubConfigStubPda,
-                    hubProgramId: MOCK_HUB_PROGRAM_ID,
+                    hubProgramId: hubProgram.programId,
                     profileGlobalState: profileGlobalStatePda,
                 })
                 .signers([userProfileOwner])
@@ -321,7 +322,7 @@ describe("Profile Program Tests", () => {
                 profile: userProfilePda,
                 profileAuthority: userProfileOwner.publicKey,
                 hubConfig: hubConfigStubPda,
-                hubProgramId: MOCK_HUB_PROGRAM_ID,
+                hubProgramId: hubProgram.programId,
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner])
@@ -337,7 +338,7 @@ describe("Profile Program Tests", () => {
                 profile: userProfilePda,
                 profileAuthority: userProfileOwner.publicKey,
                 hubConfig: hubConfigStubPda,
-                hubProgramId: MOCK_HUB_PROGRAM_ID,
+                hubProgramId: hubProgram.programId,
                 profileGlobalState: profileGlobalStatePda,
             })
             .signers([userProfileOwner])

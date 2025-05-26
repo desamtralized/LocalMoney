@@ -1,0 +1,179 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# LocalMoney Solana - Development Workflow
+
+## Project Architecture
+LocalMoney is a P2P trading platform with 5 interconnected Solana programs:
+
+### Core Programs
+- **[Hub](mdc:programs/hub/)**: Central coordination and configuration
+- **[Offer](mdc:programs/offer/)**: Buy/sell offer management  
+- **[Trade](mdc:programs/trade/)**: Escrow and trade lifecycle
+- **[Price](mdc:programs/price/)**: Currency pricing oracle
+- **[Profile](mdc:programs/profile/)**: User profile management
+
+## Development Setup
+
+### Prerequisites
+- Rust 1.70+
+- Solana CLI 1.16+
+- Anchor CLI 0.31.1
+- Node.js 16+ with Yarn
+
+### Initial Setup
+```bash
+# Install dependencies
+yarn install
+
+# Build all programs
+anchor build
+
+# Generate TypeScript types
+anchor build && anchor deploy
+```
+
+## Daily Development Workflow
+
+### 1. Start Development Session
+```bash
+# Start local validator (in separate terminal)
+anchor run start-local
+
+# Verify cluster is localnet
+solana config get
+```
+
+### 2. Make Changes
+- Edit program code in `programs/{program_name}/src/`
+- Update tests in `tests/`
+- Modify IDL interfaces as needed
+
+### 3. Build and Test
+```bash
+# Build changes
+anchor build
+
+# Deploy to localnet
+anchor deploy
+
+# Run tests
+anchor run local-test
+```
+
+### 4. Debug Issues
+```bash
+# Check program logs
+solana logs
+
+# Get program account info
+solana account {program_id}
+
+# Airdrop SOL if needed
+solana airdrop 10
+```
+
+## Code Organization
+
+### Program Structure
+Each program follows Anchor conventions:
+```
+programs/{program_name}/
+├── src/
+│   ├── lib.rs           # Main program entry
+│   ├── instructions/    # Instruction handlers
+│   ├── state/          # Account structures
+│   ├── errors.rs       # Custom error types
+│   └── constants.rs    # Program constants
+├── Cargo.toml
+└── Xargo.toml
+```
+
+### Testing Structure
+```
+tests/
+├── {program_name}.ts   # Program-specific tests
+├── utils/              # Test utilities
+└── fixtures/           # Test data
+```
+
+## Cross-Program Communication
+Programs interact via Cross-Program Invocation (CPI):
+- Hub -> All other programs (configuration)
+- Offer -> Trade (trade initiation)
+- Trade -> Price (pricing data)
+- Trade -> Profile (user verification)
+
+## Best Practices
+
+### Account Management
+- Use PDAs for program-owned accounts
+- Implement proper account constraints
+- Validate account relationships
+- Use `#[account(init)]` for new accounts
+- Use `#[account(mut)]` for modifications
+
+### Error Handling
+- Define custom error enums
+- Use descriptive error messages
+- Implement proper error propagation
+- Log errors for debugging
+
+### Security
+- Validate all inputs
+- Check account ownership
+- Implement proper authorization
+- Use signer constraints where needed
+- Validate cross-program calls
+
+### Performance
+- Minimize compute units usage
+- Optimize account layouts
+- Use efficient serialization
+- Batch related operations
+
+## Common Commands
+
+### Development
+```bash
+# Full rebuild
+anchor build
+
+# Deploy specific program
+anchor deploy --program-name {program_name}
+
+# Run specific test file
+anchor test tests/{program_name}.ts --skip-local-validator
+
+# Clean build artifacts (use sparingly)
+anchor clean
+```
+
+### Debugging
+```bash
+# Show program logs in real-time
+solana logs | grep {program_id}
+
+# Get account data
+anchor account {account_type} {account_address}
+
+# Decode transaction
+solana confirm {transaction_signature} --verbose
+```
+
+## Integration Testing
+Tests should cover:
+1. Individual program functionality
+2. Cross-program interactions
+3. Error conditions
+4. Edge cases
+5. State transitions
+
+## Documentation Requirements
+- Document all public functions (25+ LOC)
+- Explain complex business logic
+- Include usage examples
+- Document account relationships
+- Explain PDA derivations

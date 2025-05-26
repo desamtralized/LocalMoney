@@ -167,7 +167,7 @@ pub struct TradeGlobalState {
     pub bump: u8,
 }
 
-declare_id!("TradZuT9g8uYmRqwL2hD5mCEvRztzAnQhND2BxAQKz2"); // New placeholder ID for Trade program
+declare_id!("8amGZVCwzB7i26AD39N26N47EMvjaFqRJmQJKYJNEG8Z");
 
 #[error_code]
 pub enum TradeError {
@@ -510,9 +510,17 @@ pub mod trade {
     // Placeholder initialize, actual init for global state will be added
     pub fn initialize_trade_global_state(ctx: Context<InitializeTradeGlobalState>) -> Result<()> {
         let global_state = &mut ctx.accounts.trade_global_state;
+        global_state.admin = ctx.accounts.authority.key();
         global_state.trades_count = 0;
         global_state.hub_address = Pubkey::default(); // Not registered yet
         global_state.bump = ctx.bumps.trade_global_state;
+        Ok(())
+    }
+
+    pub fn register_hub(ctx: Context<RegisterHub>, hub_program_address: Pubkey) -> Result<()> {
+        let global_state = &mut ctx.accounts.trade_global_state;
+        global_state.hub_address = hub_program_address;
+        msg!("Trade program registered with Hub program: {}", hub_program_address);
         Ok(())
     }
 
@@ -1797,6 +1805,19 @@ pub struct InitializeTradeGlobalState<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RegisterHub<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade_global_state"],
+        bump = trade_global_state.bump,
+        has_one = admin @ TradeError::NotHubAdmin
+    )]
+    pub trade_global_state: Account<'info, TradeGlobalState>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
 }
 
 #[derive(Accounts)]

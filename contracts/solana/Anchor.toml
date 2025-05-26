@@ -7,11 +7,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hub = "6bTXJfRFtRhjW8r6GwnQ3v5ztrBineScXx9nUQB13CBj"
-offer = "F8bb6QGQbfGRWmASE4Qx5fdzbrQ4Yv8QXzmy5wuJdxxL"
-profile = "B1ug7Qz2ZfP1nXaf3m2aDczuYkhesLbqdZsfwzydAoEW"
-price = "ER2k2SWAADRtAJUvsH1UUZ7FoCfwiHvD5nCNGQCjirc3"
-trade = "EFa7rtoZTFL8NcRmaTCK4k88h8FKTuqLDAdgJ6mUpxQT"
+hub = "AHS2kqQDh8Zn3YTqsxJxm9X1uadUuuq7kdddH9BvVkMr"
+offer = "7qtvEGEn9bYNMjfjW49aJbYNTT8dC2HmAf6RRdGDvZ27"
+profile = "Fsha2mbpkNpHcDw1VCW9XFmJkS9TP1pBjL6wHKzUcKqL"
+price = "8JuKMhng6xUdYNVAFbNN2vB6wALwLP8TpMxfLL65ibCi"
+trade = "8amGZVCwzB7i26AD39N26N47EMvjaFqRJmQJKYJNEG8Z"
 
 [workspace]
 members = [
@@ -30,7 +30,9 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/integration/spl_token_basic.ts"
+test-unit = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/hub.ts tests/offer.ts tests/profile.ts tests/price.ts tests/trade.ts"
+test-all = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 start-local = "solana-test-validator --reset --quiet --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 --clone metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 local-test = "anchor test --skip-local-validator"
 

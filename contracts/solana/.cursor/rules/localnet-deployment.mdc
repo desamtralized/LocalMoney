@@ -1,0 +1,78 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# LocalMoney Solana - Localnet Deployment Guide
+
+## Overview
+LocalMoney uses **localnet only** for development and testing. No mainnet or devnet deployments should be performed.
+
+## Quick Start Commands
+
+### Start Local Validator
+```bash
+# Start local test validator with required programs
+anchor run start-local
+
+# Alternative: Start with specific options
+solana-test-validator --reset --quiet \
+  --bpf-program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA BPFLoader2111111111111111111111111111111111 \
+  --clone metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+```
+
+### Build and Deploy
+```bash
+# Build all programs
+anchor build
+
+# Deploy to localnet (only allowed deployment target)
+anchor deploy --provider.cluster localnet
+
+# Run tests on localnet
+anchor test --skip-local-validator
+# OR use the script
+yarn run local-test
+```
+
+## Configuration Files
+
+### Anchor Configuration
+Main config: [Anchor.toml](mdc:Anchor.toml)
+- **Provider cluster**: Always set to `localnet`
+- **Wallet**: Uses `~/.config/solana/id.json`
+- **Programs**: All 5 programs configured for localnet only
+
+### Program Addresses (Localnet Only)
+- **Hub**: `6bTXJfRFtRhjW8r6GwnQ3v5ztrBineScXx9nUQB13CBj`
+- **Offer**: `F8bb6QGQbfGRWmASE4Qx5fdzbrQ4Yv8QXzmy5wuJdxxL`
+- **Profile**: `B1ug7Qz2ZfP1nXaf3m2aDczuYkhesLbqdZsfwzydAoEW`
+- **Price**: `ER2k2SWAADRtAJUvsH1UUZ7FoCfwiHvD5nCNGQCjirc3`
+- **Trade**: `EFa7rtoZTFL8NcRmaTCK4k88h8FKTuqLDAdgJ6mUpxQT`
+
+## Program Structure
+All programs located in [programs/](mdc:programs/)
+
+## Deployment Rules
+1. **NEVER deploy to mainnet or devnet**
+2. **Always verify cluster** before deployment: `solana config get`
+3. **Use localnet wallet** with sufficient SOL for testing
+4. **Reset local validator** between major testing sessions
+5. **Verify program IDs** match Anchor.toml before deployment
+
+## Required Programs for Testing
+The local validator clones these required programs:
+- **Token Program**: `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`
+- **Token Metadata**: `metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s`
+
+## Testing Workflow
+1. Start local validator: `anchor run start-local`
+2. Deploy programs: `anchor deploy`
+3. Run tests: `anchor run local-test`
+4. Reset validator when needed: Stop validator and restart with `--reset`
+
+## Troubleshooting
+- **Deployment fails**: Check if local validator is running
+- **Program not found**: Ensure programs are deployed to localnet
+- **Insufficient funds**: Airdrop SOL to your localnet wallet
+- **Stale state**: Reset local validator with `--reset` flag

@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("Prf1LAmRgPhXJCpVd8q92q7tWd5Qy3gYxXm9hPaJpkr"); // Replace with actual Profile Program ID
+declare_id!("Fsha2mbpkNpHcDw1VCW9XFmJkS9TP1pBjL6wHKzUcKqL");
 
 #[program]
 pub mod profile {
