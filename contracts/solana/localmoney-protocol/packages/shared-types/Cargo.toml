@@ -1,0 +1,9 @@
+[package]
+name = "shared-types"
+version = "0.1.0"
+description = "LocalMoney Shared Types - Common types and utilities"
+edition = "2021"
+
+[dependencies]
+anchor-lang = "0.31.1"
+borsh = "0.10.3"

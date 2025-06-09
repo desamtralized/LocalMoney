@@ -1,0 +1,194 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Solana/Anchor Development Patterns for LocalMoney
+
+## Account Design Patterns
+
+### PDA (Program Derived Address) Convention
+```rust
+// Hub Program
+seeds = [b"config"], bump                           // Global configuration
+seeds = [b"arbitrator", arbitrator.key().as_ref()], bump // Arbitrator registry
+
+// Offer Program
+seeds = [b"offer", offer_id.to_le_bytes().as_ref()], bump
+seeds = [b"offer_counter"], bump
+
+// Trade Program
+seeds = [b"trade", trade_id.to_le_bytes().as_ref()], bump
+seeds = [b"trade_counter"], bump
+seeds = [b"escrow", trade.key().as_ref()], bump
+
+// Profile Program
+seeds = [b"profile", owner.key().as_ref()], bump
+
+// Price Program
+seeds = [b"price", currency.to_string().as_bytes()], bump
+```
+
+### Account Size Optimization
+Based on [LocalMoney_Solana_Migration_Guide.md](mdc:LocalMoney_Solana_Migration_Guide.md):
+- Use compact data types (u8 for enums, u64 for IDs)
+- Consider account compression for historical data
+- Calculate rent requirements for large accounts
+- Optimize for Solana's 10KB account size limit
+
+## Cross-Program Invocation (CPI) Patterns
+
+### Profile Updates from Other Programs
+```rust
+// From offer program to update active offers count
+let cpi_program = ctx.accounts.profile_program.to_account_info();
+let cpi_accounts = profile::cpi::accounts::UpdateActiveOffers {
+    profile: ctx.accounts.profile.to_account_info(),
+    owner: ctx.accounts.owner.to_account_info(),
+};
+let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+profile::cpi::increment_active_offers(cpi_ctx)?;
+```
+
+### Hub Configuration Queries
+```rust
+// Validate against hub configuration
+let hub_config = &ctx.accounts.hub_config;
+require!(
+    ctx.accounts.price_program.key() == hub_config.price_program,
+    ErrorCode::InvalidPriceProgram
+);
+```
+
+## Error Handling Standards
+
+### Custom Error Codes
+```rust
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Unauthorized access")]
+    Unauthorized,
+    #[msg("Invalid trade state transition")]
+    InvalidStateTransition,
+    #[msg("Trade has expired")]
+    TradeExpired,
+    #[msg("Excessive platform fees")]
+    ExcessiveFees,
+    #[msg("Active trades limit exceeded")]
+    ActiveTradesLimitExceeded,
+}
+```
+
+## Security Patterns
+
+### Authority Validation
+```rust
+#[access_control(validate_authority(&ctx.accounts.config, &ctx.accounts.authority))]
+pub fn update_config(ctx: Context<UpdateConfig>, params: UpdateConfigParams) -> Result<()> {
+    // Implementation
+}
+
+fn validate_authority(config: &Account<GlobalConfig>, authority: &Signer) -> Result<()> {
+    require!(config.authority == authority.key(), ErrorCode::Unauthorized);
+    Ok(())
+}
+```
+
+### State Transition Validation
+```rust
+// Trade state machine validation
+fn validate_state_transition(current: TradeState, new: TradeState) -> Result<()> {
+    match (current, new) {
+        (TradeState::RequestCreated, TradeState::RequestAccepted) => Ok(()),
+        (TradeState::RequestAccepted, TradeState::EscrowFunded) => Ok(()),
+        (TradeState::EscrowFunded, TradeState::FiatDeposited) => Ok(()),
+        (TradeState::FiatDeposited, TradeState::EscrowReleased) => Ok(()),
+        _ => Err(ErrorCode::InvalidStateTransition.into()),
+    }
+}
+```
+
+## Fee and Constraint Management
+
+### Protocol Fee Validation
+```rust
+// Ensure total fees don't exceed 10%
+pub fn validate_fees(chain_fee: u16, burn_fee: u16, warchest_fee: u16) -> Result<()> {
+    let total_fees = chain_fee + burn_fee + warchest_fee;
+    require!(total_fees <= 1000, ErrorCode::ExcessiveFees); // 1000 = 10%
+    Ok(())
+}
+```
+
+### Trade Limits Enforcement
+```rust
+// USD-based trade limits using price oracle
+pub fn validate_trade_amount(
+    amount: u64,
+    price_per_token: u64,
+    min_limit_usd: u64,
+    max_limit_usd: u64,
+) -> Result<()> {
+    let usd_value = amount.checked_mul(price_per_token)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    require!(usd_value >= min_limit_usd, ErrorCode::BelowMinLimit);
+    require!(usd_value <= max_limit_usd, ErrorCode::AboveMaxLimit);
+    Ok(())
+}
+```
+
+## Data Types and Serialization
+
+### Fiat Currency Support
+Support for 20+ popular  currencies as defined in the protocol specification:
+```rust
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum FiatCurrency {
+    USD, EUR, GBP, JPY, CNY, CAD, AUD, // Major currencies
+    AED, ARS, BRL, INR, KRW, MXN, RUB, ZAR, // Regional currencies
+    // ... 130+ more currencies
+}
+```
+
+### State History Tracking
+```rust
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct TradeStateItem {
+    pub actor: Pubkey,
+    pub state: TradeState,
+    pub timestamp: i64,
+}
+```
+
+## Testing Patterns
+
+### Integration Test Structure
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anchor_lang::prelude::*;
+
+    #[test]
+    fn test_complete_trade_flow() {
+        // Test full trade lifecycle from offer to completion
+    }
+
+    #[test]
+    fn test_dispute_resolution() {
+        // Test arbitration process
+    }
+
+    #[test]
+    fn test_fee_distribution() {
+        // Test fee calculation and distribution
+    }
+}
+```
+
+## Migration-Specific Considerations
+- Reference [LocalMoney_Protocol_Specification.md](mdc:LocalMoney_Protocol_Specification.md) for original contract behavior
+- Follow data transformation patterns in the migration guide
+- Maintain backward compatibility where possible
+- Implement comprehensive state validation for migrated data

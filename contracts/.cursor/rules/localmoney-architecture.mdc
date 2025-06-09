@@ -1,0 +1,55 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# LocalMoney Protocol Architecture
+
+## Overview
+LocalMoney is a decentralized P2P trading protocol being migrated from CosmWasm to Solana using the Anchor Framework. The protocol enables cryptocurrency-to-fiat trading through an escrow-based system.
+
+## Core Architecture
+The protocol follows a hub-and-spoke architecture with five main programs:
+
+### 1. Hub Program (`programs/hub/`)
+- Central configuration and program registry
+- Manages global parameters, fees, and limits
+- Authority: Single admin address with governance rights
+- Key config: [LocalMoney_Protocol_Specification.md](mdc:LocalMoney_Protocol_Specification.md)
+
+### 2. Offer Program (`programs/offer/`)
+- Manages buy/sell offers posted by users
+- Supports 20+ popular  fiat currencies
+- Offer states: Active, Paused, Archive
+- Rate-based pricing with min/max amounts
+
+### 3. Trade Program (`programs/trade/`)
+- Handles trade execution and escrow management
+- 12 distinct trade states from creation to completion
+- Integrated dispute resolution system
+- Automated fee distribution
+
+### 4. Profile Program (`programs/profile/`)
+- User profile and reputation management
+- Activity tracking and limits enforcement
+- Contact information and encryption key storage
+- Trading history and statistics
+
+### 5. Price Program (`programs/price/`)
+- Price oracle integration and currency conversions
+- Multi-currency support with USD normalization
+- Configurable price routes for different tokens
+- Real-time price updates from authorized providers
+
+## Key Migration Considerations
+- **Account Model**: Transition from contract-based to account-based storage
+- **Cross-Program Calls**: Use CPIs instead of direct contract calls
+- **State Management**: External account storage vs internal contract storage
+- **Fee Structure**: Rent + transaction fees vs gas-based model
+
+## Development Guidelines
+- Follow the task list in [LocalMoney_Migration_Task_List.md](mdc:LocalMoney_Migration_Task_List.md)
+- Reference migration patterns in [LocalMoney_Solana_Migration_Guide.md](mdc:LocalMoney_Solana_Migration_Guide.md)
+- Implement programs in dependency order: Hub → Profile → Price → Offer → Trade
+- Use Program Derived Addresses (PDAs) for all protocol accounts
+- Implement comprehensive error handling and validation

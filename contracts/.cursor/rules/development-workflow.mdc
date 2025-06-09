@@ -1,0 +1,72 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# LocalMoney Development Workflow
+
+## Migration Task Organization
+Follow the phased approach outlined in [LocalMoney_Migration_Task_List.md](mdc:LocalMoney_Migration_Task_List.md):
+
+### Phase 0: Environment Setup (Week 1)
+- ✅ Rust toolchain, Solana CLI, Anchor CLI installed
+- ✅ Local validator and development keypairs configured
+- 🔄 Project structure creation and shared types library
+
+### Phase 1: Foundation Programs (Weeks 2-4)
+**Implementation Order:**
+1. **Hub Program** - Core configuration and registry
+2. **Profile Program** - User management foundation
+3. **Price Program** - Oracle and conversion infrastructure
+
+### Phase 2: Core Trading Programs (Weeks 5-8)
+4. **Offer Program** - Offer management with Profile integration
+5. **Trade Program** - Trade execution, escrow, and dispute resolution
+
+### Phase 3: Advanced Features (Weeks 9-12)
+- Arbitration system implementation
+- Fee distribution mechanisms
+- Complete cross-program integration
+
+### Phase 4: Testing and Quality Assurance
+- Comprehensive unit and integration testing
+- Security testing and validation
+- Testnet deployment and user acceptance testing
+
+## Development Standards
+
+### Code Organization
+```
+programs/
+├── hub/           # Central configuration
+├── offer/         # Offer management
+├── trade/         # Trade execution
+├── profile/       # User profiles
+└── price/         # Price oracle
+```
+
+### Key Implementation Patterns
+- **PDA Seeds**: Use consistent naming (`b"config"`, `b"offer"`, `b"trade"`)
+- **Account Validation**: Always validate PDAs with seeds and bumps
+- **Error Handling**: Use custom error codes for all programs
+- **Cross-Program Calls**: Implement CPIs for program interactions
+- **State Management**: Track state changes with comprehensive history
+
+### Testing Requirements
+- Unit tests for all instructions
+- Integration tests for cross-program interactions
+- Security tests for access control and validation
+- End-to-end workflow testing
+
+## Migration Guidelines
+Reference [LocalMoney_Solana_Migration_Guide.md](mdc:LocalMoney_Solana_Migration_Guide.md) for:
+- Account design patterns
+- Data transformation strategies
+- Security considerations
+- Frontend integration patterns
+
+## Quality Gates
+- All programs must compile successfully
+- Comprehensive test coverage required
+- Security audit before mainnet deployment
+- Performance benchmarking for large-scale usage

@@ -1,0 +1,26 @@
+[package]
+name = "trade"
+version = "0.1.0"
+description = "LocalMoney Trade Program - Handles trade execution and escrow"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "trade"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
+shared-types = { path = "../../packages/shared-types" }
+hub = { path = "../hub", features = ["cpi"] }
+profile = { path = "../profile", features = ["cpi"] }
+offer = { path = "../offer", features = ["cpi"] }
+price = { path = "../price", features = ["cpi"] }

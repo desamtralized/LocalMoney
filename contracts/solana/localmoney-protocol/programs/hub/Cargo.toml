@@ -1,0 +1,21 @@
+[package]
+name = "hub"
+version = "0.1.0"
+description = "LocalMoney Hub Program - Central configuration and contract registry"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "hub"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build"]
+default = []
+
+[dependencies]
+anchor-lang = "0.31.1"
+shared-types = { path = "../../packages/shared-types" }

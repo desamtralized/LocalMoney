@@ -1,0 +1,181 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# LocalMoney Protocol Constraints and Business Rules
+
+## Global Protocol Limits
+Based on [LocalMoney_Protocol_Specification.md](mdc:LocalMoney_Protocol_Specification.md):
+
+### Fee Constraints
+- **Maximum Total Platform Fee**: 10% (1000 basis points)
+  - Chain fee + Burn fee + Warchest fee ≤ 10%
+  - Arbitration fee: Separate from platform fee cap
+  - Must validate in Hub program configuration updates
+
+### Time-based Limits
+- **Maximum Trade Expiration**: 2 days (172,800 seconds)
+- **Maximum Dispute Timer**: 1 day (86,400 seconds)
+- **Default Trade Expiration**: Configurable, but capped at 2 days
+- **Default Dispute Window**: Configurable, but capped at 1 day
+
+### Activity Limits
+- **Active Offers per User**: Configurable (default: typically 5-10)
+- **Active Trades per User**: Configurable (default: typically 3-5)
+- **Description Length**: 140 characters maximum
+- **Pagination**: 1-30 items per page for queries
+
+### Trade Amount Limits
+- **Minimum Trade Amount**: Configurable in USD equivalent
+- **Maximum Trade Amount**: Configurable in USD equivalent
+- **USD Conversion**: Use Price program for real-time conversion
+
+## State Transition Rules
+
+### Offer State Machine
+```rust
+// Valid state transitions
+Active → Paused     // Owner can pause
+Active → Archive    // Owner can archive
+Paused → Active     // Owner can reactivate
+Paused → Archive    // Owner can archive
+Archive → (none)    // Terminal state
+```
+
+### Trade State Machine (12 States)
+```rust
+// Valid state transitions - must be strictly enforced
+RequestCreated → RequestAccepted  // Maker accepts
+RequestCreated → RequestCanceled  // Taker cancels
+RequestCreated → RequestExpired   // Time-based expiration
+
+RequestAccepted → EscrowFunded    // Seller funds escrow
+RequestAccepted → EscrowCanceled  // Either party cancels
+
+EscrowFunded → FiatDeposited      // Buyer confirms payment
+EscrowFunded → EscrowRefunded     // Seller refunds
+EscrowFunded → EscrowDisputed     // Dispute raised
+
+FiatDeposited → EscrowReleased    // Seller releases
+FiatDeposited → EscrowDisputed    // Dispute raised
+
+EscrowDisputed → SettledForMaker  // Arbitrator decision
+EscrowDisputed → SettledForTaker  // Arbitrator decision
+```
+
+## Validation Rules
+
+### Offer Validation
+```rust
+// Required validations for offer creation/updates
+- min_amount ≤ max_amount
+- rate > 0 (positive rate only)
+- fiat_currency must be supported (20+ popular  currencies)
+- owner must have valid profile
+- owner must not exceed active offers limit
+- description ≤ 140 characters if provided
+```
+
+### Trade Validation
+```rust
+// Required validations for trade creation
+- amount must be within offer min/max range
+- amount must be within protocol USD limits
+- buyer ≠ seller (can't trade with yourself)
+- buyer must have valid profile
+- seller must have valid profile
+- both parties must not exceed active trades limit
+- offer must be in Active state
+```
+
+### Profile Validation
+```rust
+// Required validations for profile operations
+- contact information must be encrypted if provided
+- encryption_key must be valid public key if provided
+- active_trades_count ≤ protocol limit
+- active_offers_count ≤ protocol limit
+```
+
+## Security Constraints
+
+### Access Control
+- **Hub Admin**: Single authority for protocol configuration
+- **Price Provider**: Authorized address for price updates
+- **Arbitrators**: Registered addresses for dispute resolution
+- **Offer Owner**: Only owner can modify offers
+- **Trade Participants**: Only buyer/seller can interact with trade
+
+### Escrow Security
+- **Single Escrow per Trade**: Each trade has unique escrow account
+- **Atomic Operations**: Escrow funding/release must be atomic
+- **Fee Deduction**: Fees automatically deducted during release
+- **Refund Protection**: Refunds only allowed in specific states
+
+### Data Integrity
+- **Immutable Trade History**: State changes cannot be reversed
+- **Timestamp Validation**: All timestamps must be reasonable
+- **Amount Validation**: Prevent overflow/underflow in calculations
+- **PDA Validation**: All PDAs must be properly derived
+
+## Currency and Price Constraints
+
+### Supported Fiat Currencies (20+ popular )
+Major currencies include:
+- USD, EUR, GBP, JPY, CNY, CAD, AUD
+- AED, ARS, BRL, INR, KRW, MXN, RUB, ZAR
+- Full list defined in FiatCurrency enum
+
+### Price Oracle Rules
+- **USD Base Pricing**: All conversions normalized to USD
+- **Price Staleness**: Implement reasonable staleness checks
+- **Price Routes**: Support multi-step conversion paths
+- **Oracle Authority**: Only authorized provider can update prices
+
+## Implementation Enforcement
+
+### In Hub Program
+```rust
+// Fee validation in configuration updates
+fn validate_protocol_fees(params: &UpdateConfigParams) -> Result<()> {
+    let total = params.chain_fee_bps + params.burn_fee_bps + params.warchest_fee_bps;
+    require!(total <= 1000, ErrorCode::ExcessiveFees);
+    
+    require!(params.trade_expiration_timer <= 172800, ErrorCode::ExcessiveExpiration);
+    require!(params.trade_dispute_timer <= 86400, ErrorCode::ExcessiveDisputeTimer);
+    
+    Ok(())
+}
+```
+
+### In Profile Program
+```rust
+// Activity limit enforcement
+fn validate_activity_limits(profile: &Profile, config: &GlobalConfig) -> Result<()> {
+    require!(
+        profile.active_trades_count < config.active_trades_limit,
+        ErrorCode::ActiveTradesLimitExceeded
+    );
+    require!(
+        profile.active_offers_count < config.active_offers_limit,
+        ErrorCode::ActiveOffersLimitExceeded
+    );
+    Ok(())
+}
+```
+
+### In Trade Program
+```rust
+// State transition validation
+fn validate_state_transition(current: TradeState, new: TradeState) -> Result<()> {
+    // Implement strict state machine validation
+    // Refer to the 12-state transition matrix
+}
+```
+
+## Migration Considerations
+- All constraints must be preserved during migration
+- Existing data must be validated against new constraints
+- Any constraint violations must be handled gracefully
+- Consider grandfathering existing data that violates new constraints
