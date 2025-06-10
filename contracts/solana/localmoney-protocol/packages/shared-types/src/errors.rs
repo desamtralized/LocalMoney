@@ -166,6 +166,27 @@ pub enum ErrorCode {
     #[msg("Price route is too long")]
     RouteTooLong,
 
+    #[msg("Price route is inactive")]
+    InactiveRoute,
+
+    #[msg("Invalid price weights provided")]
+    InvalidWeights,
+
+    #[msg("Too many prices provided for aggregation")]
+    TooManyPrices,
+
+    #[msg("Oracle is inactive")]
+    InactiveOracle,
+
+    #[msg("Invalid confidence level")]
+    InvalidConfidence,
+
+    #[msg("Oracle data is stale")]
+    StaleOracleData,
+
+    #[msg("Confidence level too low")]
+    LowConfidence,
+
     // Arbitration Errors (800-899)
     #[msg("Arbitrator not found")]
     ArbitratorNotFound,
@@ -289,7 +310,14 @@ impl ErrorCode {
             | ErrorCode::UnsupportedCurrency
             | ErrorCode::InactivePrice
             | ErrorCode::InvalidRoute
-            | ErrorCode::RouteTooLong => "Price",
+            | ErrorCode::RouteTooLong
+            | ErrorCode::InactiveRoute
+            | ErrorCode::InvalidWeights
+            | ErrorCode::TooManyPrices
+            | ErrorCode::InactiveOracle
+            | ErrorCode::InvalidConfidence
+            | ErrorCode::StaleOracleData
+            | ErrorCode::LowConfidence => "Price",
 
             ErrorCode::ArbitratorNotFound
             | ErrorCode::ArbitratorUnavailable
