@@ -63,6 +63,30 @@ pub enum ErrorCode {
     #[msg("Cannot modify archived offer")]
     CannotModifyArchivedOffer,
 
+    #[msg("Invalid rate provided")]
+    InvalidRate,
+
+    #[msg("Invalid minimum amount")]
+    InvalidMinAmount,
+
+    #[msg("Invalid maximum amount")]
+    InvalidMaxAmount,
+
+    #[msg("Description too long")]
+    DescriptionTooLong,
+
+    #[msg("Offer is not active")]
+    OfferNotActive,
+
+    #[msg("Offer cannot be updated in current state")]
+    OfferNotUpdatable,
+
+    #[msg("Offer cannot be closed in current state")]
+    OfferNotClosable,
+
+    #[msg("Invalid state transition")]
+    InvalidStateTransition,
+
     // Trade Errors (400-499)
     #[msg("Trade not found")]
     TradeNotFound,
