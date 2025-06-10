@@ -1,0 +1,65 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# CosmWasm to Solana/Anchor Translation Guide
+
+## Project Overview
+LocalMoney is a peer-to-peer trading platform allowing users to trade crypto assets for fiat currencies. The protocol consists of several smart contracts that manage:
+
+- **Hub Contract**: Central coordination contract that stores configuration and connects other contracts
+- **Offer Contract**: For creating and managing buy/sell offers
+- **Trade Contract**: Handles escrow mechanics and trade lifecycle
+- **Price Contract**: Oracle contract for currency pricing
+- **Profile Contract**: User profile management
+
+## Key Translation Rules
+
+### Account Structure
+- CosmWasm uses namespaced storage (via cw-storage-plus) -> Convert to Solana Program Derived Accounts (PDAs)
+- Each CosmWasm state struct should become a Solana account
+- Use `#[account]` macros in Anchor for state management
+
+### Entry Points
+- CosmWasm entry points (`instantiate`, `execute`, `query`) -> Anchor instruction handlers
+- Split `execute` handlers into individual Anchor instructions
+- CosmWasm queries become Anchor RPCs/getters
+
+### Data Types
+- Replace `cosmwasm_std` types with Solana/Anchor equivalents:
+  - `Addr` -> `Pubkey`
+  - `Uint128`/`Decimal` -> Native Rust types or custom implementations
+  - `Binary` -> `Vec<u8>`
+  - `Option<T>` -> Same
+  - `Response` -> `Result<(), Error>`
+
+### Error Handling
+- Port CosmWasm custom error enums to Anchor error enums
+- Use Anchor's error handling system with `#[error_code]`
+
+### Permissions
+- CosmWasm sender checks -> Solana signer verification
+- Use Anchor's `#[account(signer)]` constraint
+- Add explicit owner fields and checks to PDAs
+
+### Cross-Program Communication
+- CosmWasm `SubMsg` -> Solana Cross-Program Invocation (CPI)
+- Define and implement CPI interfaces between programs
+
+### Time-Based Logic
+- Replace CosmWasm block time with Solana's `Clock` sysvar
+
+### Token Handling
+- Replace CosmWasm funds validation with Solana SPL token integration
+- Use Anchor's token program helpers for token transfers
+
+### General Guidelines
+- Split monolithic contracts into multiple programs where appropriate
+- Maintain data integrity across program boundaries
+- Consider Solana account size limits and rent exemption
+- Optimize for Solana's fee structure and compute units
+- Never downgrade dependecies to solve problems.
+- Don't use mocks on tests or anywhere else.
+- Add relevant documentation in important or fat methods (25+ LOC).
+- Avoid running `cargo clean`, run only when necessary.

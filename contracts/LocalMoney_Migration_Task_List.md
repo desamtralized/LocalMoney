@@ -83,9 +83,9 @@ This document provides a comprehensive, actionable task list for migrating the L
 - [x] **1.4.1** Add activity limit enforcement
 - [x] **1.4.2** Implement reputation tracking
 - [x] **1.4.3** Add profile query functions
-- [ ] **1.4.4** Implement contact encryption handling
-- [ ] **1.4.5** Add profile statistics aggregation
-- [ ] **1.4.6** Write comprehensive unit tests
+- [x] **1.4.4** Implement contact encryption handling
+- [x] **1.4.5** Add profile statistics aggregation
+- [x] **1.4.6** Write comprehensive unit tests
 
 **Deliverable**: Complete Profile program
 **Acceptance Criteria**: All profile management functions work correctly

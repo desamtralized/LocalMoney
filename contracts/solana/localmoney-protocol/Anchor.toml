@@ -6,11 +6,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hub = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-offer = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"
-trade = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-profile = "BPFLoader2111111111111111111111111111111111"
-price = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+hub = "4waJTahiUUstW627bckb6kqUH1ZsYjCzGEHfTXQt3gEL"
+offer = "GeoGX5eHKorN4enFHmVraPhbLeHv8sT6XhRCT2bjwchY"
+trade = "VAWBEm7g1oyb2iziwykEAx3DzY7k6wE1RJP4wthmsmm"
+profile = "Dwo64PSrsytVU33gT7uLZF4asTDP7LkWxZF22ECm8rEM"
+price = "ErKgcQSUWqcFxJh2FMdvidb1nAzbYjmekZKyzWpSPLbK"
 
 [registry]
 url = "https://api.apr.dev"

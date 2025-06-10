@@ -135,6 +135,9 @@ pub enum ErrorCode {
     #[msg("Profile statistics update failed")]
     ProfileStatsUpdateFailed,
 
+    #[msg("Encryption key is required for encrypted contact information")]
+    EncryptionKeyRequired,
+
     // Price Errors (700-799)
     #[msg("Price not found for currency")]
     PriceNotFound,
@@ -266,7 +269,8 @@ impl ErrorCode {
             | ErrorCode::ProfileAlreadyExists
             | ErrorCode::ContactInfoTooLong
             | ErrorCode::InvalidEncryptionKey
-            | ErrorCode::ProfileStatsUpdateFailed => "Profile",
+            | ErrorCode::ProfileStatsUpdateFailed
+            | ErrorCode::EncryptionKeyRequired => "Profile",
 
             ErrorCode::PriceNotFound
             | ErrorCode::StalePrice
