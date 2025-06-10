@@ -93,15 +93,15 @@ This document provides a comprehensive, actionable task list for migrating the L
 ### Price Program Implementation
 
 #### Task 1.5: Price Program Core Structure
-- [ ] **1.5.1** Define CurrencyPrice account structure
-- [ ] **1.5.2** Define PriceRoute account structure
-- [ ] **1.5.3** Implement update_prices instruction
-- [ ] **1.5.4** Implement register_price_route instruction
-- [ ] **1.5.5** Implement price query functions
-- [ ] **1.5.6** Add price validation logic
+- [x] **1.5.1** Define CurrencyPrice account structure
+- [x] **1.5.2** Define PriceRoute account structure
+- [x] **1.5.3** Implement update_prices instruction
+- [x] **1.5.4** Implement register_price_route instruction
+- [x] **1.5.5** Implement price query functions
+- [x] **1.5.6** Add price validation logic
 
-**Deliverable**: Basic Price program
-**Acceptance Criteria**: Can update and query currency prices
+**Deliverable**: Basic Price program ✅
+**Acceptance Criteria**: Can update and query currency prices ✅
 
 #### Task 1.6: Price Program Advanced Features
 - [ ] **1.6.1** Add multi-step price route calculation

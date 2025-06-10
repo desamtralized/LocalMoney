@@ -157,6 +157,15 @@ pub enum ErrorCode {
     #[msg("Currency not supported")]
     UnsupportedCurrency,
 
+    #[msg("Price is inactive")]
+    InactivePrice,
+
+    #[msg("Invalid price route")]
+    InvalidRoute,
+
+    #[msg("Price route is too long")]
+    RouteTooLong,
+
     // Arbitration Errors (800-899)
     #[msg("Arbitrator not found")]
     ArbitratorNotFound,
@@ -277,7 +286,10 @@ impl ErrorCode {
             | ErrorCode::InvalidPrice
             | ErrorCode::PriceRouteNotFound
             | ErrorCode::PriceCalculationFailed
-            | ErrorCode::UnsupportedCurrency => "Price",
+            | ErrorCode::UnsupportedCurrency
+            | ErrorCode::InactivePrice
+            | ErrorCode::InvalidRoute
+            | ErrorCode::RouteTooLong => "Price",
 
             ErrorCode::ArbitratorNotFound
             | ErrorCode::ArbitratorUnavailable

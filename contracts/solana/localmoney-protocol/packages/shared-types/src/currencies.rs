@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use std::fmt;
 
 /// Fiat Currency enum with the 20 most popular global currencies
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq)]
 pub enum FiatCurrency {
     /// United States Dollar
     USD,
