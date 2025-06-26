@@ -162,6 +162,18 @@ pub enum ErrorCode {
     #[msg("Encryption key is required for encrypted contact information")]
     EncryptionKeyRequired,
 
+    #[msg("Profile is required for this operation")]
+    ProfileRequired,
+
+    #[msg("Offer limit has been exceeded for this user")]
+    OfferLimitExceeded,
+
+    #[msg("Contact information is required for this operation")]
+    ContactInfoRequired,
+
+    #[msg("Profile validation failed for this operation")]
+    ProfileValidationFailed,
+
     // Price Errors (700-799)
     #[msg("Price not found for currency")]
     PriceNotFound,
@@ -297,7 +309,15 @@ impl ErrorCode {
             | ErrorCode::InvalidOfferAmount
             | ErrorCode::OfferMaxAboveTradingLimit
             | ErrorCode::ActiveOffersLimitReached
-            | ErrorCode::CannotModifyArchivedOffer => "Offer",
+            | ErrorCode::CannotModifyArchivedOffer
+            | ErrorCode::InvalidRate
+            | ErrorCode::InvalidMinAmount
+            | ErrorCode::InvalidMaxAmount
+            | ErrorCode::DescriptionTooLong
+            | ErrorCode::OfferNotActive
+            | ErrorCode::OfferNotUpdatable
+            | ErrorCode::OfferNotClosable
+            | ErrorCode::InvalidStateTransition => "Offer",
 
             ErrorCode::TradeNotFound
             | ErrorCode::InvalidTradeStateChange
@@ -324,7 +344,11 @@ impl ErrorCode {
             | ErrorCode::ContactInfoTooLong
             | ErrorCode::InvalidEncryptionKey
             | ErrorCode::ProfileStatsUpdateFailed
-            | ErrorCode::EncryptionKeyRequired => "Profile",
+            | ErrorCode::EncryptionKeyRequired
+            | ErrorCode::ProfileRequired
+            | ErrorCode::OfferLimitExceeded
+            | ErrorCode::ContactInfoRequired
+            | ErrorCode::ProfileValidationFailed => "Profile",
 
             ErrorCode::PriceNotFound
             | ErrorCode::StalePrice

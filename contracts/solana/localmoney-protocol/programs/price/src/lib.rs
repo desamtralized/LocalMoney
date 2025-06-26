@@ -829,3 +829,4 @@ mod tests {
         assert_eq!(average, 1_500_000); // $1.50 average
     }
 }
+

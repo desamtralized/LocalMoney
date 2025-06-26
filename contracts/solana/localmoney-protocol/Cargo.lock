@@ -968,6 +968,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "hub",
+ "price",
  "profile",
  "shared-types",
 ]
