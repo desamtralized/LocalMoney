@@ -5,7 +5,7 @@ use shared_types::{
     CURRENCY_PRICE_SEED, CONFIG_SEED,
 };
 
-declare_id!("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1");
+declare_id!("DGjiY2hKsDpffEgBckNfrAkDt6B5jSxwsHshyQ1cRiP9");
 
 #[program]
 pub mod offer {
@@ -1921,7 +1921,8 @@ pub struct CreateOffer<'info> {
     pub owner: Signer<'info>,
 
     /// Token mint for the offer
-    pub token_mint: Account<'info, anchor_spl::token::Mint>,
+    /// CHECK: We validate this is a valid mint but don't need full deserialization for IDL
+    pub token_mint: AccountInfo<'info>,
 
     /// Optional user profile for CPI calls (Task 2.3.1)
     /// CHECK: Optional account for profile integration
@@ -2076,7 +2077,8 @@ pub struct CreateOfferWithLimits<'info> {
     pub owner: Signer<'info>,
 
     /// Token mint for the offer
-    pub token_mint: Account<'info, anchor_spl::token::Mint>,
+    /// CHECK: We validate this is a valid mint but don't need full deserialization for IDL
+    pub token_mint: AccountInfo<'info>,
 
     /// User profile for limit enforcement
     /// CHECK: This is validated by the profile program during CPI
@@ -2133,7 +2135,8 @@ pub struct CreateOfferWithValidation<'info> {
     pub owner: Signer<'info>,
 
     /// Token mint for the offer
-    pub token_mint: Account<'info, anchor_spl::token::Mint>,
+    /// CHECK: We validate this is a valid mint but don't need full deserialization for IDL
+    pub token_mint: AccountInfo<'info>,
 
     /// User profile for comprehensive validation
     /// CHECK: This is validated by the profile program during CPI

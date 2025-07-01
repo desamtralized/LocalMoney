@@ -5,7 +5,7 @@ use shared_types::{
     PRICE_ROUTE_SEED, PRICE_SCALE,
 };
 
-declare_id!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+declare_id!("7nkFUfmqKMKrQfm83HxreJHXyJdTK5feYqDEJtNihaw1");
 
 #[program]
 pub mod price {

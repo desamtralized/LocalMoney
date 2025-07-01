@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use shared_types::*;
 
-declare_id!("4waJTahiUUstW627bckb6kqUH1ZsYjCzGEHfTXQt3gEL");
+declare_id!("J5FDxQmMpiF4vqKBSWQS3JRGLyE8djRgoHF8QQJJKWM1");
 
 #[program]
 pub mod hub {

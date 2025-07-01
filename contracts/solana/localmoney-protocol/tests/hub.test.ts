@@ -1,7 +1,13 @@
 import * as anchor from "@coral-xyz/anchor";
 import { expect } from "chai";
 import { Keypair } from "@solana/web3.js";
-import { setupTestWorkspace, airdropSol, findGlobalConfigPDA, createValidInitializeParams, createValidUpdateConfigParams } from "./utils/setup";
+import {
+  setupTestWorkspace,
+  airdropSol,
+  findGlobalConfigPDA,
+  createValidInitializeParams,
+  createValidUpdateConfigParams,
+} from "./utils/setup";
 
 describe("Hub Program Tests", () => {
   const workspace = setupTestWorkspace();
@@ -11,9 +17,11 @@ describe("Hub Program Tests", () => {
   before(async () => {
     // Airdrop SOL to authority
     await airdropSol(workspace.connection, workspace.authority.publicKey);
-    
+
     // Find config PDA
-    [configPDA, configBump] = findGlobalConfigPDA(workspace.hubProgram.programId);
+    [configPDA, configBump] = findGlobalConfigPDA(
+      workspace.hubProgram.programId,
+    );
   });
 
   describe("Initialization", () => {
@@ -31,14 +39,25 @@ describe("Hub Program Tests", () => {
         .rpc();
 
       // Fetch the config account
-      const config = await workspace.hubProgram.account.globalConfig.fetch(configPDA);
+      const config =
+        await workspace.hubProgram.account.globalConfig.fetch(configPDA);
 
       // Verify all configuration values
-      expect(config.authority.toString()).to.equal(workspace.authority.publicKey.toString());
-      expect(config.offerProgram.toString()).to.equal(params.offerProgram.toString());
-      expect(config.tradeProgram.toString()).to.equal(params.tradeProgram.toString());
-      expect(config.profileProgram.toString()).to.equal(params.profileProgram.toString());
-      expect(config.priceProgram.toString()).to.equal(params.priceProgram.toString());
+      expect(config.authority.toString()).to.equal(
+        workspace.authority.publicKey.toString(),
+      );
+      expect(config.offerProgram.toString()).to.equal(
+        params.offerProgram.toString(),
+      );
+      expect(config.tradeProgram.toString()).to.equal(
+        params.tradeProgram.toString(),
+      );
+      expect(config.profileProgram.toString()).to.equal(
+        params.profileProgram.toString(),
+      );
+      expect(config.priceProgram.toString()).to.equal(
+        params.priceProgram.toString(),
+      );
       expect(config.activeOffersLimit).to.equal(params.activeOffersLimit);
       expect(config.activeTradesLimit).to.equal(params.activeTradesLimit);
       expect(config.arbitrationFeeBps).to.equal(params.arbitrationFeeBps);
@@ -50,8 +69,8 @@ describe("Hub Program Tests", () => {
     it("Should reject initialization with excessive fees", async () => {
       const params = createValidInitializeParams();
       // Set total fees to 11% (over the 10% limit)
-      params.chainFeeBps = 500;   // 5%
-      params.burnFeeBps = 400;    // 4%
+      params.chainFeeBps = 500; // 5%
+      params.burnFeeBps = 400; // 4%
       params.warchestFeeBps = 300; // 3%
       // Total: 12% > 10% limit
 
@@ -65,7 +84,7 @@ describe("Hub Program Tests", () => {
           })
           .signers([workspace.authority])
           .rpc();
-        
+
         expect.fail("Should have failed with excessive fees");
       } catch (error) {
         expect(error.toString()).to.include("ExcessiveFees");
@@ -86,7 +105,7 @@ describe("Hub Program Tests", () => {
           })
           .signers([workspace.authority])
           .rpc();
-        
+
         expect.fail("Should have failed with excessive expiration timer");
       } catch (error) {
         expect(error.toString()).to.include("ExcessiveExpiration");
@@ -108,7 +127,8 @@ describe("Hub Program Tests", () => {
         .rpc();
 
       // Fetch updated config
-      const config = await workspace.hubProgram.account.globalConfig.fetch(configPDA);
+      const config =
+        await workspace.hubProgram.account.globalConfig.fetch(configPDA);
 
       // Verify updates
       expect(config.activeOffersLimit).to.equal(params.activeOffersLimit);
@@ -131,7 +151,7 @@ describe("Hub Program Tests", () => {
           })
           .signers([unauthorizedUser])
           .rpc();
-        
+
         expect.fail("Should have failed with unauthorized access");
       } catch (error) {
         expect(error.toString()).to.include("Unauthorized");
@@ -140,8 +160,8 @@ describe("Hub Program Tests", () => {
 
     it("Should reject updates with excessive fees", async () => {
       const params = createValidUpdateConfigParams();
-      params.chainFeeBps = 600;   // 6%
-      params.burnFeeBps = 300;    // 3%
+      params.chainFeeBps = 600; // 6%
+      params.burnFeeBps = 300; // 3%
       params.warchestFeeBps = 200; // 2%
       // Total: 11% > 10% limit
 
@@ -154,7 +174,7 @@ describe("Hub Program Tests", () => {
           })
           .signers([workspace.authority])
           .rpc();
-        
+
         expect.fail("Should have failed with excessive fees");
       } catch (error) {
         expect(error.toString()).to.include("ExcessiveFees");
@@ -177,8 +197,11 @@ describe("Hub Program Tests", () => {
         .rpc();
 
       // Verify authority update
-      const config = await workspace.hubProgram.account.globalConfig.fetch(configPDA);
-      expect(config.authority.toString()).to.equal(newAuthority.publicKey.toString());
+      const config =
+        await workspace.hubProgram.account.globalConfig.fetch(configPDA);
+      expect(config.authority.toString()).to.equal(
+        newAuthority.publicKey.toString(),
+      );
 
       // Update workspace authority for future tests
       workspace.authority = newAuthority;
@@ -198,7 +221,7 @@ describe("Hub Program Tests", () => {
           })
           .signers([unauthorizedUser])
           .rpc();
-        
+
         expect.fail("Should have failed with unauthorized access");
       } catch (error) {
         expect(error.toString()).to.include("Unauthorized");
@@ -216,10 +239,10 @@ describe("Hub Program Tests", () => {
         })
         .view();
 
-      expect(fees.chainFeeBps).to.be.a('number');
-      expect(fees.burnFeeBps).to.be.a('number');
-      expect(fees.warchestFeeBps).to.be.a('number');
-      expect(fees.arbitrationFeeBps).to.be.a('number');
+      expect(fees.chainFeeBps).to.be.a("number");
+      expect(fees.burnFeeBps).to.be.a("number");
+      expect(fees.warchestFeeBps).to.be.a("number");
+      expect(fees.arbitrationFeeBps).to.be.a("number");
     });
 
     it("Should return trading limits correctly", async () => {
@@ -231,10 +254,10 @@ describe("Hub Program Tests", () => {
         })
         .view();
 
-      expect(limits.minAmountUsd.toString()).to.be.a('string');
-      expect(limits.maxAmountUsd.toString()).to.be.a('string');
-      expect(limits.activeOffersLimit).to.be.a('number');
-      expect(limits.activeTradesLimit).to.be.a('number');
+      expect(limits.minAmountUsd.toString()).to.be.a("string");
+      expect(limits.maxAmountUsd.toString()).to.be.a("string");
+      expect(limits.activeOffersLimit).to.be.a("number");
+      expect(limits.activeTradesLimit).to.be.a("number");
     });
 
     it("Should return program addresses correctly", async () => {
@@ -246,10 +269,10 @@ describe("Hub Program Tests", () => {
         })
         .view();
 
-      expect(addresses.offerProgram.toString()).to.be.a('string');
-      expect(addresses.tradeProgram.toString()).to.be.a('string');
-      expect(addresses.profileProgram.toString()).to.be.a('string');
-      expect(addresses.priceProgram.toString()).to.be.a('string');
+      expect(addresses.offerProgram.toString()).to.be.a("string");
+      expect(addresses.tradeProgram.toString()).to.be.a("string");
+      expect(addresses.profileProgram.toString()).to.be.a("string");
+      expect(addresses.priceProgram.toString()).to.be.a("string");
     });
   });
 
@@ -279,7 +302,7 @@ describe("Hub Program Tests", () => {
     });
 
     it("Should validate offer amount ranges correctly", async () => {
-      const minAmount = new anchor.BN(10000000);  // $10 USD
+      const minAmount = new anchor.BN(10000000); // $10 USD
       const maxAmount = new anchor.BN(100000000); // $100 USD
 
       // This should not throw since range is valid
@@ -292,4 +315,4 @@ describe("Hub Program Tests", () => {
         .view();
     });
   });
-}); 
+});

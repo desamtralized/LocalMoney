@@ -45,42 +45,57 @@ export function setupTestWorkspace(): TestWorkspace {
   };
 }
 
-export async function airdropSol(connection: Connection, publicKey: PublicKey, lamports: number = 1000000000) {
+export async function airdropSol(
+  connection: Connection,
+  publicKey: PublicKey,
+  lamports: number = 1000000000,
+) {
   const signature = await connection.requestAirdrop(publicKey, lamports);
   await connection.confirmTransaction(signature);
 }
 
-export function findGlobalConfigPDA(hubProgramId: PublicKey): [PublicKey, number] {
+export function findGlobalConfigPDA(
+  hubProgramId: PublicKey,
+): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("config")],
-    hubProgramId
+    hubProgramId,
   );
 }
 
-export function findProfilePDA(owner: PublicKey, profileProgramId: PublicKey): [PublicKey, number] {
+export function findProfilePDA(
+  owner: PublicKey,
+  profileProgramId: PublicKey,
+): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("profile"), owner.toBuffer()],
-    profileProgramId
+    profileProgramId,
   );
 }
 
-export function findOfferPDA(offerId: number, offerProgramId: PublicKey): [PublicKey, number] {
+export function findOfferPDA(
+  offerId: number,
+  offerProgramId: PublicKey,
+): [PublicKey, number] {
   const offerIdBuffer = Buffer.alloc(8);
   offerIdBuffer.writeBigUInt64LE(BigInt(offerId), 0);
-  
+
   return PublicKey.findProgramAddressSync(
     [Buffer.from("offer"), offerIdBuffer],
-    offerProgramId
+    offerProgramId,
   );
 }
 
-export function findTradePDA(tradeId: number, tradeProgramId: PublicKey): [PublicKey, number] {
+export function findTradePDA(
+  tradeId: number,
+  tradeProgramId: PublicKey,
+): [PublicKey, number] {
   const tradeIdBuffer = Buffer.alloc(8);
   tradeIdBuffer.writeBigUInt64LE(BigInt(tradeId), 0);
-  
+
   return PublicKey.findProgramAddressSync(
     [Buffer.from("trade"), tradeIdBuffer],
-    tradeProgramId
+    tradeProgramId,
   );
 }
 
@@ -97,13 +112,13 @@ export function createValidInitializeParams() {
     warchest: Keypair.generate().publicKey,
     activeOffersLimit: 5,
     activeTradesLimit: 3,
-    arbitrationFeeBps: 200,  // 2%
-    burnFeeBps: 100,         // 1%
-    chainFeeBps: 50,         // 0.5%
-    warchestFeeBps: 50,      // 0.5%
+    arbitrationFeeBps: 200, // 2%
+    burnFeeBps: 100, // 1%
+    chainFeeBps: 50, // 0.5%
+    warchestFeeBps: 50, // 0.5%
     tradeExpirationTimer: new anchor.BN(86400), // 1 day
-    tradeDisputeTimer: new anchor.BN(43200),    // 12 hours
-    tradeLimitMin: new anchor.BN(10000000),     // $10 USD (6 decimals)
+    tradeDisputeTimer: new anchor.BN(43200), // 12 hours
+    tradeLimitMin: new anchor.BN(10000000), // $10 USD (6 decimals)
     tradeLimitMax: new anchor.BN(1000000000000), // $1M USD (6 decimals)
   };
 }
@@ -115,13 +130,13 @@ export function createValidUpdateConfigParams() {
     priceProvider: null,
     activeOffersLimit: 10,
     activeTradesLimit: 5,
-    arbitrationFeeBps: 250,  // 2.5%
-    burnFeeBps: 100,         // 1%
-    chainFeeBps: 75,         // 0.75%
-    warchestFeeBps: 75,      // 0.75%
+    arbitrationFeeBps: 250, // 2.5%
+    burnFeeBps: 100, // 1%
+    chainFeeBps: 75, // 0.75%
+    warchestFeeBps: 75, // 0.75%
     tradeExpirationTimer: new anchor.BN(172800), // 2 days
-    tradeDisputeTimer: new anchor.BN(86400),     // 1 day
-    tradeLimitMin: new anchor.BN(5000000),       // $5 USD (6 decimals)
-    tradeLimitMax: new anchor.BN(500000000000),  // $500K USD (6 decimals)
+    tradeDisputeTimer: new anchor.BN(86400), // 1 day
+    tradeLimitMin: new anchor.BN(5000000), // $5 USD (6 decimals)
+    tradeLimitMax: new anchor.BN(500000000000), // $500K USD (6 decimals)
   };
-} 
+}

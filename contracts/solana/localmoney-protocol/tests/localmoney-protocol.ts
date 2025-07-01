@@ -4,6 +4,7 @@ import { Program } from "@coral-xyz/anchor";
 // Import individual test suites
 import "./hub.test";
 import "./profile.test";
+import "./offer-profile-integration.test";
 
 describe("LocalMoney Protocol - Integration Tests", () => {
   // Configure the client to use the local cluster.
