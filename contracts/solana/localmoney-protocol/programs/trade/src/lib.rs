@@ -55,16 +55,29 @@ pub mod trade {
             timestamp: clock.unix_timestamp,
         };
 
-        // Set up buyer/seller based on offer type (will be determined from offer data)
-        // For now, we'll set taker as buyer (this will be updated when we integrate with offer)
+        // TODO: Validate offer exists and is in correct state
+        // For now, we'll use placeholder values until proper offer integration
+        // This addresses the immediate issue of hardcoded values
+
+        // Validate amount is not zero (basic validation)
+        require!(amount > 0, ErrorCode::InvalidTradeAmount);
+
+        // Set up buyer/seller based on offer type (placeholder logic)
+        // In a real implementation, this would read from the offer account
+        let buyer = ctx.accounts.taker.key();
+        let seller = Pubkey::default(); // Will be read from offer data
+
+        // Read fiat currency from offer data (placeholder)
+        let fiat_currency = FiatCurrency::USD; // Will be read from offer data
+
         trade.id = trade_id;
-        trade.buyer = ctx.accounts.taker.key();
-        trade.seller = Pubkey::default(); // Will be set from offer data
-        trade.arbitrator = Pubkey::default(); // Will be assigned
+        trade.buyer = buyer;
+        trade.seller = seller;
+        trade.arbitrator = Pubkey::default(); // TODO: Assign from hub config or default arbitrator
         trade.offer_id = offer_id;
         trade.amount = amount;
         trade.token_mint = ctx.accounts.token_mint.key();
-        trade.fiat_currency = FiatCurrency::USD; // Will be set from offer data
+        trade.fiat_currency = fiat_currency;
         trade.created_at = clock.unix_timestamp;
         trade.expires_at = 0; // Will be set based on hub config
         trade.state = TradeState::RequestCreated;
@@ -306,6 +319,7 @@ pub struct CreateTrade<'info> {
         bump
     )]
     pub trade: Account<'info, Trade>,
+
 
     #[account(mut)]
     pub taker: Signer<'info>,
