@@ -143,6 +143,24 @@ pub enum ErrorCode {
     #[msg("Escrow account validation failed")]
     InvalidEscrowAccount,
 
+    #[msg("Escrow not found")]
+    EscrowNotFound,
+
+    #[msg("Invalid escrow state for this operation")]
+    InvalidEscrowState,
+
+    #[msg("Invalid escrow state transition")]
+    InvalidEscrowStateTransition,
+
+    #[msg("Escrow has expired")]
+    EscrowExpired,
+
+    #[msg("Insufficient funds for escrow operation")]
+    InsufficientFunds,
+
+    #[msg("Invalid token account for escrow operation")]
+    InvalidTokenAccount,
+
     // Profile Errors (600-699)
     #[msg("Profile not found")]
     ProfileNotFound,
@@ -337,7 +355,13 @@ impl ErrorCode {
             | ErrorCode::EscrowAlreadyFunded
             | ErrorCode::EscrowNotFunded
             | ErrorCode::EscrowReleaseNotAllowed
-            | ErrorCode::InvalidEscrowAccount => "Escrow",
+            | ErrorCode::InvalidEscrowAccount
+            | ErrorCode::EscrowNotFound
+            | ErrorCode::InvalidEscrowState
+            | ErrorCode::InvalidEscrowStateTransition
+            | ErrorCode::EscrowExpired
+            | ErrorCode::InsufficientFunds
+            | ErrorCode::InvalidTokenAccount => "Escrow",
 
             ErrorCode::ProfileNotFound
             | ErrorCode::ProfileAlreadyExists
