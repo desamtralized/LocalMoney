@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::Mint;
+use anchor_spl::token::{Mint, Token, TokenAccount, Transfer};
 use shared_types::{
     FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, TradeState, TradeStateItem,
+    ESCROW_SEED, MAX_TRADE_EXPIRATION_SECONDS, MAX_DISPUTE_TIMER_SECONDS,
 };
 
 // External program imports for cross-program calls
@@ -357,6 +358,456 @@ pub mod trade {
 
         Ok(())
     }
+
+    /// Fund escrow with tokens (seller deposits tokens)
+    pub fn fund_escrow(
+        ctx: Context<FundEscrow>,
+        trade_id: u64,
+        amount: u64,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state and transition
+        require!(
+            trade.state == TradeState::RequestAccepted,
+            ErrorCode::InvalidTradeState
+        );
+
+        validate_trade_state_transition(&trade.state, &TradeState::EscrowFunded)?;
+
+        // Check if trade has expired
+        if trade.expires_at > 0 && clock.unix_timestamp > trade.expires_at {
+            let expired_state = TradeStateItem {
+                actor: ctx.accounts.seller.key(),
+                state: TradeState::RequestExpired,
+                timestamp: clock.unix_timestamp,
+            };
+            trade.add_state_history(expired_state)?;
+            return Err(ErrorCode::TradeExpired.into());
+        }
+
+        // Validate that the seller is funding the escrow
+        require!(
+            ctx.accounts.seller.key() == trade.seller,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Validate amount matches trade amount
+        require!(
+            amount == trade.amount,
+            ErrorCode::InvalidAmountRange
+        );
+
+        // Transfer tokens from seller to escrow
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.seller_token_account.to_account_info(),
+            to: ctx.accounts.escrow_token_account.to_account_info(),
+            authority: ctx.accounts.seller.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        anchor_spl::token::transfer(cpi_ctx, amount)?;
+
+        // Update trade state
+        let funded_state = TradeStateItem {
+            actor: ctx.accounts.seller.key(),
+            state: TradeState::EscrowFunded,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(funded_state)?;
+
+        msg!(
+            "Escrow funded: trade ID {}, amount {}, seller: {}",
+            trade_id,
+            amount,
+            ctx.accounts.seller.key()
+        );
+
+        Ok(())
+    }
+
+    /// Confirm fiat payment deposited (buyer confirms payment)
+    pub fn confirm_fiat_deposited(
+        ctx: Context<ConfirmFiatDeposited>,
+        trade_id: u64,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state and transition
+        require!(
+            trade.state == TradeState::EscrowFunded,
+            ErrorCode::InvalidTradeState
+        );
+
+        validate_trade_state_transition(&trade.state, &TradeState::FiatDeposited)?;
+
+        // Check if trade has expired
+        if trade.expires_at > 0 && clock.unix_timestamp > trade.expires_at {
+            let expired_state = TradeStateItem {
+                actor: ctx.accounts.buyer.key(),
+                state: TradeState::RequestExpired,
+                timestamp: clock.unix_timestamp,
+            };
+            trade.add_state_history(expired_state)?;
+            return Err(ErrorCode::TradeExpired.into());
+        }
+
+        // Validate that the buyer is confirming payment
+        require!(
+            ctx.accounts.buyer.key() == trade.buyer,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Update trade state
+        let deposited_state = TradeStateItem {
+            actor: ctx.accounts.buyer.key(),
+            state: TradeState::FiatDeposited,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(deposited_state)?;
+
+        msg!(
+            "Fiat deposited confirmed: trade ID {}, buyer: {}",
+            trade_id,
+            ctx.accounts.buyer.key()
+        );
+
+        Ok(())
+    }
+
+    /// Release escrow to buyer (seller releases after receiving fiat)
+    pub fn release_escrow(
+        ctx: Context<ReleaseEscrow>,
+        trade_id: u64,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state and transition
+        require!(
+            trade.state == TradeState::FiatDeposited,
+            ErrorCode::InvalidTradeState
+        );
+
+        validate_trade_state_transition(&trade.state, &TradeState::EscrowReleased)?;
+
+        // Validate that the seller is releasing escrow
+        require!(
+            ctx.accounts.seller.key() == trade.seller,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Calculate fees and net amount
+        let hub_config_data = ctx.accounts.hub_config.try_borrow_data()?;
+        let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
+
+        let (net_amount, total_fees) = calculate_trade_fees(trade.amount, &hub_config)?;
+
+        // Transfer net amount to buyer
+        let escrow_seeds = &[
+            ESCROW_SEED,
+            trade.key().as_ref(),
+            &[*ctx.bumps.get("escrow_token_account").unwrap()],
+        ];
+        let signer_seeds = &[&escrow_seeds[..]];
+
+        let transfer_to_buyer = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.buyer_token_account.to_account_info(),
+            authority: ctx.accounts.escrow_token_account.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_to_buyer,
+            signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, net_amount)?;
+
+        // Distribute fees if any
+        if total_fees > 0 {
+            distribute_trade_fees(
+                &ctx.accounts.escrow_token_account.to_account_info(),
+                &ctx.accounts.fee_collector_token_account.to_account_info(),
+                &ctx.accounts.token_program.to_account_info(),
+                total_fees,
+                signer_seeds,
+            )?;
+        }
+
+        // Update trade state
+        let released_state = TradeStateItem {
+            actor: ctx.accounts.seller.key(),
+            state: TradeState::EscrowReleased,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(released_state)?;
+
+        msg!(
+            "Escrow released: trade ID {}, net amount {}, fees {}, seller: {}",
+            trade_id,
+            net_amount,
+            total_fees,
+            ctx.accounts.seller.key()
+        );
+
+        Ok(())
+    }
+
+    /// Refund escrow to seller (before buyer pays)
+    pub fn refund_escrow(
+        ctx: Context<RefundEscrow>,
+        trade_id: u64,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state - can refund from EscrowFunded
+        require!(
+            trade.state == TradeState::EscrowFunded,
+            ErrorCode::InvalidTradeState
+        );
+
+        validate_trade_state_transition(&trade.state, &TradeState::EscrowRefunded)?;
+
+        // Either party can initiate refund, but validate they're involved in the trade
+        let signer = ctx.accounts.signer.key();
+        require!(
+            signer == trade.buyer || signer == trade.seller,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Transfer full amount back to seller
+        let escrow_seeds = &[
+            ESCROW_SEED,
+            trade.key().as_ref(),
+            &[*ctx.bumps.get("escrow_token_account").unwrap()],
+        ];
+        let signer_seeds = &[&escrow_seeds[..]];
+
+        let refund_transfer = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.seller_token_account.to_account_info(),
+            authority: ctx.accounts.escrow_token_account.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            refund_transfer,
+            signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, trade.amount)?;
+
+        // Update trade state
+        let refunded_state = TradeStateItem {
+            actor: signer,
+            state: TradeState::EscrowRefunded,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(refunded_state)?;
+
+        msg!(
+            "Escrow refunded: trade ID {}, amount {}, initiated by: {}",
+            trade_id,
+            trade.amount,
+            signer
+        );
+
+        Ok(())
+    }
+
+    /// Dispute a trade (either party can dispute)
+    pub fn dispute_trade(
+        ctx: Context<DisputeTrade>,
+        trade_id: u64,
+        dispute_reason: String,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state - can dispute from EscrowFunded or FiatDeposited
+        require!(
+            trade.state == TradeState::EscrowFunded || trade.state == TradeState::FiatDeposited,
+            ErrorCode::InvalidTradeState
+        );
+
+        validate_trade_state_transition(&trade.state, &TradeState::EscrowDisputed)?;
+
+        // Validate dispute reason length
+        require!(
+            dispute_reason.len() <= 500,
+            ErrorCode::ContactInfoTooLong
+        );
+
+        // Either buyer or seller can dispute
+        let signer = ctx.accounts.disputer.key();
+        require!(
+            signer == trade.buyer || signer == trade.seller,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Update trade state
+        let disputed_state = TradeStateItem {
+            actor: signer,
+            state: TradeState::EscrowDisputed,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(disputed_state)?;
+        trade.dispute_reason = Some(dispute_reason.clone());
+
+        msg!(
+            "Trade disputed: ID {}, by: {}, reason: {}",
+            trade_id,
+            signer,
+            dispute_reason
+        );
+
+        Ok(())
+    }
+
+    /// Settle dispute (arbitrator decides)
+    pub fn settle_dispute(
+        ctx: Context<SettleDispute>,
+        trade_id: u64,
+        settlement_for_maker: bool,
+        settlement_reason: String,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate current state
+        require!(
+            trade.state == TradeState::EscrowDisputed,
+            ErrorCode::InvalidTradeState
+        );
+
+        // Validate arbitrator authority
+        require!(
+            ctx.accounts.arbitrator.key() == trade.arbitrator,
+            ErrorCode::Unauthorized
+        );
+
+        // Validate settlement reason length
+        require!(
+            settlement_reason.len() <= 500,
+            ErrorCode::ContactInfoTooLong
+        );
+
+        // Determine settlement outcome
+        let settlement_state = if settlement_for_maker {
+            TradeState::SettledForMaker
+        } else {
+            TradeState::SettledForTaker
+        };
+
+        validate_trade_state_transition(&trade.state, &settlement_state)?;
+
+        // Calculate fees for settlement
+        let hub_config_data = ctx.accounts.hub_config.try_borrow_data()?;
+        let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
+
+        let (net_amount, total_fees) = calculate_trade_fees(trade.amount, &hub_config)?;
+
+        // Determine recipient based on settlement
+        let recipient_token_account = if settlement_for_maker {
+            &ctx.accounts.maker_token_account
+        } else {
+            &ctx.accounts.taker_token_account
+        };
+
+        // Transfer settled amount to winner
+        let escrow_seeds = &[
+            ESCROW_SEED,
+            trade.key().as_ref(),
+            &[*ctx.bumps.get("escrow_token_account").unwrap()],
+        ];
+        let signer_seeds = &[&escrow_seeds[..]];
+
+        let settlement_transfer = Transfer {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: recipient_token_account.to_account_info(),
+            authority: ctx.accounts.escrow_token_account.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            settlement_transfer,
+            signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, net_amount)?;
+
+        // Distribute fees
+        if total_fees > 0 {
+            distribute_trade_fees(
+                &ctx.accounts.escrow_token_account.to_account_info(),
+                &ctx.accounts.fee_collector_token_account.to_account_info(),
+                &ctx.accounts.token_program.to_account_info(),
+                total_fees,
+                signer_seeds,
+            )?;
+        }
+
+        // Update trade state
+        let settled_state = TradeStateItem {
+            actor: ctx.accounts.arbitrator.key(),
+            state: settlement_state,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(settled_state)?;
+        trade.settlement_reason = Some(settlement_reason.clone());
+
+        msg!(
+            "Dispute settled: trade ID {}, for_maker: {}, arbitrator: {}, reason: {}",
+            trade_id,
+            settlement_for_maker,
+            ctx.accounts.arbitrator.key(),
+            settlement_reason
+        );
+
+        Ok(())
+    }
+
+    /// Update contact information for trade participants
+    pub fn update_trade_contact(
+        ctx: Context<UpdateTradeContact>,
+        trade_id: u64,
+        contact_info: String,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+
+        // Validate contact info length
+        require!(
+            contact_info.len() <= 500,
+            ErrorCode::ContactInfoTooLong
+        );
+
+        // Validate that only trade participants can update contact
+        let signer = ctx.accounts.signer.key();
+        require!(
+            signer == trade.buyer || signer == trade.seller,
+            ErrorCode::InvalidTradeSender
+        );
+
+        // Update appropriate contact field
+        if signer == trade.buyer {
+            trade.buyer_contact = Some(contact_info.clone());
+        } else {
+            trade.seller_contact = Some(contact_info.clone());
+        }
+
+        msg!(
+            "Trade contact updated: ID {}, participant: {}",
+            trade_id,
+            signer
+        );
+
+        Ok(())
+    }
 }
 
 // Account Structures
@@ -382,6 +833,8 @@ pub struct Trade {
     pub maker_contact: Option<String>,
     pub buyer_contact: Option<String>,
     pub seller_contact: Option<String>,
+    pub dispute_reason: Option<String>,
+    pub settlement_reason: Option<String>,
     pub bump: u8,
 }
 
@@ -405,6 +858,8 @@ impl Trade {
         1 + 4 + 500 + // maker_contact (optional, max 500 chars)
         1 + 4 + 500 + // buyer_contact (optional, max 500 chars)
         1 + 4 + 500 + // seller_contact (optional, max 500 chars)
+        1 + 4 + 500 + // dispute_reason (optional, max 500 chars)
+        1 + 4 + 500 + // settlement_reason (optional, max 500 chars)
         1; // bump
 
     /// Check if trade has expired
@@ -418,6 +873,29 @@ impl Trade {
             self.state,
             TradeState::RequestCreated | TradeState::RequestAccepted
         )
+    }
+
+    /// Check if trade can be disputed
+    pub fn can_dispute(&self) -> bool {
+        matches!(
+            self.state,
+            TradeState::EscrowFunded | TradeState::FiatDeposited
+        )
+    }
+
+    /// Check if escrow can be funded
+    pub fn can_fund_escrow(&self) -> bool {
+        self.state == TradeState::RequestAccepted
+    }
+
+    /// Check if escrow can be released
+    pub fn can_release_escrow(&self) -> bool {
+        self.state == TradeState::FiatDeposited
+    }
+
+    /// Check if escrow can be refunded
+    pub fn can_refund_escrow(&self) -> bool {
+        self.state == TradeState::EscrowFunded
     }
 
     /// Get the current state
@@ -437,6 +915,22 @@ impl Trade {
         self.state = state_item.state;
         self.state_history.push(state_item);
         Ok(())
+    }
+
+    /// Get trade summary for queries
+    pub fn get_summary(&self) -> TradeSummary {
+        TradeSummary {
+            id: self.id,
+            buyer: self.buyer,
+            seller: self.seller,
+            amount: self.amount,
+            token_mint: self.token_mint,
+            fiat_currency: self.fiat_currency.clone(),
+            state: self.state,
+            created_at: self.created_at,
+            expires_at: self.expires_at,
+            is_disputed: matches!(self.state, TradeState::EscrowDisputed),
+        }
     }
 }
 
@@ -546,6 +1040,153 @@ pub struct AcceptTrade<'info> {
 #[derive(Accounts)]
 #[instruction(trade_id: u64)]
 pub struct CancelTrade<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct FundEscrow<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub seller: Signer<'info>,
+
+    pub seller_token_account: Account<'info, TokenAccount>,
+
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    pub buyer_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct ConfirmFiatDeposited<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct ReleaseEscrow<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub seller: Signer<'info>,
+
+    pub seller_token_account: Account<'info, TokenAccount>,
+
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    pub buyer_token_account: Account<'info, TokenAccount>,
+
+    pub fee_collector_token_account: Account<'info, TokenAccount>,
+
+    /// Hub configuration for fee calculation
+    /// CHECK: Validated through hub program PDA seeds
+    pub hub_config: UncheckedAccount<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct RefundEscrow<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub signer: Signer<'info>,
+
+    pub seller_token_account: Account<'info, TokenAccount>,
+
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct DisputeTrade<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub disputer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct SettleDispute<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(mut)]
+    pub arbitrator: Signer<'info>,
+
+    pub maker_token_account: Account<'info, TokenAccount>,
+
+    pub taker_token_account: Account<'info, TokenAccount>,
+
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    pub fee_collector_token_account: Account<'info, TokenAccount>,
+
+    /// Hub configuration for fee calculation
+    /// CHECK: Validated through hub program PDA seeds
+    pub hub_config: UncheckedAccount<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct UpdateTradeContact<'info> {
     #[account(
         mut,
         seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
@@ -798,10 +1439,10 @@ pub fn validate_trade_creation(
     profile_contact: &str,
     encryption_key: &str,
 ) -> Result<()> {
-    // Validate amount
-    require!(amount > 0, ErrorCode::InvalidTradeAmount);
+    // Validate amount is not zero
+    require!(amount > 0, ErrorCode::InvalidAmountRange);
 
-    // Validate contact information lengths
+    // Validate contact information length
     require!(
         taker_contact.len() <= 500,
         ErrorCode::ContactInfoTooLong
@@ -816,4 +1457,142 @@ pub fn validate_trade_creation(
     );
 
     Ok(())
+}
+
+/// Trade Summary structure for query responses
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeSummary {
+    pub id: u64,
+    pub buyer: Pubkey,
+    pub seller: Pubkey,
+    pub amount: u64,
+    pub token_mint: Pubkey,
+    pub fiat_currency: FiatCurrency,
+    pub state: TradeState,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub is_disputed: bool,
+}
+
+/// Calculate trade fees based on hub configuration
+pub fn calculate_trade_fees(
+    amount: u64,
+    hub_config: &GlobalConfigAccount,
+) -> Result<(u64, u64)> {
+    let chain_fee = amount
+        .checked_mul(hub_config.chain_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let burn_fee = amount
+        .checked_mul(hub_config.burn_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let warchest_fee = amount
+        .checked_mul(hub_config.warchest_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let arbitration_fee = amount
+        .checked_mul(hub_config.arbitration_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let total_fees = chain_fee
+        .checked_add(burn_fee)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(warchest_fee)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(arbitration_fee)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let net_amount = amount
+        .checked_sub(total_fees)
+        .ok_or(ErrorCode::InsufficientFunds)?;
+
+    Ok((net_amount, total_fees))
+}
+
+/// Distribute trade fees to various collectors
+pub fn distribute_trade_fees(
+    escrow_account: &AccountInfo,
+    fee_collector_account: &AccountInfo,
+    token_program: &AccountInfo,
+    total_fees: u64,
+    escrow_signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    if total_fees == 0 {
+        return Ok(());
+    }
+
+    // For simplicity, we'll send all fees to the fee collector
+    // In a full implementation, this would be split among different collectors
+    let fee_transfer = Transfer {
+        from: escrow_account.clone(),
+        to: fee_collector_account.clone(),
+        authority: escrow_account.clone(),
+    };
+    let cpi_ctx = CpiContext::new_with_signer(
+        token_program.clone(),
+        fee_transfer,
+        escrow_signer_seeds,
+    );
+    anchor_spl::token::transfer(cpi_ctx, total_fees)?;
+
+    msg!("Fees distributed: {}", total_fees);
+    Ok(())
+}
+
+/// Query function to get trade by ID
+pub fn get_trade_by_id(trade_account: &Account<Trade>) -> TradeSummary {
+    trade_account.get_summary()
+}
+
+/// Query function to check if a trade is active
+pub fn is_trade_active(trade: &Trade) -> bool {
+    matches!(
+        trade.state,
+        TradeState::RequestCreated
+            | TradeState::RequestAccepted
+            | TradeState::EscrowFunded
+            | TradeState::FiatDeposited
+            | TradeState::EscrowDisputed
+    )
+}
+
+/// Query function to get trade statistics
+pub fn get_trade_stats(trade: &Trade) -> TradeStats {
+    TradeStats {
+        id: trade.id,
+        state: trade.state,
+        created_at: trade.created_at,
+        expires_at: trade.expires_at,
+        state_changes: trade.state_history.len() as u8,
+        is_active: is_trade_active(trade),
+        is_disputed: matches!(trade.state, TradeState::EscrowDisputed),
+        is_completed: matches!(
+            trade.state,
+            TradeState::EscrowReleased
+                | TradeState::SettledForMaker
+                | TradeState::SettledForTaker
+        ),
+    }
+}
+
+/// Trade statistics structure
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeStats {
+    pub id: u64,
+    pub state: TradeState,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub state_changes: u8,
+    pub is_active: bool,
+    pub is_disputed: bool,
+    pub is_completed: bool,
 }
