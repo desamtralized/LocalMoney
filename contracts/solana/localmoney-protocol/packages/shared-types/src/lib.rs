@@ -49,7 +49,7 @@ impl std::fmt::Display for OfferState {
 }
 
 /// Trade States - 12 states as per specification
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq)]
 pub enum TradeState {
     RequestCreated,
     RequestCanceled,
