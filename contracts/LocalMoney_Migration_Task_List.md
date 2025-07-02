@@ -219,15 +219,15 @@ This document provides a comprehensive, actionable task list for migrating the L
 ### Trade Program Implementation
 
 #### Task 2.4: Trade Program Core Structure
-- [ ] **2.4.1** Define Trade account structure
-- [ ] **2.4.2** Define TradeCounter account structure
-- [ ] **2.4.3** Define TradeStateItem structure
-- [ ] **2.4.4** Implement create_trade instruction
-- [ ] **2.4.5** Implement accept_trade instruction
-- [ ] **2.4.6** Add trade validation logic
+- [x] **2.4.1** Define Trade account structure
+- [x] **2.4.2** Define TradeCounter account structure
+- [x] **2.4.3** Define TradeStateItem structure
+- [x] **2.4.4** Implement create_trade instruction
+- [x] **2.4.5** Implement accept_trade instruction
+- [x] **2.4.6** Add trade validation logic
 
-**Deliverable**: Basic Trade program structure
-**Acceptance Criteria**: Can create and accept trade requests
+**Deliverable**: Basic Trade program structure ✅
+**Acceptance Criteria**: Can create and accept trade requests ✅
 
 #### Task 2.5: Escrow Management
 - [ ] **2.5.1** Design escrow account structure
