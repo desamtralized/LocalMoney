@@ -7,61 +7,135 @@ declare_id!("6HJHAiMENmYh4wW99YtHVY6tGDTzdrNeMtwSpDiyGu1k");
 pub mod profile {
     use super::*;
 
+    /// Creates a new user profile with enhanced validation and initialization
+    /// 
+    /// This method creates a comprehensive user profile with proper validation,
+    /// security checks, and initialization of all profile metrics.
     pub fn create_profile(
         ctx: Context<CreateProfile>,
         contact: Option<String>,
         encryption_key: Option<String>,
     ) -> Result<()> {
-        // Validate profile creation parameters
+        // Enhanced validation with comprehensive security checks
         validate_profile_creation(&contact, &encryption_key)?;
+        
+        // Additional validation for encryption consistency
+        validate_encryption_contact_relationship(&contact, &encryption_key)?;
 
         let profile = &mut ctx.accounts.profile;
+        let current_timestamp = Clock::get()?.unix_timestamp;
+        
+        // Initialize core profile data
         profile.owner = ctx.accounts.owner.key();
-        profile.created_at = Clock::get()?.unix_timestamp;
+        profile.created_at = current_timestamp;
+        profile.last_trade = 0; // No trades yet
+        profile.bump = ctx.bumps.profile;
+
+        // Initialize contact and encryption
+        profile.contact = contact.clone();
+        profile.encryption_key = encryption_key.clone();
+
+        // Initialize all counters to zero
         profile.requested_trades_count = 0;
         profile.active_trades_count = 0;
         profile.released_trades_count = 0;
-        profile.last_trade = 0;
-        profile.contact = contact;
-        profile.encryption_key = encryption_key;
         profile.active_offers_count = 0;
+
+        // Initialize reputation system
         profile.reputation_score = 0;
-        profile.bump = ctx.bumps.profile;
 
-        msg!("Profile created for user: {}", ctx.accounts.owner.key());
-
-        Ok(())
-    }
-
-    pub fn update_contact(
-        ctx: Context<UpdateProfile>,
-        contact: Option<String>,
-        encryption_key: Option<String>,
-    ) -> Result<()> {
-        // Validate contact update parameters
-        validate_contact_update(&contact, &encryption_key)?;
-
-        let profile = &mut ctx.accounts.profile;
-        profile.contact = contact;
-        profile.encryption_key = encryption_key;
+        // Log profile creation with security context
+        let has_contact = contact.is_some();
+        let has_encryption = encryption_key.is_some();
+        let appears_encrypted = contact.as_ref()
+            .map(|c| appears_encrypted(c))
+            .unwrap_or(false);
 
         msg!(
-            "Contact information updated for user: {}",
-            ctx.accounts.owner.key()
+            "Profile created for user: {} | Contact: {} | Encryption: {} | Encrypted: {}",
+            ctx.accounts.owner.key(),
+            has_contact,
+            has_encryption,
+            appears_encrypted
         );
 
         Ok(())
     }
 
+    /// Updates user contact information with comprehensive validation and security checks
+    /// 
+    /// This method provides secure contact information updates with encryption validation,
+    /// change tracking, and proper security recommendations.
+    pub fn update_contact(
+        ctx: Context<UpdateProfile>,
+        contact: Option<String>,
+        encryption_key: Option<String>,
+    ) -> Result<()> {
+        // Comprehensive validation with security checks
+        validate_contact_update(&contact, &encryption_key)?;
+        validate_encryption_contact_relationship(&contact, &encryption_key)?;
+
+        let profile = &mut ctx.accounts.profile;
+        
+        // Track changes for logging
+        let old_has_contact = profile.contact.is_some();
+        let old_has_encryption = profile.encryption_key.is_some();
+        let old_appears_encrypted = profile.contact.as_ref()
+            .map(|c| appears_encrypted(c))
+            .unwrap_or(false);
+
+        // Perform updates
+        profile.contact = contact.clone();
+        profile.encryption_key = encryption_key.clone();
+
+        // Log changes with security context
+        let new_has_contact = contact.is_some();
+        let new_has_encryption = encryption_key.is_some();
+        let new_appears_encrypted = contact.as_ref()
+            .map(|c| appears_encrypted(c))
+            .unwrap_or(false);
+
+        // Security warning for encryption downgrade
+        if old_appears_encrypted && !new_appears_encrypted {
+            msg!(
+                "WARNING: Contact encryption downgrade detected for user: {}",
+                ctx.accounts.owner.key()
+            );
+        }
+
+        msg!(
+            "Contact updated for user: {} | Contact: {} -> {} | Encryption: {} -> {} | Encrypted: {} -> {}",
+            ctx.accounts.owner.key(),
+            old_has_contact,
+            new_has_contact,
+            old_has_encryption,
+            new_has_encryption,
+            old_appears_encrypted,
+            new_appears_encrypted
+        );
+
+        Ok(())
+    }
+
+    /// Updates trading statistics with comprehensive validation and consistency checks
+    /// 
+    /// This method safely updates trade counters with overflow protection, 
+    /// state validation, and automatic timestamp updates for trade completion.
     pub fn update_trade_stats(
         ctx: Context<UpdateProfile>,
         stat_type: TradeStatType,
         increment: bool,
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
+        let current_timestamp = Clock::get()?.unix_timestamp;
 
-        // Validate trade statistics update
+        // Enhanced validation with state consistency checks
         validate_trade_stats_update(profile, &stat_type, increment)?;
+
+        // Store old values for logging and validation
+        let old_requested = profile.requested_trades_count;
+        let old_active = profile.active_trades_count;
+        let old_released = profile.released_trades_count;
 
         match stat_type {
             TradeStatType::RequestedTrades => {
@@ -70,6 +144,13 @@ pub mod profile {
                         .requested_trades_count
                         .checked_add(1)
                         .ok_or(LocalMoneyErrorCode::MathOverflow)?;
+                    
+                    msg!(
+                        "Trade requested by user: {} | Total requests: {} -> {}",
+                        ctx.accounts.owner.key(),
+                        old_requested,
+                        profile.requested_trades_count
+                    );
                 }
             }
             TradeStatType::ActiveTrades => {
@@ -78,9 +159,24 @@ pub mod profile {
                         .active_trades_count
                         .checked_add(1)
                         .ok_or(LocalMoneyErrorCode::MathOverflow)?;
+                    
+                    msg!(
+                        "Active trade added for user: {} | Active trades: {} -> {}",
+                        ctx.accounts.owner.key(),
+                        old_active,
+                        profile.active_trades_count
+                    );
                 } else {
-                    profile.active_trades_count =
-                        profile.active_trades_count.checked_sub(1).unwrap_or(0);
+                    profile.active_trades_count = profile.active_trades_count
+                        .checked_sub(1)
+                        .unwrap_or(0);
+                    
+                    msg!(
+                        "Active trade removed for user: {} | Active trades: {} -> {}",
+                        ctx.accounts.owner.key(),
+                        old_active,
+                        profile.active_trades_count
+                    );
                 }
             }
             TradeStatType::ReleasedTrades => {
@@ -89,27 +185,92 @@ pub mod profile {
                         .released_trades_count
                         .checked_add(1)
                         .ok_or(LocalMoneyErrorCode::MathOverflow)?;
-                    profile.last_trade = Clock::get()?.unix_timestamp;
+                    
+                    // Update last trade timestamp for completed trades
+                    profile.last_trade = current_timestamp;
+                    
+                    // Calculate and log completion rate
+                    let completion_rate = if profile.requested_trades_count > 0 {
+                        (profile.released_trades_count * 100) / profile.requested_trades_count
+                    } else {
+                        0
+                    };
+                    
+                    msg!(
+                        "Trade completed by user: {} | Completed: {} -> {} | Completion rate: {}%",
+                        ctx.accounts.owner.key(),
+                        old_released,
+                        profile.released_trades_count,
+                        completion_rate
+                    );
                 }
             }
         }
 
+        // Validate state consistency after update
+        require!(
+            profile.released_trades_count <= profile.requested_trades_count,
+            LocalMoneyErrorCode::ProfileStatsUpdateFailed
+        );
+
         Ok(())
     }
 
+    /// Updates offer statistics with validation, overflow protection, and activity tracking
+    /// 
+    /// This method safely manages offer counters with comprehensive validation,
+    /// activity limits checking, and detailed logging for offer lifecycle management.
     pub fn update_offer_stats(ctx: Context<UpdateProfile>, increment: bool) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
 
-        // Validate offer statistics update
+        // Enhanced validation with activity limits checking
         validate_offer_stats_update(profile, increment)?;
+
+        // Store old value for logging
+        let old_offers_count = profile.active_offers_count;
 
         if increment {
             profile.active_offers_count = profile
                 .active_offers_count
                 .checked_add(1)
                 .ok_or(LocalMoneyErrorCode::MathOverflow)?;
+            
+            msg!(
+                "Offer created by user: {} | Active offers: {} -> {}",
+                ctx.accounts.owner.key(),
+                old_offers_count,
+                profile.active_offers_count
+            );
         } else {
-            profile.active_offers_count = profile.active_offers_count.checked_sub(1).unwrap_or(0);
+            profile.active_offers_count = profile.active_offers_count
+                .checked_sub(1)
+                .unwrap_or(0);
+            
+            msg!(
+                "Offer removed for user: {} | Active offers: {} -> {}",
+                ctx.accounts.owner.key(),
+                old_offers_count,
+                profile.active_offers_count
+            );
+        }
+
+        // Log activity status change
+        let is_active_maker = profile.active_offers_count > 0;
+        let is_active_trader = profile.active_trades_count > 0;
+        let overall_active = is_active_maker || is_active_trader;
+
+        if old_offers_count == 0 && profile.active_offers_count > 0 {
+            msg!(
+                "User {} became active maker | Overall active: {}",
+                ctx.accounts.owner.key(),
+                overall_active
+            );
+        } else if old_offers_count > 0 && profile.active_offers_count == 0 {
+            msg!(
+                "User {} no longer active maker | Overall active: {}",
+                ctx.accounts.owner.key(),
+                overall_active
+            );
         }
 
         Ok(())
@@ -196,47 +357,52 @@ pub mod profile {
         }
     }
 
-    /// Update reputation score based on trade outcome
+    /// Updates reputation score with comprehensive tracking and tier progression analysis
+    /// 
+    /// This method manages reputation changes with detailed logging, tier tracking,
+    /// and activity timestamp updates. It provides comprehensive reputation analytics
+    /// and prevents overflow/underflow conditions.
     pub fn update_reputation(
         ctx: Context<UpdateProfile>,
         reputation_change: ReputationChange,
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
+        let current_timestamp = Clock::get()?.unix_timestamp;
 
-        // Validate reputation update
+        // Enhanced validation with comprehensive checks
         validate_reputation_update(profile, &reputation_change)?;
 
+        // Store old values for tier change detection
+        let old_score = profile.reputation_score;
+        let old_tier = profile.get_reputation_tier();
+
+        // Apply reputation change with proper bounds checking
         match reputation_change {
             ReputationChange::TradeCompleted => {
-                // Positive reputation for completing a trade
                 profile.reputation_score = profile
                     .reputation_score
                     .checked_add(REPUTATION_TRADE_COMPLETED)
                     .unwrap_or(u32::MAX);
             }
             ReputationChange::TradeDisputed => {
-                // Negative reputation for disputed trade
                 profile.reputation_score = profile
                     .reputation_score
                     .checked_sub(REPUTATION_TRADE_DISPUTED)
                     .unwrap_or(0);
             }
             ReputationChange::TradeCanceled => {
-                // Small negative reputation for canceling trade
                 profile.reputation_score = profile
                     .reputation_score
                     .checked_sub(REPUTATION_TRADE_CANCELED)
                     .unwrap_or(0);
             }
             ReputationChange::FastResponse => {
-                // Small positive reputation for fast response
                 profile.reputation_score = profile
                     .reputation_score
                     .checked_add(REPUTATION_FAST_RESPONSE)
                     .unwrap_or(u32::MAX);
             }
             ReputationChange::SlowResponse => {
-                // Small negative reputation for slow response
                 profile.reputation_score = profile
                     .reputation_score
                     .checked_sub(REPUTATION_SLOW_RESPONSE)
@@ -244,15 +410,63 @@ pub mod profile {
             }
         }
 
-        // Update last activity timestamp
-        profile.last_trade = Clock::get()?.unix_timestamp;
+        // Update activity timestamp
+        profile.last_trade = current_timestamp;
 
-        msg!(
-            "Reputation updated for user {}: {:?} -> {}",
-            ctx.accounts.owner.key(),
-            reputation_change,
-            profile.reputation_score
-        );
+        // Check for tier changes
+        let new_tier = profile.get_reputation_tier();
+        let tier_changed = old_tier != new_tier;
+
+        // Calculate score change
+        let score_change = if profile.reputation_score >= old_score {
+            profile.reputation_score - old_score
+        } else {
+            old_score - profile.reputation_score
+        };
+
+        // Enhanced logging with tier information
+        if tier_changed {
+            msg!(
+                "Reputation tier change for user {}: {:?} -> {:?} | Score: {} -> {} ({:+}) | Change: {:?}",
+                ctx.accounts.owner.key(),
+                old_tier,
+                new_tier,
+                old_score,
+                profile.reputation_score,
+                score_change as i32 * if profile.reputation_score >= old_score { 1 } else { -1 },
+                reputation_change
+            );
+        } else {
+            msg!(
+                "Reputation updated for user {}: {} -> {} ({:+}) | Tier: {:?} | Change: {:?}",
+                ctx.accounts.owner.key(),
+                old_score,
+                profile.reputation_score,
+                score_change as i32 * if profile.reputation_score >= old_score { 1 } else { -1 },
+                new_tier,
+                reputation_change
+            );
+        }
+
+        // Log milestone achievements
+        match new_tier {
+            ReputationTier::Bronze if old_tier == ReputationTier::Newcomer => {
+                msg!("🥉 User {} achieved Bronze tier!", ctx.accounts.owner.key());
+            }
+            ReputationTier::Silver if old_tier == ReputationTier::Bronze => {
+                msg!("🥈 User {} achieved Silver tier!", ctx.accounts.owner.key());
+            }
+            ReputationTier::Gold if old_tier == ReputationTier::Silver => {
+                msg!("🥇 User {} achieved Gold tier!", ctx.accounts.owner.key());
+            }
+            ReputationTier::Platinum if old_tier == ReputationTier::Gold => {
+                msg!("🏆 User {} achieved Platinum tier!", ctx.accounts.owner.key());
+            }
+            ReputationTier::Diamond if old_tier == ReputationTier::Platinum => {
+                msg!("💎 User {} achieved Diamond tier!", ctx.accounts.owner.key());
+            }
+            _ => {} // No milestone achieved
+        }
 
         Ok(())
     }
