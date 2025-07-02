@@ -10,6 +10,64 @@ use shared_types::{
 
 declare_id!("AxX94noi3AvotjdqnRin3YpKgbQ1rGqQhjkkxpeGUfnM");
 
+// External program account structures for deserialization
+// These would normally be imported from the respective program crates
+
+/// Offer account structure from offer program
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct OfferAccount {
+    pub id: u64,
+    pub owner: Pubkey,
+    pub offer_type: OfferType,
+    pub fiat_currency: FiatCurrency,
+    pub rate: u64,
+    pub min_amount: u64,
+    pub max_amount: u64,
+    pub description: String,
+    pub token_mint: Pubkey,
+    pub state: OfferState,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub bump: u8,
+}
+
+impl anchor_lang::AccountDeserialize for OfferAccount {
+    fn try_deserialize_unchecked(buf: &mut &[u8]) -> anchor_lang::Result<Self> {
+        Ok(Self::deserialize(buf)?)
+    }
+}
+
+/// GlobalConfig account structure from hub program
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct GlobalConfigAccount {
+    pub authority: Pubkey,
+    pub offer_program: Pubkey,
+    pub trade_program: Pubkey,
+    pub profile_program: Pubkey,
+    pub price_program: Pubkey,
+    pub price_provider: Pubkey,
+    pub local_mint: Pubkey,
+    pub chain_fee_collector: Pubkey,
+    pub warchest: Pubkey,
+    pub active_offers_limit: u8,
+    pub active_trades_limit: u8,
+    pub arbitration_fee_bps: u16,
+    pub burn_fee_bps: u16,
+    pub chain_fee_bps: u16,
+    pub warchest_fee_bps: u16,
+    pub trade_expiration_timer: u64,
+    pub trade_dispute_timer: u64,
+    pub trade_limit_min: u64,
+    pub trade_limit_max: u64,
+    pub bump: u8,
+}
+
+impl anchor_lang::AccountDeserialize for GlobalConfigAccount {
+    fn try_deserialize_unchecked(buf: &mut &[u8]) -> anchor_lang::Result<Self> {
+        Ok(Self::deserialize(buf)?)
+    }
+}
+
 #[program]
 pub mod trade {
     use super::*;
@@ -75,8 +133,7 @@ pub mod trade {
 
         // Validate offer exists and is in correct state
         // Read offer data from the provided offer account
-        // In a full implementation, we would deserialize the offer account
-        // For now, we'll validate that the offer account is provided and not default
+        // Deserialize offer account to read offer data
         require!(
             !ctx.accounts.offer.key().eq(&Pubkey::default()),
             ErrorCode::OfferNotFound
@@ -90,36 +147,75 @@ pub mod trade {
             ErrorCode::InvalidConfiguration
         );
 
-        // TODO: In a full implementation, deserialize offer account to read:
-        // - offer.owner (seller)
-        // - offer.fiat_currency
-        // - offer.state (must be Active)
-        // - offer.min_amount <= amount <= offer.max_amount
-        // - offer.offer_type (determines buyer/seller roles)
+        // Deserialize offer account to read offer data
+        let offer_data = ctx.accounts.offer.try_borrow_data()?;
+        let offer: OfferAccount = OfferAccount::try_deserialize(&mut &offer_data[8..])?;
 
-        // TODO: In a full implementation, deserialize hub_config to read:
-        // - Default arbitrator or arbitrator assignment logic
-        // - Trade expiration timer
-        // - Trade limits and validation
+        // Validate offer ID matches
+        require!(offer.id == offer_id, ErrorCode::OfferNotFound);
 
-        // For now, use validated accounts and basic logic
-        // Set up buyer/seller based on offer type (to be read from offer data)
-        let buyer = ctx.accounts.taker.key();
-        let seller = ctx.accounts.offer.key(); // Placeholder - should be offer.owner
+        // Validate offer state is Active
+        require!(offer.state == OfferState::Active, ErrorCode::OfferNotActive);
 
-        // Read fiat currency from offer data (to be implemented)
-        let fiat_currency = FiatCurrency::USD; // Should be read from offer.fiat_currency
+        // Validate amount is within offer range
+        require!(
+            amount >= offer.min_amount && amount <= offer.max_amount,
+            ErrorCode::InvalidAmountRange
+        );
+
+        // Validate token mint matches
+        require!(
+            ctx.accounts.token_mint.key() == offer.token_mint,
+            ErrorCode::InvalidTokenMint
+        );
+
+        // Deserialize hub config to read default arbitrator and trade settings
+        let hub_config_data = ctx.accounts.hub_config.try_borrow_data()?;
+        let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
+
+        // Validate trade amount against USD limits using price conversion
+        // For now, we'll use the amount directly and assume proper price conversion happens elsewhere
+        // In a full implementation, this would involve CPI to price program
+        require!(
+            amount >= hub_config.trade_limit_min && amount <= hub_config.trade_limit_max,
+            ErrorCode::InvalidAmountRange
+        );
+
+        // Set up buyer/seller based on offer type
+        let (buyer, seller) = match offer.offer_type {
+            OfferType::Buy => {
+                // Offer owner wants to buy, so they are the buyer
+                // Taker (trade creator) is selling to them
+                (offer.owner, ctx.accounts.taker.key())
+            }
+            OfferType::Sell => {
+                // Offer owner wants to sell, so they are the seller
+                // Taker (trade creator) is buying from them
+                (ctx.accounts.taker.key(), offer.owner)
+            }
+        };
+
+        // Calculate trade expiration based on hub config
+        let expires_at = if hub_config.trade_expiration_timer > 0 {
+            clock.unix_timestamp + hub_config.trade_expiration_timer as i64
+        } else {
+            0 // No expiration
+        };
+
+        // Use default arbitrator from hub config (for now, use price_provider as placeholder)
+        // In a full implementation, there would be a dedicated arbitrator selection mechanism
+        let arbitrator = hub_config.price_provider;
 
         trade.id = trade_id;
         trade.buyer = buyer;
         trade.seller = seller;
-        trade.arbitrator = ctx.accounts.hub_config.key(); // Placeholder - should read default arbitrator from hub config
+        trade.arbitrator = arbitrator;
         trade.offer_id = offer_id;
         trade.amount = amount;
         trade.token_mint = ctx.accounts.token_mint.key();
-        trade.fiat_currency = fiat_currency;
+        trade.fiat_currency = offer.fiat_currency;
         trade.created_at = clock.unix_timestamp;
-        trade.expires_at = 0; // Will be set based on hub config
+        trade.expires_at = expires_at;
         trade.state = TradeState::RequestCreated;
         trade.state_history = vec![initial_state];
         trade.taker_contact = taker_contact;
@@ -128,10 +224,12 @@ pub mod trade {
         trade.bump = ctx.bumps.trade;
 
         msg!(
-            "Trade created: ID {}, offer_id {}, amount {}",
+            "Trade created: ID {}, offer_id {}, amount {}, buyer: {}, seller: {}",
             trade_id,
             offer_id,
-            amount
+            amount,
+            buyer,
+            seller
         );
 
         Ok(())
@@ -180,10 +278,27 @@ pub mod trade {
             ErrorCode::OfferNotFound
         );
 
-        // TODO: In a full implementation, deserialize offer account and verify:
-        // require!(ctx.accounts.maker.key() == offer.owner, ErrorCode::Unauthorized);
-        // For now, we validate that the offer account is provided and matches the trade's offer_id
-        // This provides basic protection against unauthorized acceptance
+        // Deserialize offer account and verify maker is the offer owner
+        let offer_data = ctx.accounts.offer.try_borrow_data()?;
+        let offer: OfferAccount = OfferAccount::try_deserialize(&mut &offer_data[8..])?;
+
+        // Verify that the maker is the offer owner
+        require!(
+            ctx.accounts.maker.key() == offer.owner,
+            ErrorCode::Unauthorized
+        );
+
+        // Verify that the offer ID matches the trade's offer ID
+        require!(
+            offer.id == trade.offer_id,
+            ErrorCode::OfferNotFound
+        );
+
+        // Verify that the offer is still active
+        require!(
+            offer.state == OfferState::Active,
+            ErrorCode::OfferNotActive
+        );
 
         // Update trade state to accepted
         let accepted_state = TradeStateItem {
