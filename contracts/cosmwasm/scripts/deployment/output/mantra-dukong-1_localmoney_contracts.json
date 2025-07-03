@@ -1,0 +1,49 @@
+{
+  "contracts": [
+    {
+      "wasm": "hub.wasm",
+      "code_id": "909",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "offer.wasm",
+      "code_id": "910",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "price.wasm",
+      "code_id": "911",
+      "version": " 0.0.6"
+    },
+    {
+      "wasm": "profile.wasm",
+      "code_id": "912",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "hub.wasm",
+      "code_id": "914",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "offer.wasm",
+      "code_id": "915",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "price.wasm",
+      "code_id": "916",
+      "version": " 0.0.6"
+    },
+    {
+      "wasm": "profile.wasm",
+      "code_id": "917",
+      "version": " 0.0.0"
+    },
+    {
+      "wasm": "trade.wasm",
+      "code_id": "918",
+      "version": " 0.0.0"
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+# Prints the list of recipes.
+default:
+    @just --list
+
+# Builds the whole project.
+build:
+  cargo build
+
+# Build all schemas
+schemas:
+  scripts/build_schemas.sh
+
+# Tests the whole project.
+test:
+  cargo test
+
+# Alias to the format recipe.
+fmt:
+  @just format
+
+# Formats the rust, toml and sh files in the project.
+format:
+  cargo fmt --all
+  find . -type f -iname "*.toml" -print0 | xargs -0 taplo format
+  find . -type f -name '*.sh' -exec shfmt -w {} \;
+  scripts/utils/format_md.sh
+
+# Runs clippy with the a feature flag if provided.
+lint:
+  cargo clippy --all -- -D warnings
+
+# Tries to fix clippy issues automatically.
+lintfix:
+  cargo clippy --fix --allow-staged --allow-dirty --all-features
+  just format
+
+# Checks the whole project with all the feature flags.
+check-all:
+  cargo check --all-features
+
+# Cargo check.
+check:
+  cargo check
+
+# Cargo clean and update.
+refresh:
+  cargo clean && cargo update
+
+# Cargo watch.
+watch:
+  cargo watch -x lcheck
+
+# Watches tests with the a feature flag if provided.
+watch-test FEATURE='':
+  cargo watch -x "nextest run"
+
+# Compiles and optimizes the contracts.
+optimize:
+  scripts/build_release.sh
+
+# Prints the artifacts versions on the current commit.
+get-artifacts-versions:
+  scripts/get_artifacts_versions.sh --skip-verbose
+
+# Prints the artifacts size. Optimize should be called before.
+get-artifacts-size:
+  scripts/check_artifacts_size.sh
+
+# Installs the env loader locally.
+install-env-loader:
+    scripts/deployment/deploy_env/add_load_chain_env_alias.sh
+
+# Deploys LocalMoney contracts on the given CHAIN, default is mantra-testnet.
+# CONTRACT can be: all, hub, offer, trade, profile, price
+deploy CHAIN='mantra-testnet' CONTRACT='all':
+    ./scripts/deployment/deploy_localmoney.sh -c {{CHAIN}} -d {{CONTRACT}}
+
+# Stores the LocalMoney contracts on the given CHAIN, default is mantra-testnet.
+# CONTRACT can be: all, hub, offer, trade, profile, price
+store CHAIN='mantra-testnet' CONTRACT='all':
+    ./scripts/deployment/deploy_localmoney.sh -c {{CHAIN}} -s {{CONTRACT}}
+
+# Deploys a test trade offer on LocalMoney on the given CHAIN, default is mantra-testnet.
+deploy-offer CHAIN='mantra-testnet' OFFER_FILE='offer.json':
+    @# Ensure package.json exists, install dependencies if needed, then run the script
+    @[ -f package.json ] || npm init -y; \
+    [ -d node_modules ] || npm install @cosmjs/encoding @cosmjs/proto-signing @cosmjs/cosmwasm-stargate dotenv; \
+    node scripts/deployment/deploy_offer.js {{CHAIN}} {{OFFER_FILE}}
+
+# Installs pre-commit git hooks.
+install-git-hooks:
+    ./scripts/hooks/commit-msg.sh --install
+    ./scripts/hooks/pre-commit.sh --install
+
+# ⚠️ Pauses all trading activity in LocalMoney.⚠️
+emergency-pause-trading:
+    scripts/emergency/pause_trading.sh
+
+# ⚠️ Disables all offers in LocalMoney.⚠️
+emergency-disable-offers:
+    scripts/emergency/disable_offers.sh
