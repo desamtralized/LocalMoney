@@ -31,7 +31,7 @@
     "vue-demi": "^0.12.5",
     "vue-i18n": "9.2.0-beta.35",
     "vue-router": "^4.1.2",
-    "vue-select": "^4.0.0-beta.3",
+    "vue-select": "^4.0.0-beta.6",
     "vue-toastification": "^2.0.0-rc.5"
   },
   "devDependencies": {

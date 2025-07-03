@@ -35,8 +35,8 @@ export const useClientStore = defineStore({
   id: 'client',
   state: () => {
     return {
-      chainClient: <ChainClient>ChainClient.kujiraTestnet, // TODO call setClient in the App.vue setup function to properly init a chain adapter
-      client: chainFactory(ChainClient.kujiraTestnet),
+      chainClient: <ChainClient>ChainClient.mantra, // TODO call setClient in the App.vue setup function to properly init a chain adapter
+      client: chainFactory(ChainClient.mantra),
       applicationConnected: useLocalStorage('walletAlreadyConnected', false),
       userWallet: <UserWallet>{ isConnected: false, address: 'undefined' },
       secrets: useLocalStorage('secrets', new Map<string, Secrets>()),
