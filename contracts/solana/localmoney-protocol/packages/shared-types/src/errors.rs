@@ -249,6 +249,9 @@ pub enum ErrorCode {
     #[msg("Insufficient token balance")]
     InsufficientTokenBalance,
 
+    #[msg("Insufficient funds for operation")]
+    InsufficientFunds,
+
     #[msg("Token account not found")]
     TokenAccountNotFound,
 
@@ -376,6 +379,7 @@ impl ErrorCode {
             ErrorCode::InvalidTokenMint
             | ErrorCode::TokenTransferFailed
             | ErrorCode::InsufficientTokenBalance
+            | ErrorCode::InsufficientFunds
             | ErrorCode::TokenAccountNotFound
             | ErrorCode::InvalidTokenAmount => "Token",
 
