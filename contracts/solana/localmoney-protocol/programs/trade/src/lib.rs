@@ -162,6 +162,29 @@ impl anchor_lang::AccountDeserialize for GlobalConfigAccount {
 pub mod trade {
     use super::*;
 
+    /// Initialize arbitration fee accumulator
+    pub fn initialize_arbitration_accumulator(
+        ctx: Context<InitializeArbitrationAccumulator>,
+        config: ArbitrationConfig,
+    ) -> Result<()> {
+        initialize_arbitration_accumulator(ctx, config)
+    }
+
+    /// Collect arbitration fees into the accumulator
+    pub fn collect_arbitration_fees(
+        ctx: Context<CollectArbitrationFees>,
+        amount: u64,
+    ) -> Result<()> {
+        collect_arbitration_fees(ctx, amount)
+    }
+
+    /// Distribute arbitration funds to various allocation targets
+    pub fn distribute_arbitration_funds(
+        ctx: Context<DistributeArbitrationFunds>,
+    ) -> Result<()> {
+        distribute_arbitration_funds(ctx)
+    }
+
     /// Initialize the trade counter (only authorized admin can initialize)
     pub fn initialize_counter(ctx: Context<InitializeCounter>) -> Result<()> {
         // Validate that the authority is authorized to initialize the counter
@@ -3124,24 +3147,134 @@ pub fn distribute_escrow_fees<'info>(
         msg!("Burn fee distributed: {}", fee_breakdown.burn_fee);
     }
 
-    // Arbitration and platform fees can be sent to chain fee collector for simplicity
-    let remaining_fees = fee_breakdown.arbitration_fee + fee_breakdown.platform_fee;
-    if remaining_fees > 0 {
-        let remaining_fee_transfer = Transfer {
+    // Transfer arbitration fee to dedicated arbitration fee collector
+    if fee_breakdown.arbitration_fee > 0 {
+        let arbitration_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: chain_fee_collector.clone(), // TODO: Replace with dedicated arbitration collector
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            arbitration_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.arbitration_fee)?;
+        msg!("Arbitration fee distributed: {}", fee_breakdown.arbitration_fee);
+    }
+
+    // Transfer platform fee to chain fee collector
+    if fee_breakdown.platform_fee > 0 {
+        let platform_fee_transfer = Transfer {
             from: escrow_account.clone(),
             to: chain_fee_collector.clone(),
             authority: escrow_account.clone(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
             token_program.clone(),
-            remaining_fee_transfer,
+            platform_fee_transfer,
             escrow_signer_seeds,
         );
-        anchor_spl::token::transfer(cpi_ctx, remaining_fees)?;
-        msg!("Remaining fees distributed: {}", remaining_fees);
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.platform_fee)?;
+        msg!("Platform fee distributed: {}", fee_breakdown.platform_fee);
     }
 
     msg!("All escrow fees distributed successfully");
+    Ok(())
+}
+
+/// Enhanced escrow fee distribution with arbitration fee accumulator integration
+pub fn distribute_escrow_fees_with_arbitration<'info>(
+    escrow_account: &AccountInfo<'info>,
+    chain_fee_collector: &AccountInfo<'info>,
+    warchest_collector: &AccountInfo<'info>,
+    burn_collector: &AccountInfo<'info>,
+    arbitration_accumulator: &AccountInfo<'info>,
+    token_program: &AccountInfo<'info>,
+    fee_breakdown: &EscrowFeeBreakdown,
+    escrow_signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // Transfer chain fee
+    if fee_breakdown.chain_fee > 0 {
+        let chain_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: chain_fee_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            chain_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.chain_fee)?;
+        msg!("Chain fee distributed: {}", fee_breakdown.chain_fee);
+    }
+
+    // Transfer warchest fee
+    if fee_breakdown.warchest_fee > 0 {
+        let warchest_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: warchest_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            warchest_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.warchest_fee)?;
+        msg!("Warchest fee distributed: {}", fee_breakdown.warchest_fee);
+    }
+
+    // Transfer burn fee (send to burn collector)
+    if fee_breakdown.burn_fee > 0 {
+        let burn_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: burn_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            burn_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.burn_fee)?;
+        msg!("Burn fee distributed: {}", fee_breakdown.burn_fee);
+    }
+
+    // Transfer arbitration fee to dedicated arbitration accumulator
+    if fee_breakdown.arbitration_fee > 0 {
+        let arbitration_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: arbitration_accumulator.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            arbitration_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.arbitration_fee)?;
+        msg!("Arbitration fee distributed to accumulator: {}", fee_breakdown.arbitration_fee);
+    }
+
+    // Transfer platform fee to chain fee collector
+    if fee_breakdown.platform_fee > 0 {
+        let platform_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: chain_fee_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            platform_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.platform_fee)?;
+        msg!("Platform fee distributed: {}", fee_breakdown.platform_fee);
+    }
+
+    msg!("All escrow fees distributed successfully with arbitration accumulator integration");
     Ok(())
 }
 
@@ -4295,6 +4428,477 @@ fn calculate_optimal_timing_fees(current: &ComprehensiveFeeResult) -> Result<Esc
         warchest_fee: (breakdown.warchest_fee * reduction_factor) / 10000,
         arbitration_fee: (breakdown.arbitration_fee * reduction_factor) / 10000,
         platform_fee: (breakdown.platform_fee * reduction_factor) / 10000,
+    })
+}
+
+// ========== ARBITRATION FEE SYSTEM ==========
+
+pub const ARBITRATION_SEED: &[u8] = b"arbitration";
+
+/// Arbitration fee accumulator account for collecting and distributing arbitration fees
+#[account]
+pub struct ArbitrationAccumulator {
+    pub bump: u8,
+    pub authority: Pubkey,
+    pub token_mint: Pubkey,
+    pub accumulated_amount: u64,
+    pub total_collected_lifetime: u64,
+    pub collection_count: u64,
+    pub last_distribution_timestamp: i64,
+    pub distribution_count: u64,
+    pub total_distributed_lifetime: u64,
+    pub average_distribution_amount: u64,
+    pub next_scheduled_distribution: i64,
+    pub arbitrator_allocation_percentage: u8,
+    pub platform_allocation_percentage: u8,
+    pub protocol_treasury_percentage: u8,
+    pub reserve_percentage: u8,
+    pub distribution_threshold: u64,
+    pub distribution_frequency: i64,
+    pub auto_distribute: bool,
+    pub last_collection_timestamp: i64,
+    pub collection_efficiency_score: u16,
+    pub distribution_efficiency_score: u16,
+    pub arbitrator_balance: u64,
+    pub platform_balance: u64,
+    pub protocol_treasury_balance: u64,
+    pub reserve_balance: u64,
+}
+
+impl ArbitrationAccumulator {
+    pub const SPACE: usize = 8 + // discriminator
+        1 + // bump
+        32 + // authority
+        32 + // token_mint
+        8 + // accumulated_amount
+        8 + // total_collected_lifetime
+        8 + // collection_count
+        8 + // last_distribution_timestamp
+        8 + // distribution_count
+        8 + // total_distributed_lifetime
+        8 + // average_distribution_amount
+        8 + // next_scheduled_distribution
+        1 + // arbitrator_allocation_percentage
+        1 + // platform_allocation_percentage
+        1 + // protocol_treasury_percentage
+        1 + // reserve_percentage
+        8 + // distribution_threshold
+        8 + // distribution_frequency
+        1 + // auto_distribute
+        8 + // last_collection_timestamp
+        2 + // collection_efficiency_score
+        2 + // distribution_efficiency_score
+        8 + // arbitrator_balance
+        8 + // platform_balance
+        8 + // protocol_treasury_balance
+        8 + // reserve_balance
+        100; // padding
+}
+
+/// Arbitration fee distribution configuration
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationConfig {
+    pub arbitrator_allocation_percentage: u8,
+    pub platform_allocation_percentage: u8,
+    pub protocol_treasury_percentage: u8,
+    pub reserve_percentage: u8,
+    pub distribution_threshold: u64,
+    pub distribution_frequency: i64,
+    pub auto_distribute: bool,
+}
+
+/// Arbitration fee distribution record for analytics
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationDistributionRecord {
+    pub timestamp: i64,
+    pub total_amount: u64,
+    pub arbitrator_amount: u64,
+    pub platform_amount: u64,
+    pub protocol_treasury_amount: u64,
+    pub reserve_amount: u64,
+    pub efficiency_score: u16,
+}
+
+/// Arbitration fee analytics
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationAnalytics {
+    pub total_collected: u64,
+    pub total_distributed: u64,
+    pub collection_efficiency: u16,
+    pub distribution_efficiency: u16,
+    pub arbitrator_allocation_percentage: u8,
+    pub platform_allocation_percentage: u8,
+    pub protocol_treasury_percentage: u8,
+    pub reserve_percentage: u8,
+    pub average_collection_amount: u64,
+    pub average_distribution_amount: u64,
+    pub collections_per_day: u16,
+    pub distributions_per_day: u16,
+    pub reserve_utilization_percentage: u8,
+    pub next_distribution_timestamp: i64,
+}
+
+#[derive(Accounts)]
+pub struct InitializeArbitrationAccumulator<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = ArbitrationAccumulator::SPACE,
+        seeds = [ARBITRATION_SEED, token_mint.key().as_ref()],
+        bump
+    )]
+    pub accumulator: Account<'info, ArbitrationAccumulator>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub token_mint: Account<'info, Mint>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CollectArbitrationFees<'info> {
+    #[account(
+        mut,
+        seeds = [ARBITRATION_SEED, token_mint.key().as_ref()],
+        bump = accumulator.bump
+    )]
+    pub accumulator: Account<'info, ArbitrationAccumulator>,
+    
+    #[account(mut)]
+    pub source_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub accumulator_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub token_mint: Account<'info, Mint>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct DistributeArbitrationFunds<'info> {
+    #[account(
+        mut,
+        seeds = [ARBITRATION_SEED, token_mint.key().as_ref()],
+        bump = accumulator.bump
+    )]
+    pub accumulator: Account<'info, ArbitrationAccumulator>,
+    
+    #[account(mut)]
+    pub accumulator_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub arbitrator_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub platform_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub protocol_treasury_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub reserve_token_account: Account<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub token_mint: Account<'info, Mint>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+/// Initialize arbitration fee accumulator
+pub fn initialize_arbitration_accumulator(
+    ctx: Context<InitializeArbitrationAccumulator>,
+    config: ArbitrationConfig,
+) -> Result<()> {
+    // Validate allocation percentages sum to 100%
+    let total_percentage = config.arbitrator_allocation_percentage
+        .checked_add(config.platform_allocation_percentage)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(config.protocol_treasury_percentage)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(config.reserve_percentage)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    require!(total_percentage == 100, ErrorCode::InvalidConfiguration);
+    
+    let accumulator = &mut ctx.accounts.accumulator;
+    let clock = Clock::get()?;
+    
+    accumulator.bump = ctx.bumps.accumulator;
+    accumulator.authority = ctx.accounts.authority.key();
+    accumulator.token_mint = ctx.accounts.token_mint.key();
+    accumulator.accumulated_amount = 0;
+    accumulator.total_collected_lifetime = 0;
+    accumulator.collection_count = 0;
+    accumulator.last_distribution_timestamp = clock.unix_timestamp;
+    accumulator.distribution_count = 0;
+    accumulator.total_distributed_lifetime = 0;
+    accumulator.average_distribution_amount = 0;
+    accumulator.next_scheduled_distribution = clock.unix_timestamp + config.distribution_frequency;
+    accumulator.arbitrator_allocation_percentage = config.arbitrator_allocation_percentage;
+    accumulator.platform_allocation_percentage = config.platform_allocation_percentage;
+    accumulator.protocol_treasury_percentage = config.protocol_treasury_percentage;
+    accumulator.reserve_percentage = config.reserve_percentage;
+    accumulator.distribution_threshold = config.distribution_threshold;
+    accumulator.distribution_frequency = config.distribution_frequency;
+    accumulator.auto_distribute = config.auto_distribute;
+    accumulator.last_collection_timestamp = clock.unix_timestamp;
+    accumulator.collection_efficiency_score = 10000; // 100% initially
+    accumulator.distribution_efficiency_score = 10000; // 100% initially
+    accumulator.arbitrator_balance = 0;
+    accumulator.platform_balance = 0;
+    accumulator.protocol_treasury_balance = 0;
+    accumulator.reserve_balance = 0;
+    
+    msg!("Arbitration fee accumulator initialized with config: {:?}", config);
+    Ok(())
+}
+
+/// Collect arbitration fees into the accumulator
+pub fn collect_arbitration_fees(
+    ctx: Context<CollectArbitrationFees>,
+    amount: u64,
+) -> Result<()> {
+    let accumulator = &mut ctx.accounts.accumulator;
+    let clock = Clock::get()?;
+    
+    // Transfer tokens to accumulator
+    let transfer_instruction = Transfer {
+        from: ctx.accounts.source_token_account.to_account_info(),
+        to: ctx.accounts.accumulator_token_account.to_account_info(),
+        authority: ctx.accounts.authority.to_account_info(),
+    };
+    
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        transfer_instruction,
+    );
+    
+    anchor_spl::token::transfer(cpi_ctx, amount)?;
+    
+    // Update accumulator state
+    accumulator.accumulated_amount = accumulator.accumulated_amount
+        .checked_add(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    accumulator.total_collected_lifetime = accumulator.total_collected_lifetime
+        .checked_add(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    accumulator.collection_count = accumulator.collection_count
+        .checked_add(1)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    accumulator.last_collection_timestamp = clock.unix_timestamp;
+    
+    // Check if auto-distribution should trigger
+    if accumulator.auto_distribute && 
+       accumulator.accumulated_amount >= accumulator.distribution_threshold {
+        // Auto-distribution logic would be implemented here
+        msg!("Auto-distribution triggered for arbitration fees");
+    }
+    
+    msg!("Arbitration fees collected: {}", amount);
+    Ok(())
+}
+
+/// Distribute arbitration funds to various allocation targets
+pub fn distribute_arbitration_funds(
+    ctx: Context<DistributeArbitrationFunds>,
+) -> Result<()> {
+    let clock = Clock::get()?;
+    
+    // Extract values from accumulator before borrowing mutably
+    let total_amount = ctx.accounts.accumulator.accumulated_amount;
+    let arbitrator_allocation_percentage = ctx.accounts.accumulator.arbitrator_allocation_percentage;
+    let platform_allocation_percentage = ctx.accounts.accumulator.platform_allocation_percentage;
+    let protocol_treasury_percentage = ctx.accounts.accumulator.protocol_treasury_percentage;
+    let reserve_percentage = ctx.accounts.accumulator.reserve_percentage;
+    let bump = ctx.accounts.accumulator.bump;
+    let distribution_frequency = ctx.accounts.accumulator.distribution_frequency;
+    
+    require!(total_amount > 0, ErrorCode::InsufficientFunds);
+    
+    // Calculate distribution amounts
+    let arbitrator_amount = (total_amount * arbitrator_allocation_percentage as u64) / 100;
+    let platform_amount = (total_amount * platform_allocation_percentage as u64) / 100;
+    let protocol_treasury_amount = (total_amount * protocol_treasury_percentage as u64) / 100;
+    let reserve_amount = (total_amount * reserve_percentage as u64) / 100;
+    
+    let signer_seeds: &[&[u8]] = &[
+        ARBITRATION_SEED,
+        ctx.accounts.token_mint.key().as_ref(),
+        &[bump],
+    ];
+    let signer_seeds_array = &[signer_seeds];
+    
+    // Transfer to arbitrator allocation
+    if arbitrator_amount > 0 {
+        let arbitrator_transfer = Transfer {
+            from: ctx.accounts.accumulator_token_account.to_account_info(),
+            to: ctx.accounts.arbitrator_token_account.to_account_info(),
+            authority: ctx.accounts.accumulator.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            arbitrator_transfer,
+            signer_seeds_array,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, arbitrator_amount)?;
+    }
+    
+    // Transfer to platform allocation
+    if platform_amount > 0 {
+        let platform_transfer = Transfer {
+            from: ctx.accounts.accumulator_token_account.to_account_info(),
+            to: ctx.accounts.platform_token_account.to_account_info(),
+            authority: ctx.accounts.accumulator.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            platform_transfer,
+            signer_seeds_array,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, platform_amount)?;
+    }
+    
+    // Transfer to protocol treasury allocation
+    if protocol_treasury_amount > 0 {
+        let protocol_treasury_transfer = Transfer {
+            from: ctx.accounts.accumulator_token_account.to_account_info(),
+            to: ctx.accounts.protocol_treasury_token_account.to_account_info(),
+            authority: ctx.accounts.accumulator.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            protocol_treasury_transfer,
+            signer_seeds_array,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, protocol_treasury_amount)?;
+    }
+    
+    // Transfer to reserve allocation
+    if reserve_amount > 0 {
+        let reserve_transfer = Transfer {
+            from: ctx.accounts.accumulator_token_account.to_account_info(),
+            to: ctx.accounts.reserve_token_account.to_account_info(),
+            authority: ctx.accounts.accumulator.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            reserve_transfer,
+            signer_seeds_array,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, reserve_amount)?;
+    }
+    
+    // Now update accumulator state (mutable borrow)
+    let accumulator = &mut ctx.accounts.accumulator;
+    accumulator.accumulated_amount = 0;
+    accumulator.last_distribution_timestamp = clock.unix_timestamp;
+    accumulator.distribution_count = accumulator.distribution_count
+        .checked_add(1)
+        .ok_or(ErrorCode::MathOverflow)?;
+    accumulator.total_distributed_lifetime = accumulator.total_distributed_lifetime
+        .checked_add(total_amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    // Calculate average distribution amount
+    accumulator.average_distribution_amount = accumulator.total_distributed_lifetime / 
+        accumulator.distribution_count;
+    
+    // Set next scheduled distribution
+    accumulator.next_scheduled_distribution = clock.unix_timestamp + distribution_frequency;
+    
+    // Update individual balances for tracking
+    accumulator.arbitrator_balance = accumulator.arbitrator_balance
+        .checked_add(arbitrator_amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    accumulator.platform_balance = accumulator.platform_balance
+        .checked_add(platform_amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    accumulator.protocol_treasury_balance = accumulator.protocol_treasury_balance
+        .checked_add(protocol_treasury_amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    accumulator.reserve_balance = accumulator.reserve_balance
+        .checked_add(reserve_amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    msg!("Arbitration funds distributed: arbitrator={}, platform={}, treasury={}, reserve={}", 
+         arbitrator_amount, platform_amount, protocol_treasury_amount, reserve_amount);
+    
+    Ok(())
+}
+
+/// Get arbitration fee analytics
+pub fn get_arbitration_analytics(accumulator: &ArbitrationAccumulator) -> Result<ArbitrationAnalytics> {
+    let clock = Clock::get()?;
+    
+    // Calculate efficiency scores
+    let collection_efficiency = if accumulator.collection_count > 0 {
+        ((accumulator.total_collected_lifetime / accumulator.collection_count) * 100) as u16
+    } else {
+        0
+    };
+    
+    let distribution_efficiency = if accumulator.distribution_count > 0 {
+        ((accumulator.total_distributed_lifetime / accumulator.distribution_count) * 100) as u16
+    } else {
+        0
+    };
+    
+    // Calculate activity rates (assuming 24-hour periods)
+    let seconds_per_day = 86400;
+    let days_since_start = if accumulator.last_collection_timestamp > 0 {
+        ((clock.unix_timestamp - accumulator.last_collection_timestamp) / seconds_per_day).max(1)
+    } else {
+        1
+    };
+    
+    let collections_per_day = (accumulator.collection_count / days_since_start as u64) as u16;
+    let distributions_per_day = (accumulator.distribution_count / days_since_start as u64) as u16;
+    
+    // Calculate reserve utilization
+    let reserve_utilization_percentage = if accumulator.total_collected_lifetime > 0 {
+        ((accumulator.reserve_balance * 100) / accumulator.total_collected_lifetime) as u8
+    } else {
+        0
+    };
+    
+    Ok(ArbitrationAnalytics {
+        total_collected: accumulator.total_collected_lifetime,
+        total_distributed: accumulator.total_distributed_lifetime,
+        collection_efficiency,
+        distribution_efficiency,
+        arbitrator_allocation_percentage: accumulator.arbitrator_allocation_percentage,
+        platform_allocation_percentage: accumulator.platform_allocation_percentage,
+        protocol_treasury_percentage: accumulator.protocol_treasury_percentage,
+        reserve_percentage: accumulator.reserve_percentage,
+        average_collection_amount: if accumulator.collection_count > 0 {
+            accumulator.total_collected_lifetime / accumulator.collection_count
+        } else {
+            0
+        },
+        average_distribution_amount: accumulator.average_distribution_amount,
+        collections_per_day,
+        distributions_per_day,
+        reserve_utilization_percentage,
+        next_distribution_timestamp: accumulator.next_scheduled_distribution,
     })
 }
 
