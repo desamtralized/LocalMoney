@@ -209,3 +209,25 @@ impl std::fmt::Display for DisputeResolution {
         }
     }
 }
+
+/// Program types that can be registered with the hub
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisteredProgramType {
+    Offer,
+    Trade,
+    Profile,
+    Price,
+    Arbitration,
+}
+
+impl std::fmt::Display for RegisteredProgramType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            RegisteredProgramType::Offer => write!(f, "Offer"),
+            RegisteredProgramType::Trade => write!(f, "Trade"),
+            RegisteredProgramType::Profile => write!(f, "Profile"),
+            RegisteredProgramType::Price => write!(f, "Price"),
+            RegisteredProgramType::Arbitration => write!(f, "Arbitration"),
+        }
+    }
+}

@@ -7,6 +7,34 @@ declare_id!("6HJHAiMENmYh4wW99YtHVY6tGDTzdrNeMtwSpDiyGu1k");
 pub mod profile {
     use super::*;
 
+    /// Register this program with the Hub
+    pub fn register_with_hub(ctx: Context<RegisterWithHub>) -> Result<()> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let hub_registry = &ctx.accounts.hub_registry;
+        let program_account = &ctx.accounts.program_account;
+        let payer = &ctx.accounts.payer;
+        let system_program = &ctx.accounts.system_program;
+
+        // Create CPI context for hub program registration
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::RegisterProgram {
+            config: hub_config.to_account_info(),
+            registry: hub_registry.to_account_info(),
+            program_id: program_account.to_account_info(),
+            payer: payer.to_account_info(),
+            system_program: system_program.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to register this program as a Profile program
+        hub::cpi::register_program(cpi_ctx, RegisteredProgramType::Profile)?;
+        
+        msg!("Profile program successfully registered with Hub");
+        Ok(())
+    }
+
     pub fn create_profile(
         ctx: Context<CreateProfile>,
         contact: Option<String>,
@@ -2010,6 +2038,43 @@ fn calculate_improvement_potential(profile: &Profile) -> u8 {
     }
 
     potential.min(100)
+}
+
+/// Account structure for registering the profile program with the hub
+#[derive(Accounts)]
+pub struct RegisterWithHub<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're registering with
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// Hub program registry account for this program
+    #[account(
+        seeds = [b"registry", crate::ID.as_ref()],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program during CPI
+    pub hub_registry: UncheckedAccount<'info>,
+
+    /// The profile program account (this program) 
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
+
+    /// Account that pays for the registry account creation
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// System program for account creation
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

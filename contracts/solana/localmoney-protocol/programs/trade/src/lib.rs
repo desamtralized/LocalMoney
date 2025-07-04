@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, Transfer, Mint, TokenAccount};
 use shared_types::{
-    FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, TradeState, TradeStateItem,
+    FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, RegisteredProgramType, TradeState, TradeStateItem,
     ESCROW_SEED,
 };
 
@@ -161,6 +161,34 @@ impl anchor_lang::AccountDeserialize for GlobalConfigAccount {
 #[program]
 pub mod trade {
     use super::*;
+
+    /// Register this program with the Hub
+    pub fn register_with_hub(ctx: Context<RegisterWithHub>) -> Result<()> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let hub_registry = &ctx.accounts.hub_registry;
+        let program_account = &ctx.accounts.program_account;
+        let payer = &ctx.accounts.payer;
+        let system_program = &ctx.accounts.system_program;
+
+        // Create CPI context for hub program registration
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::RegisterProgram {
+            config: hub_config.to_account_info(),
+            registry: hub_registry.to_account_info(),
+            program_id: program_account.to_account_info(),
+            payer: payer.to_account_info(),
+            system_program: system_program.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to register this program as a Trade program
+        hub::cpi::register_program(cpi_ctx, RegisteredProgramType::Trade)?;
+        
+        msg!("Trade program successfully registered with Hub");
+        Ok(())
+    }
 
     /// Initialize arbitration fee accumulator
     pub fn initialize_arbitration_accumulator(
@@ -2040,6 +2068,43 @@ impl EscrowFeeBreakdown {
 }
 
 // Instruction Contexts
+
+/// Account structure for registering the trade program with the hub
+#[derive(Accounts)]
+pub struct RegisterWithHub<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're registering with
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// Hub program registry account for this program
+    #[account(
+        seeds = [b"registry", crate::ID.as_ref()],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program during CPI
+    pub hub_registry: UncheckedAccount<'info>,
+
+    /// The trade program account (this program) 
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
+
+    /// Account that pays for the registry account creation
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// System program for account creation
+    pub system_program: Program<'info, System>,
+}
 
 #[derive(Accounts)]
 pub struct InitializeCounter<'info> {

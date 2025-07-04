@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use shared_types::{
     validate_amount_range, FiatCurrency, LocalMoneyErrorCode, OfferState, OfferType,
-    MAX_DESCRIPTION_LENGTH, OFFER_COUNTER_SEED, OFFER_SEED, OFFER_SIZE,
+    RegisteredProgramType, MAX_DESCRIPTION_LENGTH, OFFER_COUNTER_SEED, OFFER_SEED, OFFER_SIZE,
     CURRENCY_PRICE_SEED, CONFIG_SEED,
 };
 
@@ -16,6 +16,33 @@ pub mod offer {
         let counter = &mut ctx.accounts.counter;
         counter.count = 0;
         msg!("Offer counter initialized");
+        Ok(())
+    }
+
+    /// Register this program with the Hub
+    pub fn register_with_hub(ctx: Context<RegisterWithHub>) -> Result<()> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let hub_registry = &ctx.accounts.hub_registry;
+        let payer = &ctx.accounts.payer;
+        let system_program = &ctx.accounts.system_program;
+
+        // Create CPI context for hub program registration
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::RegisterProgram {
+            config: hub_config.to_account_info(),
+            registry: hub_registry.to_account_info(),
+            program_id: ctx.accounts.program_account.to_account_info(),
+            payer: payer.to_account_info(),
+            system_program: system_program.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to register this program as an Offer program
+        hub::cpi::register_program(cpi_ctx, RegisteredProgramType::Offer)?;
+        
+        msg!("Offer program successfully registered with Hub");
         Ok(())
     }
 
@@ -2553,6 +2580,43 @@ impl Offer {
     pub fn get_total_offers(counter: &OfferCounter) -> u64 {
         counter.count
     }
+}
+
+/// Account structure for registering the offer program with the hub
+#[derive(Accounts)]
+pub struct RegisterWithHub<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're registering with
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// Hub program registry account for this program
+    #[account(
+        seeds = [b"registry", crate::ID.as_ref()],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program during CPI
+    pub hub_registry: UncheckedAccount<'info>,
+
+    /// The offer program account (this program) 
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
+
+    /// Account that pays for the registry account creation
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// System program for account creation
+    pub system_program: Program<'info, System>,
 }
 
 #[error_code]

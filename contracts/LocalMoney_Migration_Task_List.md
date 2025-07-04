@@ -518,7 +518,15 @@ This document provides a comprehensive, actionable task list for migrating the L
 ### Cross-Program Integration
 
 #### Task 3.4: Hub-Program Integration
-- [ ] **3.4.1** Implement hub registration in all programs
+- [x] **3.4.1** Implement hub registration in all programs
+  - ✅ Added RegisteredProgramType enum to shared-types with support for all program types (Offer, Trade, Profile, Price, Arbitration)
+  - ✅ Updated Hub program to handle all program types with proper validation and error handling
+  - ✅ Implemented register_with_hub instruction in all programs: offer, profile, price, trade, arbitration
+  - ✅ Added RegisterWithHub account structures to all programs with proper PDA derivation and hub program CPI
+  - ✅ Enhanced Hub program with InvalidProgramType error code for unsupported program types
+  - ✅ All programs can now register themselves with the Hub program through CPI calls
+  - ✅ Hub program validates program identity and maintains registry of all registered programs
+  - ✅ Successfully compiled all programs with hub registration functionality
 - [ ] **3.4.2** Add configuration queries from hub
 - [ ] **3.4.3** Implement parameter validation using hub config
 - [ ] **3.4.4** Add hub authority validation

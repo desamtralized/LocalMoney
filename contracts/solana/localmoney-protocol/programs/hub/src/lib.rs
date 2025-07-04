@@ -151,6 +151,11 @@ pub mod hub {
                     LocalMoneyErrorCode::ProgramNotRegistered
                 );
             }
+            RegisteredProgramType::Arbitration => {
+                // For arbitration, check if caller is in the arbitration program registry
+                // This will be implemented when we add arbitration program field to config
+                msg!("Arbitration program registration not yet implemented");
+            }
         }
 
         // Create registry entry
@@ -194,6 +199,10 @@ pub mod hub {
             RegisteredProgramType::Trade => config.trade_program,
             RegisteredProgramType::Profile => config.profile_program,
             RegisteredProgramType::Price => config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
+            }
         };
 
         // Update the program ID in the global config
@@ -209,6 +218,10 @@ pub mod hub {
             }
             RegisteredProgramType::Price => {
                 config.price_program = new_program_id;
+            }
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
             }
         }
 
@@ -243,6 +256,10 @@ pub mod hub {
             RegisteredProgramType::Trade => caller_program_id == config.trade_program,
             RegisteredProgramType::Profile => caller_program_id == config.profile_program,
             RegisteredProgramType::Price => caller_program_id == config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                false
+            }
         };
 
         Ok(is_registered)
@@ -416,6 +433,10 @@ pub mod hub {
             RegisteredProgramType::Trade => caller_program_id == config.trade_program,
             RegisteredProgramType::Profile => caller_program_id == config.profile_program,
             RegisteredProgramType::Price => caller_program_id == config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                false
+            }
         };
 
         Ok(is_authorized)
@@ -439,6 +460,10 @@ pub mod hub {
             RegisteredProgramType::Trade => config.trade_program,
             RegisteredProgramType::Profile => config.profile_program,
             RegisteredProgramType::Price => config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
+            }
         };
 
         // Emit upgrade authority update event
@@ -810,14 +835,6 @@ impl ProgramRegistry {
     pub const INIT_SPACE: usize = 8 + 32 + 1 + 8 + 1 + 16;
 }
 
-/// Program types that can be registered with the hub
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RegisteredProgramType {
-    Offer,
-    Trade,
-    Profile,
-    Price,
-}
 
 /// Protocol fee configuration returned by get_protocol_fees
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]

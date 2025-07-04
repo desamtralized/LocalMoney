@@ -35,6 +35,9 @@ pub enum ErrorCode {
     #[msg("Program not registered with hub")]
     ProgramNotRegistered,
 
+    #[msg("Invalid program type specified")]
+    InvalidProgramType,
+
     #[msg("Configuration parameter is invalid")]
     InvalidConfiguration,
 
@@ -344,6 +347,7 @@ impl ErrorCode {
             | ErrorCode::ExcessiveFees
             | ErrorCode::InvalidFeePercentage
             | ErrorCode::ProgramNotRegistered
+            | ErrorCode::InvalidProgramType
             | ErrorCode::InvalidConfiguration
             | ErrorCode::InvalidTradingLimits => "Configuration",
 
