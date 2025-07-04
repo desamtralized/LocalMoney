@@ -368,15 +368,38 @@ This document provides a comprehensive, actionable task list for migrating the L
 ### Arbitration System
 
 #### Task 3.1: Arbitrator Management
-- [ ] **3.1.1** Define Arbitrator account structure
-- [ ] **3.1.2** Implement register_arbitrator instruction
-- [ ] **3.1.3** Implement remove_arbitrator instruction
-- [ ] **3.1.4** Add arbitrator validation logic
-- [ ] **3.1.5** Implement arbitrator selection algorithm
-- [ ] **3.1.6** Add arbitrator reputation tracking
+- [x] **3.1.1** Define Arbitrator account structure
+  - ✅ Created comprehensive Arbitrator account with ID, authority, status, reputation, and activity tracking
+  - ✅ Added ArbitrationConfig for global arbitration configuration management
+  - ✅ Implemented ArbitratorCounter for unique ID generation
+  - ✅ Created ArbitratorAssignment for dispute assignment tracking
+- [x] **3.1.2** Implement register_arbitrator instruction
+  - ✅ Added register_arbitrator instruction with comprehensive parameter validation
+  - ✅ Implemented validation for fee percentages, languages, and specializations
+  - ✅ Automatic arbitrator ID assignment and status initialization
+  - ✅ Proper PDA-based account management using arbitrator authority as seed
+- [x] **3.1.3** Implement remove_arbitrator instruction
+  - ✅ Added remove_arbitrator instruction with pending dispute checks
+  - ✅ Status updates to Inactive and proper counter management
+  - ✅ Authority validation for admin-only operations
+- [x] **3.1.4** Add arbitrator validation logic
+  - ✅ Comprehensive parameter validation for registration
+  - ✅ Fee percentage limits (max 5%) and constraint validation
+  - ✅ Language and specialization validation (1-5 languages, 1-10 specializations)
+  - ✅ Active dispute limit validation (max 10 active disputes per arbitrator)
+- [x] **3.1.5** Implement arbitrator selection algorithm
+  - ✅ Added select_arbitrator instruction for dispute assignment
+  - ✅ Implemented calculate_selection_score algorithm based on reputation, experience, workload, and activity
+  - ✅ Multi-factor scoring: reputation (10x), experience bonus (+5 per resolved dispute), workload penalty (-20 per active dispute), activity bonus (+50 for recent activity)
+  - ✅ Assignment tracking with dispute status management
+- [x] **3.1.6** Add arbitrator reputation tracking
+  - ✅ Implemented update_reputation instruction for dynamic reputation updates
+  - ✅ Reputation score calculation with overflow protection
+  - ✅ Activity tracking with last_activity timestamp updates
+  - ✅ Statistics tracking: total_disputes, resolved_disputes, active_disputes
 
-**Deliverable**: Arbitrator management system
-**Acceptance Criteria**: Can register, manage, and select arbitrators
+**Deliverable**: Arbitrator management system ✅
+**Acceptance Criteria**: Can register, manage, and select arbitrators ✅
 
 #### Task 3.2: Dispute Resolution
 - [ ] **3.2.1** Implement dispute_trade instruction

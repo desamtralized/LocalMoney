@@ -145,3 +145,67 @@ pub fn validate_trade_timer(timer_seconds: u64, max_seconds: u64) -> Result<()> 
     );
     Ok(())
 }
+
+/// Arbitrator Status
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum ArbitratorStatus {
+    Active,
+    Inactive,
+    Suspended,
+}
+
+impl std::fmt::Display for ArbitratorStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ArbitratorStatus::Active => write!(f, "Active"),
+            ArbitratorStatus::Inactive => write!(f, "Inactive"),
+            ArbitratorStatus::Suspended => write!(f, "Suspended"),
+        }
+    }
+}
+
+impl anchor_lang::Space for ArbitratorStatus {
+    const INIT_SPACE: usize = 1;
+}
+
+/// Dispute Status
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum DisputeStatus {
+    Open,
+    UnderReview,
+    Resolved,
+    Expired,
+}
+
+impl std::fmt::Display for DisputeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            DisputeStatus::Open => write!(f, "Open"),
+            DisputeStatus::UnderReview => write!(f, "UnderReview"),
+            DisputeStatus::Resolved => write!(f, "Resolved"),
+            DisputeStatus::Expired => write!(f, "Expired"),
+        }
+    }
+}
+
+impl anchor_lang::Space for DisputeStatus {
+    const INIT_SPACE: usize = 1;
+}
+
+/// Dispute Resolution Result
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum DisputeResolution {
+    FavorBuyer,
+    FavorSeller,
+    Split { buyer_percentage: u8 },
+}
+
+impl std::fmt::Display for DisputeResolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            DisputeResolution::FavorBuyer => write!(f, "FavorBuyer"),
+            DisputeResolution::FavorSeller => write!(f, "FavorSeller"),
+            DisputeResolution::Split { buyer_percentage } => write!(f, "Split({}%)", buyer_percentage),
+        }
+    }
+}

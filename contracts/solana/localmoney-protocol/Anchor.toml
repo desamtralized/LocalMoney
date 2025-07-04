@@ -12,6 +12,7 @@ offer = "DGjiY2hKsDpffEgBckNfrAkDt6B5jSxwsHshyQ1cRiP9"
 price = "7nkFUfmqKMKrQfm83HxreJHXyJdTK5feYqDEJtNihaw1"
 profile = "6HJHAiMENmYh4wW99YtHVY6tGDTzdrNeMtwSpDiyGu1k"
 trade = "AxX94noi3AvotjdqnRin3YpKgbQ1rGqQhjkkxpeGUfnM"
+arbitration = "8X9QeHbXRLzKJ4R1WfZhKz8Wn3Rj2MKHvQiVfJYJGqNp"
 
 [registry]
 url = "https://api.apr.dev"
