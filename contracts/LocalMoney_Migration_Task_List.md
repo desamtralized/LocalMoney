@@ -494,9 +494,25 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Comprehensive error handling with existing LocalMoneyErrorCode integration
   - ✅ Account structures for initialization, collection, and distribution operations
   - ✅ Successfully compiled and integrated with existing trade program infrastructure
-- [ ] **3.3.6** Add fee validation and constraints
+- [x] **3.3.6** Add fee validation and constraints
+  - ✅ Added comprehensive FeeValidationResult structure with validation results, violations, warnings, and recommendations
+  - ✅ Created FeeViolation structure with severity levels (Warning, Error, Critical) for detailed error reporting
+  - ✅ Implemented ViolationSeverity enum for categorizing validation issues
+  - ✅ Added FeeConstraints structure with configurable limits for all fee types (chain, burn, warchest, arbitration, platform)
+  - ✅ Created validate_fee_configuration() function with individual and total fee limit validation
+  - ✅ Implemented calculate_escrow_fees_with_validation() for enhanced fee calculation with constraint checking
+  - ✅ Added validate_transaction_fee_breakdown() for transaction-level fee validation
+  - ✅ Created validate_fee_economic_viability() for economic impact assessment
+  - ✅ Implemented validate_fee_collectors() for fee collector account validation and uniqueness checks
+  - ✅ Added validate_trade_fee_setup() for comprehensive trade fee validation workflow
+  - ✅ Integrated with existing Hub configuration for dynamic constraint management
+  - ✅ Added InvalidFeeConfiguration and InvalidFeeCollector error codes to shared-types
+  - ✅ Comprehensive fee percentage warnings (80% threshold) and detailed recommendations
+  - ✅ Economic viability checks with minimum transaction amount validation
+  - ✅ Fee collector uniqueness validation to prevent concentration of fees
+  - ✅ Successfully compiled with existing fee distribution infrastructure
 
-**Deliverable**: Complete fee distribution system ✅ (4/6 tasks completed)
+**Deliverable**: Complete fee distribution system ✅ (5/6 tasks completed)
 **Acceptance Criteria**: All fees are calculated and distributed correctly
 
 ### Cross-Program Integration

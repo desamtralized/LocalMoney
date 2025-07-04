@@ -4732,9 +4732,10 @@ pub fn distribute_arbitration_funds(
     let protocol_treasury_amount = (total_amount * protocol_treasury_percentage as u64) / 100;
     let reserve_amount = (total_amount * reserve_percentage as u64) / 100;
     
+    let mint_key = ctx.accounts.token_mint.key();
     let signer_seeds: &[&[u8]] = &[
         ARBITRATION_SEED,
-        ctx.accounts.token_mint.key().as_ref(),
+        mint_key.as_ref(),
         &[bump],
     ];
     let signer_seeds_array = &[signer_seeds];
@@ -6620,4 +6621,384 @@ pub fn get_warchest_analytics(
         cost_efficiency_score: cost_efficiency,
         distribution_health_score: distribution_health,
     }
+}
+
+/// Comprehensive fee validation and constraints system
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct FeeValidationResult {
+    pub is_valid: bool,
+    pub total_fee_percentage: u16,
+    pub individual_fee_violations: Vec<FeeViolation>,
+    pub total_fee_violation: Option<String>,
+    pub recommendations: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct FeeViolation {
+    pub fee_type: String,
+    pub current_bps: u16,
+    pub max_allowed_bps: u16,
+    pub violation_severity: ViolationSeverity,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum ViolationSeverity {
+    Warning,
+    Error,
+    Critical,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct FeeConstraints {
+    pub max_total_fee_bps: u16,
+    pub max_individual_fee_bps: u16,
+    pub max_chain_fee_bps: u16,
+    pub max_burn_fee_bps: u16,
+    pub max_warchest_fee_bps: u16,
+    pub max_arbitration_fee_bps: u16,
+    pub max_platform_fee_bps: u16,
+    pub min_fee_bps: u16,
+}
+
+impl Default for FeeConstraints {
+    fn default() -> Self {
+        Self {
+            max_total_fee_bps: 1000, // 10% total maximum
+            max_individual_fee_bps: 500, // 5% per individual fee
+            max_chain_fee_bps: 1000, // 10% for chain fees
+            max_burn_fee_bps: 500, // 5% for burn fees
+            max_warchest_fee_bps: 500, // 5% for warchest fees
+            max_arbitration_fee_bps: 500, // 5% for arbitration fees
+            max_platform_fee_bps: 200, // 2% for platform fees
+            min_fee_bps: 0, // 0% minimum
+        }
+    }
+}
+
+/// Validate fee configuration against protocol constraints
+pub fn validate_fee_configuration(
+    chain_fee_bps: u16,
+    burn_fee_bps: u16,
+    warchest_fee_bps: u16,
+    arbitration_fee_bps: u16,
+    platform_fee_bps: u16,
+    constraints: &FeeConstraints,
+) -> Result<FeeValidationResult> {
+    let mut violations = Vec::new();
+    let mut warnings = Vec::new();
+    let mut recommendations = Vec::new();
+
+    // Calculate total fee percentage
+    let total_fee_bps = chain_fee_bps
+        .checked_add(burn_fee_bps)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(warchest_fee_bps)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(arbitration_fee_bps)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_add(platform_fee_bps)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    // Check individual fee constraints
+    if chain_fee_bps > constraints.max_chain_fee_bps {
+        violations.push(FeeViolation {
+            fee_type: "chain_fee".to_string(),
+            current_bps: chain_fee_bps,
+            max_allowed_bps: constraints.max_chain_fee_bps,
+            violation_severity: ViolationSeverity::Error,
+        });
+    }
+
+    if burn_fee_bps > constraints.max_burn_fee_bps {
+        violations.push(FeeViolation {
+            fee_type: "burn_fee".to_string(),
+            current_bps: burn_fee_bps,
+            max_allowed_bps: constraints.max_burn_fee_bps,
+            violation_severity: ViolationSeverity::Error,
+        });
+    }
+
+    if warchest_fee_bps > constraints.max_warchest_fee_bps {
+        violations.push(FeeViolation {
+            fee_type: "warchest_fee".to_string(),
+            current_bps: warchest_fee_bps,
+            max_allowed_bps: constraints.max_warchest_fee_bps,
+            violation_severity: ViolationSeverity::Error,
+        });
+    }
+
+    if arbitration_fee_bps > constraints.max_arbitration_fee_bps {
+        violations.push(FeeViolation {
+            fee_type: "arbitration_fee".to_string(),
+            current_bps: arbitration_fee_bps,
+            max_allowed_bps: constraints.max_arbitration_fee_bps,
+            violation_severity: ViolationSeverity::Error,
+        });
+    }
+
+    if platform_fee_bps > constraints.max_platform_fee_bps {
+        violations.push(FeeViolation {
+            fee_type: "platform_fee".to_string(),
+            current_bps: platform_fee_bps,
+            max_allowed_bps: constraints.max_platform_fee_bps,
+            violation_severity: ViolationSeverity::Error,
+        });
+    }
+
+    // Check total fee constraint
+    let total_fee_violation = if total_fee_bps > constraints.max_total_fee_bps {
+        Some(format!(
+            "Total fee {}bps exceeds maximum allowed {}bps",
+            total_fee_bps, constraints.max_total_fee_bps
+        ))
+    } else {
+        None
+    };
+
+    // Add warnings for fees approaching limits
+    if chain_fee_bps > (constraints.max_chain_fee_bps * 80) / 100 {
+        warnings.push("Chain fee is approaching maximum limit".to_string());
+    }
+
+    if burn_fee_bps > (constraints.max_burn_fee_bps * 80) / 100 {
+        warnings.push("Burn fee is approaching maximum limit".to_string());
+    }
+
+    if warchest_fee_bps > (constraints.max_warchest_fee_bps * 80) / 100 {
+        warnings.push("Warchest fee is approaching maximum limit".to_string());
+    }
+
+    if arbitration_fee_bps > (constraints.max_arbitration_fee_bps * 80) / 100 {
+        warnings.push("Arbitration fee is approaching maximum limit".to_string());
+    }
+
+    if platform_fee_bps > (constraints.max_platform_fee_bps * 80) / 100 {
+        warnings.push("Platform fee is approaching maximum limit".to_string());
+    }
+
+    if total_fee_bps > (constraints.max_total_fee_bps * 80) / 100 {
+        warnings.push("Total fee is approaching maximum limit".to_string());
+    }
+
+    // Generate recommendations
+    if total_fee_bps > constraints.max_total_fee_bps {
+        let excess = total_fee_bps - constraints.max_total_fee_bps;
+        recommendations.push(format!(
+            "Reduce total fees by {}bps to comply with protocol limits",
+            excess
+        ));
+    }
+
+    if chain_fee_bps > constraints.max_chain_fee_bps {
+        recommendations.push(format!(
+            "Reduce chain fee from {}bps to maximum {}bps",
+            chain_fee_bps, constraints.max_chain_fee_bps
+        ));
+    }
+
+    if violations.is_empty() && total_fee_violation.is_none() {
+        recommendations.push("Fee configuration is valid and within protocol limits".to_string());
+    }
+
+    let is_valid = violations.is_empty() && total_fee_violation.is_none();
+
+    Ok(FeeValidationResult {
+        is_valid,
+        total_fee_percentage: total_fee_bps,
+        individual_fee_violations: violations,
+        total_fee_violation,
+        recommendations,
+        warnings,
+    })
+}
+
+/// Enhanced fee calculation with validation
+pub fn calculate_escrow_fees_with_validation(
+    amount: u64,
+    hub_config: &GlobalConfigAccount,
+    fee_constraints: Option<&FeeConstraints>,
+) -> Result<(EscrowFeeBreakdown, FeeValidationResult)> {
+    let default_constraints = FeeConstraints::default();
+    let constraints = fee_constraints.unwrap_or(&default_constraints);
+
+    // Validate fee configuration first
+    let validation_result = validate_fee_configuration(
+        hub_config.chain_fee_bps,
+        hub_config.burn_fee_bps,
+        hub_config.warchest_fee_bps,
+        hub_config.arbitration_fee_bps,
+        50, // Platform fee is fixed at 0.5% of total fees
+        constraints,
+    )?;
+
+    // If validation fails, return error
+    if !validation_result.is_valid {
+        msg!("Fee configuration validation failed: {:?}", validation_result);
+        return Err(ErrorCode::InvalidFeeConfiguration.into());
+    }
+
+    // Calculate fees using the existing function
+    let fee_breakdown = calculate_escrow_fees(amount, hub_config)?;
+
+    Ok((fee_breakdown, validation_result))
+}
+
+/// Validate fee breakdown against transaction constraints
+pub fn validate_transaction_fee_breakdown(
+    fee_breakdown: &EscrowFeeBreakdown,
+    transaction_amount: u64,
+    min_transaction_amount: u64,
+) -> Result<bool> {
+    let total_fees = fee_breakdown.total_fees();
+
+    // Ensure fees don't exceed transaction amount
+    require!(
+        total_fees <= transaction_amount,
+        ErrorCode::InsufficientFunds
+    );
+
+    // Ensure net amount after fees meets minimum
+    let net_amount = transaction_amount
+        .checked_sub(total_fees)
+        .ok_or(ErrorCode::InsufficientFunds)?;
+
+    require!(
+        net_amount >= min_transaction_amount,
+        ErrorCode::BelowMinimumAmount
+    );
+
+    // Ensure no individual fee is negative (should not happen with proper validation)
+    require!(
+        fee_breakdown.chain_fee >= 0 
+            && fee_breakdown.burn_fee >= 0 
+            && fee_breakdown.warchest_fee >= 0 
+            && fee_breakdown.arbitration_fee >= 0 
+            && fee_breakdown.platform_fee >= 0,
+        ErrorCode::InvalidFeeConfiguration
+    );
+
+    Ok(true)
+}
+
+/// Check if fee configuration is economically viable
+pub fn validate_fee_economic_viability(
+    fee_breakdown: &EscrowFeeBreakdown,
+    transaction_amount: u64,
+    min_viable_net_amount: u64,
+) -> Result<bool> {
+    let total_fees = fee_breakdown.total_fees();
+    let net_amount = transaction_amount
+        .checked_sub(total_fees)
+        .ok_or(ErrorCode::InsufficientFunds)?;
+
+    // Check if the net amount is economically viable
+    require!(
+        net_amount >= min_viable_net_amount,
+        ErrorCode::BelowMinimumAmount
+    );
+
+    // Calculate fee percentage
+    let fee_percentage = (total_fees * 10000) / transaction_amount;
+
+    // Warn if fees are too high relative to transaction amount
+    if fee_percentage > 1000 { // 10%
+        msg!("Warning: Fee percentage {}bps is high relative to transaction amount", fee_percentage);
+    }
+
+    Ok(true)
+}
+
+/// Validate that fee collectors are properly configured
+pub fn validate_fee_collectors<'info>(
+    chain_fee_collector: &AccountInfo<'info>,
+    warchest_collector: &AccountInfo<'info>,
+    burn_collector: &AccountInfo<'info>,
+    arbitration_collector: Option<&AccountInfo<'info>>,
+) -> Result<()> {
+    // Ensure all required collectors are present
+    require!(
+        !chain_fee_collector.key().eq(&Pubkey::default()),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    require!(
+        !warchest_collector.key().eq(&Pubkey::default()),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    require!(
+        !burn_collector.key().eq(&Pubkey::default()),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    // Ensure collectors are not the same (prevents fee concentration)
+    require!(
+        chain_fee_collector.key() != warchest_collector.key(),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    require!(
+        chain_fee_collector.key() != burn_collector.key(),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    require!(
+        warchest_collector.key() != burn_collector.key(),
+        ErrorCode::InvalidFeeCollector
+    );
+
+    // Validate arbitration collector if provided
+    if let Some(arbitration_collector) = arbitration_collector {
+        require!(
+            !arbitration_collector.key().eq(&Pubkey::default()),
+            ErrorCode::InvalidFeeCollector
+        );
+
+        require!(
+            arbitration_collector.key() != chain_fee_collector.key() 
+                && arbitration_collector.key() != warchest_collector.key()
+                && arbitration_collector.key() != burn_collector.key(),
+            ErrorCode::InvalidFeeCollector
+        );
+    }
+
+    Ok(())
+}
+
+/// Comprehensive fee validation for trade operations
+pub fn validate_trade_fee_setup(
+    amount: u64,
+    hub_config: &GlobalConfigAccount,
+    fee_constraints: Option<&FeeConstraints>,
+    min_transaction_amount: u64,
+    min_viable_net_amount: u64,
+) -> Result<(EscrowFeeBreakdown, FeeValidationResult)> {
+    // Calculate fees with validation
+    let (fee_breakdown, validation_result) = calculate_escrow_fees_with_validation(
+        amount,
+        hub_config,
+        fee_constraints,
+    )?;
+
+    // Validate transaction constraints
+    validate_transaction_fee_breakdown(
+        &fee_breakdown,
+        amount,
+        min_transaction_amount,
+    )?;
+
+    // Validate economic viability
+    validate_fee_economic_viability(
+        &fee_breakdown,
+        amount,
+        min_viable_net_amount,
+    )?;
+
+    msg!("Fee validation completed successfully");
+    msg!("Total fees: {} | Net amount: {}", 
+         fee_breakdown.total_fees(), 
+         amount.checked_sub(fee_breakdown.total_fees()).unwrap_or(0));
+
+    Ok((fee_breakdown, validation_result))
 }

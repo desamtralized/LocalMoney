@@ -319,6 +319,13 @@ pub enum ErrorCode {
 
     #[msg("Invalid burn method")]
     InvalidBurnMethod,
+
+    // Fee Validation Errors (1200-1299)
+    #[msg("Fee configuration is invalid")]
+    InvalidFeeConfiguration,
+
+    #[msg("Fee collector account is invalid")]
+    InvalidFeeCollector,
 }
 
 /// Error conversion utilities
@@ -438,6 +445,9 @@ impl ErrorCode {
             | ErrorCode::BurnAccumulatorNotFound
             | ErrorCode::BurnOperationFailed
             | ErrorCode::InvalidBurnMethod => "Burn",
+
+            ErrorCode::InvalidFeeConfiguration
+            | ErrorCode::InvalidFeeCollector => "Fee",
         }
     }
 
