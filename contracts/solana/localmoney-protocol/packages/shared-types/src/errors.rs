@@ -300,6 +300,25 @@ pub enum ErrorCode {
 
     #[msg("Invalid authority provided")]
     InvalidAuthority,
+
+    // Burn Mechanism Errors (1100-1199)
+    #[msg("Burn amount too small")]
+    BurnAmountTooSmall,
+
+    #[msg("Burn amount too large")]
+    BurnAmountTooLarge,
+
+    #[msg("Burn mechanism not configured")]
+    BurnNotConfigured,
+
+    #[msg("Burn accumulator not found")]
+    BurnAccumulatorNotFound,
+
+    #[msg("Burn operation failed")]
+    BurnOperationFailed,
+
+    #[msg("Invalid burn method")]
+    InvalidBurnMethod,
 }
 
 /// Error conversion utilities
@@ -412,6 +431,13 @@ impl ErrorCode {
             | ErrorCode::OperationTimeout
             | ErrorCode::SameAuthority
             | ErrorCode::InvalidAuthority => "System",
+
+            ErrorCode::BurnAmountTooSmall
+            | ErrorCode::BurnAmountTooLarge
+            | ErrorCode::BurnNotConfigured
+            | ErrorCode::BurnAccumulatorNotFound
+            | ErrorCode::BurnOperationFailed
+            | ErrorCode::InvalidBurnMethod => "Burn",
         }
     }
 
