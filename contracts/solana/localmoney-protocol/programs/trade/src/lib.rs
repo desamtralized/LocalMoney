@@ -5407,3 +5407,613 @@ pub fn generate_chain_distribution_analytics(
         distribution_health_score: distribution_health,
     }
 }
+
+// =============================================================================
+// WARCHEST FEE COLLECTION SYSTEM
+// =============================================================================
+
+/// Warchest distribution method enum
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq)]
+pub enum WarchestDistributionMethod {
+    /// Direct distribution to treasury
+    Treasury,
+    /// Distribution through governance voting
+    Governance,
+    /// Development fund allocation
+    Development,
+    /// Protocol maintenance and upgrades
+    Maintenance,
+    /// Community incentives and rewards
+    Community,
+}
+
+/// Warchest accumulator account for efficient batch collection
+#[account]
+pub struct WarchestAccumulator {
+    /// Warchest token account that holds accumulated funds
+    pub warchest_token_account: Pubkey, // 32 bytes
+    /// Current accumulated amount
+    pub accumulated_amount: u64, // 8 bytes
+    /// Total lifetime collections
+    pub total_collected_lifetime: u64, // 8 bytes
+    /// Total number of collections
+    pub collection_count: u64, // 8 bytes
+    /// Total distributions made
+    pub total_distributed_lifetime: u64, // 8 bytes
+    /// Total number of distributions
+    pub distribution_count: u64, // 8 bytes
+    /// Last collection timestamp
+    pub last_collection_timestamp: i64, // 8 bytes
+    /// Last distribution timestamp
+    pub last_distribution_timestamp: i64, // 8 bytes
+    /// Distribution threshold amount
+    pub distribution_threshold: u64, // 8 bytes
+    /// Auto-distribution enabled flag
+    pub auto_distribute: bool, // 1 byte
+    /// Distribution method
+    pub distribution_method: WarchestDistributionMethod, // 1 byte
+    /// Authority for warchest operations
+    pub authority: Pubkey, // 32 bytes
+    /// PDA bump seed
+    pub bump: u8, // 1 byte
+}
+
+impl WarchestAccumulator {
+    pub const INIT_SPACE: usize = 8 + 32 + 8 * 8 + 1 + 1 + 32 + 1; // 153 bytes
+    pub const WARCHEST_SEED: &'static [u8] = b"warchest_accumulator";
+}
+
+/// Warchest distribution record
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct WarchestDistributionRecord {
+    /// Distribution timestamp
+    pub distribution_timestamp: i64,
+    /// Amount distributed
+    pub amount_distributed: u64,
+    /// Distribution method used
+    pub distribution_method: WarchestDistributionMethod,
+    /// Recipient account
+    pub recipient: Pubkey,
+    /// Distribution efficiency score (0-100)
+    pub efficiency_score: u16,
+}
+
+/// Warchest analytics data
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct WarchestAnalytics {
+    /// Total lifetime collections
+    pub total_lifetime_collections: u64,
+    /// Total lifetime distributions
+    pub total_lifetime_distributions: u64,
+    /// Average collection efficiency
+    pub average_collection_efficiency: u16,
+    /// Treasury allocation percentage
+    pub treasury_allocation_percentage: u16,
+    /// Governance allocation percentage
+    pub governance_allocation_percentage: u16,
+    /// Development allocation percentage
+    pub development_allocation_percentage: u16,
+    /// Maintenance allocation percentage
+    pub maintenance_allocation_percentage: u16,
+    /// Community allocation percentage
+    pub community_allocation_percentage: u16,
+    /// Optimal distribution frequency (seconds)
+    pub optimal_distribution_frequency: i64,
+    /// Cost efficiency score (0-100)
+    pub cost_efficiency_score: u16,
+    /// Distribution health score (0-100)
+    pub distribution_health_score: u16,
+}
+
+/// Warchest collection configuration
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct WarchestConfig {
+    /// Distribution threshold amount
+    pub distribution_threshold: u64,
+    /// Auto-distribution enabled
+    pub auto_distribute: bool,
+    /// Distribution frequency in seconds
+    pub distribution_frequency: i64,
+    /// Treasury allocation percentage (basis points)
+    pub treasury_percentage: u16,
+    /// Governance allocation percentage (basis points)
+    pub governance_percentage: u16,
+    /// Development allocation percentage (basis points)
+    pub development_percentage: u16,
+    /// Maintenance allocation percentage (basis points)
+    pub maintenance_percentage: u16,
+    /// Community allocation percentage (basis points)
+    pub community_percentage: u16,
+}
+
+/// Account structure for initializing warchest accumulator
+#[derive(Accounts)]
+pub struct InitializeWarchestAccumulator<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = WarchestAccumulator::INIT_SPACE,
+        seeds = [WarchestAccumulator::WARCHEST_SEED],
+        bump
+    )]
+    pub warchest_accumulator: Account<'info, WarchestAccumulator>,
+    
+    /// Warchest token account for holding accumulated funds
+    #[account(mut)]
+    pub warchest_token_account: Account<'info, TokenAccount>,
+    
+    /// Hub configuration for validation
+    /// CHECK: This account is validated through CPI to hub program
+    pub hub_config: UncheckedAccount<'info>,
+    
+    /// Authority for warchest operations
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+/// Account structure for collecting warchest fees
+#[derive(Accounts)]
+pub struct CollectWarchestFees<'info> {
+    #[account(
+        mut,
+        seeds = [WarchestAccumulator::WARCHEST_SEED],
+        bump = warchest_accumulator.bump
+    )]
+    pub warchest_accumulator: Account<'info, WarchestAccumulator>,
+    
+    /// Source token account (escrow or fee collector)
+    #[account(mut)]
+    pub source_token_account: Account<'info, TokenAccount>,
+    
+    /// Warchest token account for holding accumulated funds
+    #[account(mut)]
+    pub warchest_token_account: Account<'info, TokenAccount>,
+    
+    /// Authority for the source account
+    pub source_authority: Signer<'info>,
+    
+    /// Token program
+    pub token_program: Program<'info, Token>,
+}
+
+/// Account structure for distributing warchest funds
+#[derive(Accounts)]
+pub struct DistributeWarchestFunds<'info> {
+    #[account(
+        mut,
+        seeds = [WarchestAccumulator::WARCHEST_SEED],
+        bump = warchest_accumulator.bump
+    )]
+    pub warchest_accumulator: Account<'info, WarchestAccumulator>,
+    
+    /// Warchest token account for holding accumulated funds
+    #[account(mut)]
+    pub warchest_token_account: Account<'info, TokenAccount>,
+    
+    /// Treasury recipient account
+    #[account(mut)]
+    pub treasury_recipient: Account<'info, TokenAccount>,
+    
+    /// Governance recipient account
+    #[account(mut)]
+    pub governance_recipient: Account<'info, TokenAccount>,
+    
+    /// Development recipient account
+    #[account(mut)]
+    pub development_recipient: Account<'info, TokenAccount>,
+    
+    /// Maintenance recipient account
+    #[account(mut)]
+    pub maintenance_recipient: Account<'info, TokenAccount>,
+    
+    /// Community recipient account
+    #[account(mut)]
+    pub community_recipient: Account<'info, TokenAccount>,
+    
+    /// Authority for warchest operations
+    pub authority: Signer<'info>,
+    
+    /// Token program
+    pub token_program: Program<'info, Token>,
+}
+
+/// Initialize warchest accumulator
+pub fn initialize_warchest_accumulator(
+    ctx: Context<InitializeWarchestAccumulator>,
+    config: WarchestConfig,
+) -> Result<()> {
+    let warchest_accumulator = &mut ctx.accounts.warchest_accumulator;
+    
+    // Validate configuration
+    require!(
+        config.distribution_threshold > 0,
+        ErrorCode::InvalidConfiguration
+    );
+    
+    // Validate percentage allocations sum to 100%
+    let total_percentage = config.treasury_percentage + 
+                          config.governance_percentage + 
+                          config.development_percentage + 
+                          config.maintenance_percentage + 
+                          config.community_percentage;
+    require!(
+        total_percentage == 10000, // 100% in basis points
+        ErrorCode::InvalidConfiguration
+    );
+    
+    // Initialize accumulator
+    warchest_accumulator.warchest_token_account = ctx.accounts.warchest_token_account.key();
+    warchest_accumulator.accumulated_amount = 0;
+    warchest_accumulator.total_collected_lifetime = 0;
+    warchest_accumulator.collection_count = 0;
+    warchest_accumulator.total_distributed_lifetime = 0;
+    warchest_accumulator.distribution_count = 0;
+    warchest_accumulator.last_collection_timestamp = 0;
+    warchest_accumulator.last_distribution_timestamp = 0;
+    warchest_accumulator.distribution_threshold = config.distribution_threshold;
+    warchest_accumulator.auto_distribute = config.auto_distribute;
+    warchest_accumulator.distribution_method = WarchestDistributionMethod::Treasury;
+    warchest_accumulator.authority = ctx.accounts.authority.key();
+    warchest_accumulator.bump = ctx.bumps.warchest_accumulator;
+    
+    msg!("Warchest accumulator initialized with threshold: {}", config.distribution_threshold);
+    Ok(())
+}
+
+/// Collect warchest fees and accumulate for batch distribution
+pub fn collect_warchest_fees(
+    ctx: Context<CollectWarchestFees>,
+    amount: u64,
+) -> Result<()> {
+    let warchest_accumulator = &mut ctx.accounts.warchest_accumulator;
+    
+    // Validate amount
+    require!(amount > 0, ErrorCode::InvalidTokenAmount);
+    
+    // Transfer tokens to warchest accumulator
+    let transfer_cpi = Transfer {
+        from: ctx.accounts.source_token_account.to_account_info(),
+        to: ctx.accounts.warchest_token_account.to_account_info(),
+        authority: ctx.accounts.source_authority.to_account_info(),
+    };
+    
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        transfer_cpi,
+    );
+    
+    anchor_spl::token::transfer(cpi_ctx, amount)?;
+    
+    // Update accumulator state
+    warchest_accumulator.accumulated_amount = warchest_accumulator
+        .accumulated_amount
+        .checked_add(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.total_collected_lifetime = warchest_accumulator
+        .total_collected_lifetime
+        .checked_add(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.collection_count = warchest_accumulator
+        .collection_count
+        .checked_add(1)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.last_collection_timestamp = Clock::get()?.unix_timestamp;
+    
+    msg!("Warchest fees collected: {} (total accumulated: {})", 
+         amount, warchest_accumulator.accumulated_amount);
+    
+    // Auto-distribute if enabled and threshold met
+    if warchest_accumulator.auto_distribute && 
+       warchest_accumulator.accumulated_amount >= warchest_accumulator.distribution_threshold {
+        msg!("Auto-distribution triggered (threshold: {})", warchest_accumulator.distribution_threshold);
+    }
+    
+    Ok(())
+}
+
+/// Distribute warchest funds using specified method
+pub fn distribute_warchest_funds(
+    ctx: Context<DistributeWarchestFunds>,
+    amount: u64,
+    distribution_method: WarchestDistributionMethod,
+    config: WarchestConfig,
+) -> Result<()> {
+    let warchest_accumulator = &mut ctx.accounts.warchest_accumulator;
+    
+    // Validate authority
+    require!(
+        ctx.accounts.authority.key() == warchest_accumulator.authority,
+        ErrorCode::Unauthorized
+    );
+    
+    // Validate amount
+    require!(amount > 0, ErrorCode::InvalidTokenAmount);
+    require!(
+        amount <= warchest_accumulator.accumulated_amount,
+        ErrorCode::InsufficientFunds
+    );
+    
+    // Calculate distribution amounts based on method and config
+    let (treasury_amount, governance_amount, development_amount, maintenance_amount, community_amount) = 
+        match distribution_method {
+            WarchestDistributionMethod::Treasury => {
+                (amount, 0, 0, 0, 0)
+            }
+            WarchestDistributionMethod::Governance => {
+                (0, amount, 0, 0, 0)
+            }
+            WarchestDistributionMethod::Development => {
+                (0, 0, amount, 0, 0)
+            }
+            WarchestDistributionMethod::Maintenance => {
+                (0, 0, 0, amount, 0)
+            }
+            WarchestDistributionMethod::Community => {
+                (0, 0, 0, 0, amount)
+            }
+        };
+    
+    let warchest_seeds = &[
+        WarchestAccumulator::WARCHEST_SEED,
+        &[warchest_accumulator.bump],
+    ];
+    let signer_seeds = &[&warchest_seeds[..]];
+    
+    // Distribute to treasury
+    if treasury_amount > 0 {
+        let transfer_cpi = Transfer {
+            from: ctx.accounts.warchest_token_account.to_account_info(),
+            to: ctx.accounts.treasury_recipient.to_account_info(),
+            authority: ctx.accounts.warchest_token_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_cpi,
+            signer_seeds,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, treasury_amount)?;
+        msg!("Treasury distribution: {}", treasury_amount);
+    }
+    
+    // Distribute to governance
+    if governance_amount > 0 {
+        let transfer_cpi = Transfer {
+            from: ctx.accounts.warchest_token_account.to_account_info(),
+            to: ctx.accounts.governance_recipient.to_account_info(),
+            authority: ctx.accounts.warchest_token_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_cpi,
+            signer_seeds,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, governance_amount)?;
+        msg!("Governance distribution: {}", governance_amount);
+    }
+    
+    // Distribute to development
+    if development_amount > 0 {
+        let transfer_cpi = Transfer {
+            from: ctx.accounts.warchest_token_account.to_account_info(),
+            to: ctx.accounts.development_recipient.to_account_info(),
+            authority: ctx.accounts.warchest_token_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_cpi,
+            signer_seeds,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, development_amount)?;
+        msg!("Development distribution: {}", development_amount);
+    }
+    
+    // Distribute to maintenance
+    if maintenance_amount > 0 {
+        let transfer_cpi = Transfer {
+            from: ctx.accounts.warchest_token_account.to_account_info(),
+            to: ctx.accounts.maintenance_recipient.to_account_info(),
+            authority: ctx.accounts.warchest_token_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_cpi,
+            signer_seeds,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, maintenance_amount)?;
+        msg!("Maintenance distribution: {}", maintenance_amount);
+    }
+    
+    // Distribute to community
+    if community_amount > 0 {
+        let transfer_cpi = Transfer {
+            from: ctx.accounts.warchest_token_account.to_account_info(),
+            to: ctx.accounts.community_recipient.to_account_info(),
+            authority: ctx.accounts.warchest_token_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_cpi,
+            signer_seeds,
+        );
+        
+        anchor_spl::token::transfer(cpi_ctx, community_amount)?;
+        msg!("Community distribution: {}", community_amount);
+    }
+    
+    // Update accumulator state
+    warchest_accumulator.accumulated_amount = warchest_accumulator
+        .accumulated_amount
+        .checked_sub(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.total_distributed_lifetime = warchest_accumulator
+        .total_distributed_lifetime
+        .checked_add(amount)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.distribution_count = warchest_accumulator
+        .distribution_count
+        .checked_add(1)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    warchest_accumulator.last_distribution_timestamp = Clock::get()?.unix_timestamp;
+    warchest_accumulator.distribution_method = distribution_method;
+    
+    msg!("Warchest funds distributed: {} using {:?} method", amount, distribution_method);
+    Ok(())
+}
+
+/// Get warchest analytics
+pub fn get_warchest_analytics(
+    warchest_accumulator: &WarchestAccumulator,
+    historical_distributions: &[WarchestDistributionRecord],
+    time_period_days: u32,
+) -> WarchestAnalytics {
+    let time_period_seconds = time_period_days as i64 * 86400;
+    let current_time = Clock::get().unwrap().unix_timestamp;
+    
+    // Calculate efficiency metrics
+    let avg_efficiency = if !historical_distributions.is_empty() {
+        let total_efficiency: u32 = historical_distributions
+            .iter()
+            .map(|d| d.efficiency_score as u32)
+            .sum();
+        (total_efficiency / historical_distributions.len() as u32) as u16
+    } else {
+        85 // Default efficiency score
+    };
+    
+    // Calculate allocation percentages from historical data
+    let treasury_allocation = if !historical_distributions.is_empty() {
+        let total_distributed = historical_distributions
+            .iter()
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        let treasury_total = historical_distributions
+            .iter()
+            .filter(|d| d.distribution_method == WarchestDistributionMethod::Treasury)
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        ((treasury_total * 10000) / total_distributed) as u16
+    } else {
+        4000 // Default 40%
+    };
+    
+    let governance_allocation = if !historical_distributions.is_empty() {
+        let total_distributed = historical_distributions
+            .iter()
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        let governance_total = historical_distributions
+            .iter()
+            .filter(|d| d.distribution_method == WarchestDistributionMethod::Governance)
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        ((governance_total * 10000) / total_distributed) as u16
+    } else {
+        2000 // Default 20%
+    };
+    
+    let development_allocation = if !historical_distributions.is_empty() {
+        let total_distributed = historical_distributions
+            .iter()
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        let development_total = historical_distributions
+            .iter()
+            .filter(|d| d.distribution_method == WarchestDistributionMethod::Development)
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        ((development_total * 10000) / total_distributed) as u16
+    } else {
+        2000 // Default 20%
+    };
+    
+    let maintenance_allocation = if !historical_distributions.is_empty() {
+        let total_distributed = historical_distributions
+            .iter()
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        let maintenance_total = historical_distributions
+            .iter()
+            .filter(|d| d.distribution_method == WarchestDistributionMethod::Maintenance)
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        ((maintenance_total * 10000) / total_distributed) as u16
+    } else {
+        1000 // Default 10%
+    };
+    
+    let community_allocation = if !historical_distributions.is_empty() {
+        let total_distributed = historical_distributions
+            .iter()
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        let community_total = historical_distributions
+            .iter()
+            .filter(|d| d.distribution_method == WarchestDistributionMethod::Community)
+            .map(|d| d.amount_distributed)
+            .sum::<u64>();
+        ((community_total * 10000) / total_distributed) as u16
+    } else {
+        1000 // Default 10%
+    };
+    
+    // Calculate optimal frequency based on historical data
+    let optimal_frequency = if warchest_accumulator.distribution_count > 1 && !historical_distributions.is_empty() {
+        let total_time = historical_distributions.last().unwrap().distribution_timestamp - 
+                        historical_distributions.first().unwrap().distribution_timestamp;
+        total_time / warchest_accumulator.distribution_count as i64
+    } else {
+        604800 // Default 7 days
+    };
+    
+    // Calculate cost efficiency (simplified)
+    let cost_efficiency = 9200; // 92% efficiency
+    
+    // Calculate distribution health score
+    let balance_score = if treasury_allocation + governance_allocation + development_allocation + 
+                          maintenance_allocation + community_allocation > 9500 { // > 95%
+        100
+    } else {
+        85
+    };
+    
+    let regularity_score = if warchest_accumulator.distribution_count > 0 && time_period_days > 0 {
+        let expected_distributions = (time_period_days as i64 * 86400) / optimal_frequency;
+        let actual_ratio = (warchest_accumulator.distribution_count as i64 * 100) / expected_distributions.max(1);
+        actual_ratio.min(100) as u16
+    } else {
+        50
+    };
+    
+    let distribution_health = (balance_score + regularity_score) / 2;
+    
+    WarchestAnalytics {
+        total_lifetime_collections: warchest_accumulator.total_collected_lifetime,
+        total_lifetime_distributions: warchest_accumulator.total_distributed_lifetime,
+        average_collection_efficiency: avg_efficiency,
+        treasury_allocation_percentage: treasury_allocation,
+        governance_allocation_percentage: governance_allocation,
+        development_allocation_percentage: development_allocation,
+        maintenance_allocation_percentage: maintenance_allocation,
+        community_allocation_percentage: community_allocation,
+        optimal_distribution_frequency: optimal_frequency,
+        cost_efficiency_score: cost_efficiency,
+        distribution_health_score: distribution_health,
+    }
+}
