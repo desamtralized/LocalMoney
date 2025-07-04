@@ -124,6 +124,12 @@ pub enum ErrorCode {
     #[msg("Trade amount above maximum limit")]
     AboveMaximumAmount,
 
+    #[msg("Trade cannot be expired in current state")]
+    TradeCannotExpire,
+
+    #[msg("Trade has not expired yet")]
+    TradeNotExpired,
+
     // Escrow Errors (500-599)
     #[msg("Insufficient escrow balance")]
     InsufficientEscrow,
@@ -336,7 +342,9 @@ impl ErrorCode {
             | ErrorCode::PrematureDisputeRequest
             | ErrorCode::DisputeNotAllowed
             | ErrorCode::BelowMinimumAmount
-            | ErrorCode::AboveMaximumAmount => "Trade",
+            | ErrorCode::AboveMaximumAmount
+            | ErrorCode::TradeCannotExpire
+            | ErrorCode::TradeNotExpired => "Trade",
 
             ErrorCode::InsufficientEscrow
             | ErrorCode::EscrowFundingMismatch

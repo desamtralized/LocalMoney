@@ -311,28 +311,46 @@ pub mod trade {
         Ok(())
     }
 
-    /// Cancel a trade request
-    pub fn cancel_trade(ctx: Context<CancelTrade>, trade_id: u64) -> Result<()> {
+    /// Cancel a trade request with enhanced validation and reason tracking
+    pub fn cancel_trade(
+        ctx: Context<CancelTrade>, 
+        trade_id: u64,
+        cancellation_reason: Option<String>,
+    ) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
         let clock = Clock::get()?;
 
-        // Validate current state - can only cancel in RequestCreated or RequestAccepted
+        // Validate trade can be canceled
         require!(
-            trade.state == TradeState::RequestCreated || trade.state == TradeState::RequestAccepted,
+            trade.can_cancel(),
             ErrorCode::InvalidTradeState
         );
+
+        // Check if trade has already expired (different state transition)
+        if trade.is_expired(clock.unix_timestamp) && trade.can_expire(clock.unix_timestamp) {
+            return Err(ErrorCode::TradeExpired.into());
+        }
 
         // Validate state transition before proceeding
         validate_trade_state_transition(&trade.state, &TradeState::RequestCanceled)?;
 
-        // Only taker can cancel in RequestCreated, either party can cancel in RequestAccepted
+        // Validate cancellation reason length if provided
+        if let Some(ref reason) = cancellation_reason {
+            require!(
+                reason.len() <= 500,
+                ErrorCode::ContactInfoTooLong
+            );
+        }
+
+        // Authority validation - who can cancel based on state
         let signer = ctx.accounts.signer.key();
         match trade.state {
             TradeState::RequestCreated => {
+                // Only the taker (buyer) can cancel their own request
                 require!(signer == trade.buyer, ErrorCode::InvalidTradeSender);
             }
             TradeState::RequestAccepted => {
-                // Check that seller is properly initialized before validating against it
+                // Either party can cancel after acceptance but before funding
                 require!(
                     trade.seller != Pubkey::default(),
                     ErrorCode::InvalidTradeState
@@ -345,6 +363,12 @@ pub mod trade {
             _ => return Err(ErrorCode::InvalidTradeState.into()),
         }
 
+        // Store cancellation reason if provided
+        if let Some(reason) = cancellation_reason {
+            // Reuse dispute_reason field for cancellation reason (both are optional strings)
+            trade.dispute_reason = Some(format!("CANCELLATION: {}", reason));
+        }
+
         // Update state to canceled
         let canceled_state = TradeStateItem {
             actor: signer,
@@ -354,7 +378,12 @@ pub mod trade {
 
         trade.add_state_history(canceled_state)?;
 
-        msg!("Trade canceled: ID {}", trade_id);
+        msg!(
+            "Trade canceled: ID {}, by: {}, reason: {:?}",
+            trade_id,
+            signer,
+            trade.dispute_reason
+        );
 
         Ok(())
     }
@@ -933,6 +962,51 @@ pub mod trade {
 
         Ok(())
     }
+
+    /// Expire a trade that has passed its expiration time
+    pub fn expire_trade(ctx: Context<ExpireTrade>, trade_id: u64) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+
+        // Validate trade can be expired
+        require!(
+            trade.can_expire(clock.unix_timestamp),
+            ErrorCode::TradeCannotExpire
+        );
+
+        // Validate current state allows expiration
+        require!(
+            matches!(
+                trade.state,
+                TradeState::RequestCreated | TradeState::RequestAccepted | TradeState::EscrowFunded
+            ),
+            ErrorCode::InvalidTradeState
+        );
+
+        // Validate trade has actually expired
+        require!(
+            trade.is_expired(clock.unix_timestamp),
+            ErrorCode::TradeNotExpired
+        );
+
+        // Update trade state to expired
+        let expired_state = TradeStateItem {
+            actor: ctx.accounts.signer.key(),
+            state: TradeState::RequestExpired,
+            timestamp: clock.unix_timestamp,
+        };
+
+        trade.add_state_history(expired_state)?;
+
+        msg!(
+            "Trade expired: ID {}, expired at {}, triggered by: {}",
+            trade_id,
+            clock.unix_timestamp,
+            ctx.accounts.signer.key()
+        );
+
+        Ok(())
+    }
 }
 
 // Account Structures
@@ -992,6 +1066,51 @@ impl Trade {
         self.expires_at > 0 && current_timestamp > self.expires_at
     }
 
+    /// Get time remaining until expiration (returns 0 if expired or no expiration)
+    pub fn time_until_expiration(&self, current_timestamp: i64) -> i64 {
+        if self.expires_at <= 0 {
+            return 0; // No expiration set
+        }
+        if current_timestamp >= self.expires_at {
+            return 0; // Already expired
+        }
+        self.expires_at - current_timestamp
+    }
+
+    /// Check if trade is expiring soon (within threshold seconds)
+    pub fn is_expiring_soon(&self, current_timestamp: i64, threshold_seconds: i64) -> bool {
+        if self.expires_at <= 0 {
+            return false; // No expiration set
+        }
+        let time_remaining = self.time_until_expiration(current_timestamp);
+        time_remaining > 0 && time_remaining <= threshold_seconds
+    }
+
+    /// Check if trade can be expired (is past expiration and in valid state for expiration)
+    pub fn can_expire(&self, current_timestamp: i64) -> bool {
+        if !self.is_expired(current_timestamp) {
+            return false;
+        }
+        
+        // Can only expire trades in certain states
+        matches!(
+            self.state,
+            TradeState::RequestCreated | TradeState::RequestAccepted | TradeState::EscrowFunded
+        )
+    }
+
+    /// Get expiration status information
+    pub fn get_expiration_status(&self, current_timestamp: i64) -> ExpirationStatus {
+        ExpirationStatus {
+            has_expiration: self.expires_at > 0,
+            expires_at: self.expires_at,
+            is_expired: self.is_expired(current_timestamp),
+            time_remaining: self.time_until_expiration(current_timestamp),
+            can_expire: self.can_expire(current_timestamp),
+            is_expiring_soon: self.is_expiring_soon(current_timestamp, 3600), // 1 hour threshold
+        }
+    }
+
     /// Check if trade can be canceled
     pub fn can_cancel(&self) -> bool {
         matches!(
@@ -1028,18 +1147,106 @@ impl Trade {
         &self.state
     }
 
-    /// Add a new state to history (max 20 entries)
+    /// Add a new state to history with enhanced validation and state management
     pub fn add_state_history(&mut self, state_item: TradeStateItem) -> Result<()> {
+        // Validate state transition before adding to history
+        validate_trade_state_transition(&self.state, &state_item.state)?;
+
         // Check if state_history exceeds 20 entries
         require!(
             self.state_history.len() < 20,
             ErrorCode::ValueOutOfRange
         );
 
-        // Since TradeState now implements Copy, we can avoid clone()
+        // Validate timestamp is not in the future (allow some tolerance for clock skew)
+        let clock = Clock::get()?;
+        require!(
+            state_item.timestamp <= clock.unix_timestamp + 30, // 30 second tolerance
+            ErrorCode::InvalidTimer
+        );
+
+        // Validate timestamp is after the previous state (if exists)
+        if let Some(last_state) = self.state_history.last() {
+            require!(
+                state_item.timestamp >= last_state.timestamp,
+                ErrorCode::InvalidTimer
+            );
+        }
+
+        // Update current state and add to history
         self.state = state_item.state;
+        
+        msg!(
+            "Trade {} state updated: {} by {} at {}",
+            self.id,
+            state_item.state,
+            state_item.actor,
+            state_item.timestamp
+        );
+
         self.state_history.push(state_item);
+
         Ok(())
+    }
+
+    /// Get complete state history for analysis
+    pub fn get_state_history(&self) -> &Vec<TradeStateItem> {
+        &self.state_history
+    }
+
+    /// Get the last N state history entries
+    pub fn get_recent_state_history(&self, count: usize) -> Vec<TradeStateItem> {
+        let start_index = if self.state_history.len() > count {
+            self.state_history.len() - count
+        } else {
+            0
+        };
+        self.state_history[start_index..].to_vec()
+    }
+
+    /// Get state history by actor (who performed state changes)
+    pub fn get_state_history_by_actor(&self, actor: &Pubkey) -> Vec<TradeStateItem> {
+        self.state_history
+            .iter()
+            .filter(|item| item.actor == *actor)
+            .cloned()
+            .collect()
+    }
+
+    /// Get time spent in each state
+    pub fn get_state_durations(&self, current_timestamp: i64) -> Vec<StateDuration> {
+        let mut durations = Vec::new();
+        
+        for i in 0..self.state_history.len() {
+            let current_state = &self.state_history[i];
+            let end_time = if i + 1 < self.state_history.len() {
+                self.state_history[i + 1].timestamp
+            } else {
+                current_timestamp
+            };
+            
+            durations.push(StateDuration {
+                state: current_state.state,
+                start_time: current_state.timestamp,
+                end_time,
+                duration_seconds: end_time - current_state.timestamp,
+            });
+        }
+        
+        durations
+    }
+
+    /// Check if trade has been in a specific state
+    pub fn has_been_in_state(&self, target_state: TradeState) -> bool {
+        self.state_history.iter().any(|item| item.state == target_state)
+    }
+
+    /// Get the actor who performed a specific state transition
+    pub fn get_state_actor(&self, target_state: TradeState) -> Option<Pubkey> {
+        self.state_history
+            .iter()
+            .find(|item| item.state == target_state)
+            .map(|item| item.actor)
     }
 
     /// Get trade summary for queries
@@ -1055,6 +1262,8 @@ impl Trade {
             created_at: self.created_at,
             expires_at: self.expires_at,
             is_disputed: matches!(self.state, TradeState::EscrowDisputed),
+            state_changes_count: self.state_history.len() as u8,
+            last_state_change: self.state_history.last().map(|item| item.timestamp).unwrap_or(self.created_at),
         }
     }
 }
@@ -1246,7 +1455,7 @@ pub struct AcceptTrade<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(trade_id: u64)]
+#[instruction(trade_id: u64, cancellation_reason: Option<String>)]
 pub struct CancelTrade<'info> {
     #[account(
         mut,
@@ -1493,6 +1702,21 @@ pub struct UpdateTradeContact<'info> {
     pub signer: Signer<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct ExpireTrade<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    /// Anyone can expire a trade that has passed its expiration time
+    pub signer: Signer<'info>,
+}
+
 // Helper functions for validation
 
 /// Verify that the calling authority is the authorized hub admin via full CPI
@@ -1690,37 +1914,64 @@ fn get_full_config_cpi_call<'info>(cpi_ctx: CpiContext<'_, '_, '_, 'info, GetFul
     Ok(config_snapshot)
 }
 
-/// Validate trade state transition
+/// Enhanced trade state transition validation with detailed logging and error context
 pub fn validate_trade_state_transition(
     current: &TradeState,
     new: &TradeState,
 ) -> Result<()> {
+    // Check for same state transition (no-op)
+    if current == new {
+        msg!("Trade state transition: {} -> {} (no change)", current, new);
+        return Ok(());
+    }
+
     let valid = match (current, new) {
-        // From RequestCreated
+        // From RequestCreated - Initial state
         (TradeState::RequestCreated, TradeState::RequestAccepted) => true,
         (TradeState::RequestCreated, TradeState::RequestCanceled) => true,
         (TradeState::RequestCreated, TradeState::RequestExpired) => true,
 
-        // From RequestAccepted
+        // From RequestAccepted - Maker accepted the trade
         (TradeState::RequestAccepted, TradeState::EscrowFunded) => true,
         (TradeState::RequestAccepted, TradeState::EscrowCanceled) => true,
+        (TradeState::RequestAccepted, TradeState::RequestCanceled) => true, // Either party can still cancel
 
-        // From EscrowFunded
+        // From EscrowFunded - Seller has deposited tokens
         (TradeState::EscrowFunded, TradeState::FiatDeposited) => true,
         (TradeState::EscrowFunded, TradeState::EscrowRefunded) => true,
         (TradeState::EscrowFunded, TradeState::EscrowDisputed) => true,
+        (TradeState::EscrowFunded, TradeState::EscrowCanceled) => true, // Timeout cancellation
 
-        // From FiatDeposited
+        // From FiatDeposited - Buyer confirmed fiat payment
         (TradeState::FiatDeposited, TradeState::EscrowReleased) => true,
         (TradeState::FiatDeposited, TradeState::EscrowDisputed) => true,
 
-        // From EscrowDisputed
+        // From EscrowDisputed - Either party disputed the trade
         (TradeState::EscrowDisputed, TradeState::SettledForMaker) => true,
         (TradeState::EscrowDisputed, TradeState::SettledForTaker) => true,
+        (TradeState::EscrowDisputed, TradeState::EscrowReleased) => true, // Dispute resolved
+        (TradeState::EscrowDisputed, TradeState::EscrowRefunded) => true, // Dispute resolved with refund
+
+        // From EscrowCanceled - Trade was canceled after acceptance
+        (TradeState::EscrowCanceled, TradeState::EscrowRefunded) => true, // Refund any deposited funds
+
+        // Terminal states - no further transitions allowed
+        (TradeState::RequestCanceled, _) => false,
+        (TradeState::RequestExpired, _) => false,
+        (TradeState::EscrowReleased, _) => false,
+        (TradeState::EscrowRefunded, _) => false,
+        (TradeState::SettledForMaker, _) => false,
+        (TradeState::SettledForTaker, _) => false,
 
         // All other transitions are invalid
         _ => false,
     };
+
+    if valid {
+        msg!("Valid trade state transition: {} -> {}", current, new);
+    } else {
+        msg!("Invalid trade state transition attempted: {} -> {}", current, new);
+    }
 
     require!(valid, ErrorCode::InvalidTradeStateChange);
     Ok(())
@@ -1766,6 +2017,45 @@ pub struct TradeSummary {
     pub created_at: i64,
     pub expires_at: i64,
     pub is_disputed: bool,
+    pub state_changes_count: u8,
+    pub last_state_change: i64,
+}
+
+/// State duration tracking structure
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct StateDuration {
+    pub state: TradeState,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub duration_seconds: i64,
+}
+
+/// Expiration status structure
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ExpirationStatus {
+    pub has_expiration: bool,
+    pub expires_at: i64,
+    pub is_expired: bool,
+    pub time_remaining: i64,
+    pub can_expire: bool,
+    pub is_expiring_soon: bool,
+}
+
+/// Comprehensive trade validation result
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeValidationResult {
+    pub is_valid: bool,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+    pub recommendations: Vec<String>,
+}
+
+/// Business rule validation result
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct BusinessRuleValidationResult {
+    pub is_compliant: bool,
+    pub violations: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 /// Calculate trade fees based on hub configuration
@@ -2216,6 +2506,261 @@ pub fn get_escrow_status(escrow: &Escrow, current_timestamp: i64) -> EscrowStatu
         time_until_auto_release,
         funded_at: escrow.funded_at,
     }
+}
+
+/// Comprehensive trade validation with detailed error reporting
+pub fn validate_trade_comprehensive(
+    trade: &Trade,
+    current_timestamp: i64,
+    hub_config: Option<&GlobalConfigAccount>,
+) -> Result<TradeValidationResult> {
+    let mut validation_result = TradeValidationResult {
+        is_valid: true,
+        warnings: Vec::new(),
+        errors: Vec::new(),
+        recommendations: Vec::new(),
+    };
+
+    // 1. Basic trade data validation
+    if trade.id == 0 {
+        validation_result.errors.push("Trade ID cannot be zero".to_string());
+        validation_result.is_valid = false;
+    }
+
+    if trade.amount == 0 {
+        validation_result.errors.push("Trade amount cannot be zero".to_string());
+        validation_result.is_valid = false;
+    }
+
+    if trade.buyer == Pubkey::default() {
+        validation_result.errors.push("Buyer cannot be default pubkey".to_string());
+        validation_result.is_valid = false;
+    }
+
+    if trade.seller == Pubkey::default() && !matches!(trade.state, TradeState::RequestCreated) {
+        validation_result.errors.push("Seller must be set after request acceptance".to_string());
+        validation_result.is_valid = false;
+    }
+
+    // 2. State consistency validation
+    if trade.state_history.is_empty() {
+        validation_result.errors.push("Trade must have at least one state history entry".to_string());
+        validation_result.is_valid = false;
+    } else {
+        let last_state = &trade.state_history.last().unwrap().state;
+        if *last_state != trade.state {
+            validation_result.errors.push("Current state does not match last state history entry".to_string());
+            validation_result.is_valid = false;
+        }
+    }
+
+    // 3. Timestamp validation
+    if trade.created_at <= 0 {
+        validation_result.errors.push("Created timestamp must be positive".to_string());
+        validation_result.is_valid = false;
+    }
+
+    if trade.created_at > current_timestamp {
+        validation_result.errors.push("Created timestamp cannot be in the future".to_string());
+        validation_result.is_valid = false;
+    }
+
+    // 4. Expiration validation
+    if trade.expires_at > 0 {
+        if trade.expires_at <= trade.created_at {
+            validation_result.errors.push("Expiration time must be after creation time".to_string());
+            validation_result.is_valid = false;
+        }
+
+        if trade.is_expired(current_timestamp) && trade.can_expire(current_timestamp) {
+            validation_result.warnings.push("Trade has expired and should be expired".to_string());
+        }
+
+        if trade.is_expiring_soon(current_timestamp, 3600) {
+            validation_result.warnings.push("Trade is expiring within 1 hour".to_string());
+        }
+    }
+
+    // 5. State history validation
+    for (i, state_item) in trade.state_history.iter().enumerate() {
+        if state_item.timestamp <= 0 {
+            validation_result.errors.push(format!("State history entry {} has invalid timestamp", i));
+            validation_result.is_valid = false;
+        }
+
+        if i > 0 && state_item.timestamp < trade.state_history[i - 1].timestamp {
+            validation_result.errors.push(format!("State history timestamps not in order at index {}", i));
+            validation_result.is_valid = false;
+        }
+
+        if state_item.actor == Pubkey::default() {
+            validation_result.errors.push(format!("State history entry {} has default actor", i));
+            validation_result.is_valid = false;
+        }
+    }
+
+    // 6. Hub configuration validation (if provided)
+    if let Some(config) = hub_config {
+        if trade.amount < config.trade_limit_min {
+            validation_result.errors.push("Trade amount below minimum limit".to_string());
+            validation_result.is_valid = false;
+        }
+
+        if trade.amount > config.trade_limit_max {
+            validation_result.errors.push("Trade amount above maximum limit".to_string());
+            validation_result.is_valid = false;
+        }
+
+        // Check expiration timer consistency
+        if trade.expires_at > 0 {
+            let expected_expiration = trade.created_at + config.trade_expiration_timer as i64;
+            if (trade.expires_at - expected_expiration).abs() > 60 { // Allow 1 minute tolerance
+                validation_result.warnings.push("Trade expiration time differs from hub configuration".to_string());
+            }
+        }
+    }
+
+    // 7. State-specific validation
+    match trade.state {
+        TradeState::RequestCreated => {
+            if trade.seller != Pubkey::default() {
+                validation_result.warnings.push("Seller should not be set in RequestCreated state".to_string());
+            }
+        }
+        TradeState::RequestAccepted => {
+            if trade.seller == Pubkey::default() {
+                validation_result.errors.push("Seller must be set in RequestAccepted state".to_string());
+                validation_result.is_valid = false;
+            }
+        }
+        TradeState::EscrowFunded => {
+            if trade.seller == Pubkey::default() {
+                validation_result.errors.push("Seller must be set in EscrowFunded state".to_string());
+                validation_result.is_valid = false;
+            }
+        }
+        TradeState::FiatDeposited => {
+            if !trade.has_been_in_state(TradeState::EscrowFunded) {
+                validation_result.errors.push("Trade must have been in EscrowFunded state before FiatDeposited".to_string());
+                validation_result.is_valid = false;
+            }
+        }
+        TradeState::EscrowReleased => {
+            if !trade.has_been_in_state(TradeState::FiatDeposited) {
+                validation_result.errors.push("Trade must have been in FiatDeposited state before EscrowReleased".to_string());
+                validation_result.is_valid = false;
+            }
+        }
+        _ => {} // Other states don't need special validation
+    }
+
+    // 8. Contact information validation
+    if trade.taker_contact.is_empty() {
+        validation_result.warnings.push("Taker contact information is empty".to_string());
+    }
+
+    if trade.taker_contact.len() > 500 {
+        validation_result.errors.push("Taker contact information too long".to_string());
+        validation_result.is_valid = false;
+    }
+
+    // 9. Generate recommendations
+    if matches!(trade.state, TradeState::RequestCreated) && trade.is_expiring_soon(current_timestamp, 86400) {
+        validation_result.recommendations.push("Consider accepting this trade request soon as it expires within 24 hours".to_string());
+    }
+
+    if matches!(trade.state, TradeState::EscrowFunded) && trade.created_at + 86400 < current_timestamp {
+        validation_result.recommendations.push("Trade has been in EscrowFunded state for over 24 hours - consider checking with buyer about fiat payment".to_string());
+    }
+
+    if trade.state_history.len() > 15 {
+        validation_result.warnings.push("Trade has many state changes - approaching history limit".to_string());
+    }
+
+    Ok(validation_result)
+}
+
+/// Validate trade against business rules and protocol constraints
+pub fn validate_trade_business_rules(
+    trade: &Trade,
+    offer: Option<&OfferAccount>,
+    current_timestamp: i64,
+) -> Result<BusinessRuleValidationResult> {
+    let mut result = BusinessRuleValidationResult {
+        is_compliant: true,
+        violations: Vec::new(),
+        warnings: Vec::new(),
+    };
+
+    // 1. Validate against offer constraints (if offer provided)
+    if let Some(offer_account) = offer {
+        if trade.amount < offer_account.min_amount {
+            result.violations.push(format!(
+                "Trade amount {} below offer minimum {}",
+                trade.amount, offer_account.min_amount
+            ));
+            result.is_compliant = false;
+        }
+
+        if trade.amount > offer_account.max_amount {
+            result.violations.push(format!(
+                "Trade amount {} exceeds offer maximum {}",
+                trade.amount, offer_account.max_amount
+            ));
+            result.is_compliant = false;
+        }
+
+        if offer_account.state != OfferState::Active {
+            result.violations.push("Cannot create trade against inactive offer".to_string());
+            result.is_compliant = false;
+        }
+
+        if offer_account.token_mint != trade.token_mint {
+            result.violations.push("Trade token mint does not match offer token mint".to_string());
+            result.is_compliant = false;
+        }
+
+        if offer_account.fiat_currency != trade.fiat_currency {
+            result.violations.push("Trade fiat currency does not match offer fiat currency".to_string());
+            result.is_compliant = false;
+        }
+    }
+
+    // 2. Time-based business rules
+    let trade_age = current_timestamp - trade.created_at;
+    
+    if trade_age > 7 * 24 * 3600 { // 7 days
+        result.warnings.push("Trade is older than 7 days".to_string());
+    }
+
+    if matches!(trade.state, TradeState::EscrowFunded) && trade_age > 2 * 24 * 3600 { // 2 days
+        result.warnings.push("Trade has been in escrow for more than 2 days".to_string());
+    }
+
+    // 3. Participant validation
+    if trade.buyer == trade.seller {
+        result.violations.push("Buyer and seller cannot be the same".to_string());
+        result.is_compliant = false;
+    }
+
+    // 4. State progression validation
+    let required_states = match trade.state {
+        TradeState::FiatDeposited => vec![TradeState::RequestCreated, TradeState::RequestAccepted, TradeState::EscrowFunded],
+        TradeState::EscrowReleased => vec![TradeState::RequestCreated, TradeState::RequestAccepted, TradeState::EscrowFunded, TradeState::FiatDeposited],
+        _ => Vec::new(),
+    };
+
+    for required_state in required_states {
+        if !trade.has_been_in_state(required_state) {
+            result.violations.push(format!(
+                "Trade in state {} has not been through required state {}",
+                trade.state, required_state
+            ));
+            result.is_compliant = false;
+        }
+    }
+
+    Ok(result)
 }
 
 /// Trade statistics structure

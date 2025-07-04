@@ -272,15 +272,43 @@ This document provides a comprehensive, actionable task list for migrating the L
 **Acceptance Criteria**: Secure escrow operations with proper fee handling ✅
 
 #### Task 2.6: Trade State Management
-- [ ] **2.6.1** Implement state transition validation
-- [ ] **2.6.2** Add state history tracking
-- [ ] **2.6.3** Implement trade expiration handling
-- [ ] **2.6.4** Add fiat_deposited instruction
-- [ ] **2.6.5** Implement cancel_trade instruction
-- [ ] **2.6.6** Add comprehensive state validation
+- [x] **2.6.1** Implement state transition validation
+  - ✅ Enhanced state transition validation with detailed logging and error context
+  - ✅ Added support for no-op transitions and comprehensive state machine validation
+  - ✅ Implemented validation for terminal states and invalid transitions
+  - ✅ Added detailed logging for all state transitions with success/failure messages
+- [x] **2.6.2** Add state history tracking
+  - ✅ Enhanced state history tracking with validation and timestamp checks
+  - ✅ Added comprehensive state history query functions for analysis
+  - ✅ Implemented state duration tracking and actor-based history filtering
+  - ✅ Added recent state history retrieval and state duration calculations
+  - ✅ Enhanced TradeSummary with state change count and last change timestamp
+- [x] **2.6.3** Implement trade expiration handling
+  - ✅ Enhanced trade expiration with comprehensive status tracking
+  - ✅ Added time remaining calculations and expiring soon warnings
+  - ✅ Implemented can_expire validation and expiration status queries
+  - ✅ Added expire_trade instruction for manual expiration triggering
+  - ✅ Created ExpirationStatus struct with detailed expiration information
+- [x] **2.6.4** Add fiat_deposited instruction
+  - ✅ Confirmed confirm_fiat_deposited instruction already implemented
+  - ✅ Instruction allows buyer to confirm fiat payment transition to FiatDeposited state
+  - ✅ Complete validation and state management for fiat payment confirmation
+- [x] **2.6.5** Implement cancel_trade instruction
+  - ✅ Enhanced cancel_trade instruction with reason tracking and improved validation
+  - ✅ Added optional cancellation reason parameter with length validation
+  - ✅ Improved authority validation based on trade state
+  - ✅ Added expiration checks to prevent canceling expired trades
+  - ✅ Enhanced error messaging and logging for cancellation tracking
+- [x] **2.6.6** Add comprehensive state validation
+  - ✅ Added validate_trade_comprehensive function with detailed error reporting
+  - ✅ Implemented TradeValidationResult with warnings, errors, and recommendations
+  - ✅ Added validate_trade_business_rules for protocol constraint validation
+  - ✅ Created BusinessRuleValidationResult for compliance tracking
+  - ✅ Comprehensive validation covering data integrity, state consistency, timestamps, 
+       expiration, state history, hub configuration, and business rules
 
-**Deliverable**: Complete trade state management
-**Acceptance Criteria**: All trade state transitions work correctly
+**Deliverable**: Complete trade state management ✅
+**Acceptance Criteria**: All trade state transitions work correctly ✅
 
 #### Task 2.7: Trade-Profile Integration
 - [ ] **2.7.1** Implement CPI calls to Profile program
