@@ -3680,3 +3680,103 @@ pub struct EscrowStatus {
     pub time_until_auto_release: i64,
     pub funded_at: i64,
 }
+
+/// Encrypted communication handler for dispute messages
+pub fn handle_encrypted_dispute_communication(
+    trade: &Trade,
+    sender: &Pubkey,
+    encrypted_message: &str,
+    encryption_key: &str,
+) -> Result<()> {
+    // Validate that sender is authorized to send messages (buyer, seller, or arbitrator)
+    require!(
+        *sender == trade.buyer || *sender == trade.seller || *sender == trade.arbitrator,
+        ErrorCode::Unauthorized
+    );
+
+    // Validate that trade is in a dispute state
+    require!(
+        trade.state == TradeState::EscrowDisputed,
+        ErrorCode::InvalidTradeState
+    );
+
+    // Validate message length
+    require!(
+        encrypted_message.len() <= 1000,
+        ErrorCode::ContactInfoTooLong
+    );
+
+    // Validate encryption key
+    require!(
+        encryption_key.len() <= 500 && !encryption_key.is_empty(),
+        ErrorCode::ContactInfoTooLong
+    );
+
+    // Log the encrypted communication (actual message content is not logged for privacy)
+    msg!(
+        "Encrypted dispute communication sent: trade_id={}, sender={}, message_length={}",
+        trade.id,
+        sender,
+        encrypted_message.len()
+    );
+
+    Ok(())
+}
+
+/// Validate dispute communication setup
+pub fn validate_dispute_communication_setup(
+    trade: &Trade,
+    participant: &Pubkey,
+) -> Result<DisputeCommunicationValidation> {
+    let mut validation = DisputeCommunicationValidation {
+        is_valid: true,
+        has_encryption_key: false,
+        has_contact_info: false,
+        warnings: Vec::new(),
+        recommendations: Vec::new(),
+    };
+
+    // Check if participant is authorized
+    let is_authorized = *participant == trade.buyer || 
+                       *participant == trade.seller || 
+                       *participant == trade.arbitrator;
+    
+    if !is_authorized {
+        validation.is_valid = false;
+        validation.warnings.push("Participant not authorized for dispute communication".to_string());
+        return Ok(validation);
+    }
+
+    // Check encryption key availability
+    if !trade.profile_taker_encryption_key.is_empty() {
+        validation.has_encryption_key = true;
+    } else {
+        validation.warnings.push("No encryption key available for secure communication".to_string());
+        validation.recommendations.push("Set up encryption key for secure dispute communication".to_string());
+    }
+
+    // Check contact information
+    if !trade.taker_contact.is_empty() {
+        validation.has_contact_info = true;
+    } else {
+        validation.warnings.push("No contact information available".to_string());
+        validation.recommendations.push("Add contact information for dispute resolution".to_string());
+    }
+
+    // Additional recommendations for dispute communication
+    if validation.has_encryption_key && validation.has_contact_info {
+        validation.recommendations.push("All communication setup is complete for dispute resolution".to_string());
+    }
+
+    Ok(validation)
+}
+
+/// Dispute communication validation result
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct DisputeCommunicationValidation {
+    pub is_valid: bool,
+    pub has_encryption_key: bool,
+    pub has_contact_info: bool,
+    pub warnings: Vec<String>,
+    pub recommendations: Vec<String>,
+}
