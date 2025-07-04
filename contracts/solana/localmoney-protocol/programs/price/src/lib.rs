@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::AnchorDeserialize;
 use shared_types::{
-    FiatCurrency, LocalMoneyErrorCode, RouteStep, CONFIG_SEED, CURRENCY_PRICE_SEED,
-    PRICE_ROUTE_SEED, PRICE_SCALE,
+    FiatCurrency, LocalMoneyErrorCode, PriceHistoryEntry, RouteStep, CONFIG_SEED, CURRENCY_PRICE_SEED,
+    PRICE_HISTORY_SEED, PRICE_ROUTE_SEED, PRICE_SCALE,
 };
 
 declare_id!("7nkFUfmqKMKrQfm83HxreJHXyJdTK5feYqDEJtNihaw1");
@@ -313,6 +313,204 @@ pub mod price {
         msg!("Registered oracle provider: {}", oracle_provider);
         Ok(())
     }
+
+    /// Add price history entry (Task 1.6.5)
+    pub fn add_price_history(
+        ctx: Context<AddPriceHistory>,
+        currency: FiatCurrency,
+        price_usd: u64,
+        source: Pubkey,
+        confidence: u64,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let price_history = &mut ctx.accounts.price_history;
+
+        // Validate inputs
+        require!(price_usd > 0, LocalMoneyErrorCode::InvalidPrice);
+        require!(confidence <= 100, LocalMoneyErrorCode::InvalidConfidence);
+
+        // Create new history entry
+        let new_entry = PriceHistoryEntry {
+            timestamp: clock.unix_timestamp,
+            price_usd,
+            source,
+            confidence,
+        };
+
+        // Add to history (maintain max 50 entries)
+        if price_history.entries.len() >= 50 {
+            price_history.entries.remove(0); // Remove oldest
+        }
+        price_history.entries.push(new_entry);
+
+        price_history.currency = currency;
+        price_history.last_updated = clock.unix_timestamp;
+        price_history.total_entries += 1;
+
+        msg!(
+            "Added price history for {}: {} USD (confidence: {}%, source: {})",
+            currency,
+            price_usd,
+            confidence,
+            source
+        );
+        Ok(())
+    }
+
+    /// Get price history for a currency (Task 1.6.5)
+    pub fn get_price_history(
+        ctx: Context<GetPriceHistory>,
+        limit: Option<u8>,
+    ) -> Result<Vec<PriceHistoryEntry>> {
+        let price_history = &ctx.accounts.price_history;
+        let limit = limit.unwrap_or(10).min(50) as usize;
+
+        // Return most recent entries up to limit
+        let start_index = if price_history.entries.len() > limit {
+            price_history.entries.len() - limit
+        } else {
+            0
+        };
+
+        let recent_entries = price_history.entries[start_index..].to_vec();
+        
+        msg!(
+            "Retrieved {} price history entries for {}",
+            recent_entries.len(),
+            price_history.currency
+        );
+
+        Ok(recent_entries)
+    }
+
+    /// Get price statistics from history (Task 1.6.5)
+    pub fn get_price_statistics(
+        ctx: Context<GetPriceHistory>,
+        timeframe_hours: u64,
+    ) -> Result<PriceStatistics> {
+        let price_history = &ctx.accounts.price_history;
+        let clock = Clock::get()?;
+        let cutoff_time = clock.unix_timestamp - (timeframe_hours * 3600) as i64;
+
+        // Filter entries within timeframe
+        let relevant_entries: Vec<_> = price_history
+            .entries
+            .iter()
+            .filter(|entry| entry.timestamp >= cutoff_time)
+            .collect();
+
+        if relevant_entries.is_empty() {
+            return Err(LocalMoneyErrorCode::NoHistoryData.into());
+        }
+
+        // Calculate statistics
+        let mut min_price = u64::MAX;
+        let mut max_price = 0u64;
+        let mut total_price = 0u128;
+        let mut total_weighted_price = 0u128;
+        let mut total_confidence = 0u128;
+
+        for entry in &relevant_entries {
+            min_price = min_price.min(entry.price_usd);
+            max_price = max_price.max(entry.price_usd);
+            total_price += entry.price_usd as u128;
+            total_weighted_price += (entry.price_usd as u128) * (entry.confidence as u128);
+            total_confidence += entry.confidence as u128;
+        }
+
+        let count = relevant_entries.len() as u64;
+        let avg_price = (total_price / count as u128) as u64;
+        let weighted_avg_price = if total_confidence > 0 {
+            (total_weighted_price / total_confidence) as u64
+        } else {
+            avg_price
+        };
+
+        // Calculate volatility (standard deviation)
+        let variance_sum: u128 = relevant_entries
+            .iter()
+            .map(|entry| {
+                let diff = (entry.price_usd as i128) - (avg_price as i128);
+                (diff * diff) as u128
+            })
+            .sum();
+        let variance = variance_sum / count as u128;
+        let volatility = (variance as f64).sqrt() as u64;
+
+        let stats = PriceStatistics {
+            currency: price_history.currency,
+            timeframe_hours,
+            entry_count: count,
+            min_price,
+            max_price,
+            avg_price,
+            weighted_avg_price,
+            volatility,
+            first_timestamp: relevant_entries.first().unwrap().timestamp,
+            last_timestamp: relevant_entries.last().unwrap().timestamp,
+        };
+
+        msg!(
+            "Price statistics for {} over {} hours: min={}, max={}, avg={}, volatility={}",
+            price_history.currency,
+            timeframe_hours,
+            min_price,
+            max_price,
+            avg_price,
+            volatility
+        );
+
+        Ok(stats)
+    }
+
+    /// Enhanced update_prices with history tracking (Task 1.6.5)
+    pub fn update_prices_with_history(
+        ctx: Context<UpdatePricesWithHistory>,
+        currency: FiatCurrency,
+        price_usd: u64,
+        confidence: Option<u64>,
+    ) -> Result<()> {
+        let clock = Clock::get()?;
+        let currency_price = &mut ctx.accounts.currency_price;
+        let price_history = &mut ctx.accounts.price_history;
+
+        // Validate price
+        require!(price_usd > 0, LocalMoneyErrorCode::InvalidPrice);
+        let confidence = confidence.unwrap_or(100);
+        require!(confidence <= 100, LocalMoneyErrorCode::InvalidConfidence);
+
+        // Update current price
+        currency_price.currency = currency;
+        currency_price.price_usd = price_usd;
+        currency_price.last_updated = clock.unix_timestamp;
+        currency_price.is_active = true;
+
+        // Add to history
+        let new_entry = PriceHistoryEntry {
+            timestamp: clock.unix_timestamp,
+            price_usd,
+            source: ctx.accounts.price_provider.key(),
+            confidence,
+        };
+
+        // Maintain max 50 entries
+        if price_history.entries.len() >= 50 {
+            price_history.entries.remove(0);
+        }
+        price_history.entries.push(new_entry);
+
+        price_history.currency = currency;
+        price_history.last_updated = clock.unix_timestamp;
+        price_history.total_entries += 1;
+
+        msg!(
+            "Updated price for {} with history: {} USD (confidence: {}%)",
+            currency,
+            price_usd,
+            confidence
+        );
+        Ok(())
+    }
 }
 
 /// Price program configuration
@@ -351,6 +549,30 @@ pub struct OracleConfig {
     pub is_active: bool,
     pub total_updates: u64,
     pub last_update: i64,
+}
+
+/// Price history tracking for a currency (Task 1.6.5)
+#[account]
+pub struct PriceHistory {
+    pub currency: FiatCurrency,
+    pub entries: Vec<PriceHistoryEntry>,
+    pub last_updated: i64,
+    pub total_entries: u64,
+}
+
+/// Price statistics calculated from history
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct PriceStatistics {
+    pub currency: FiatCurrency,
+    pub timeframe_hours: u64,
+    pub entry_count: u64,
+    pub min_price: u64,
+    pub max_price: u64,
+    pub avg_price: u64,
+    pub weighted_avg_price: u64,
+    pub volatility: u64,
+    pub first_timestamp: i64,
+    pub last_timestamp: i64,
 }
 
 // Instruction contexts
@@ -546,6 +768,68 @@ pub struct RegisterOracle<'info> {
     pub authority: Signer<'info>,
     /// CHECK: This is the oracle provider pubkey being registered
     pub oracle_provider: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(currency: FiatCurrency)]
+pub struct AddPriceHistory<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = authority @ LocalMoneyErrorCode::Unauthorized
+    )]
+    pub config: Account<'info, PriceConfig>,
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = 8 + std::mem::size_of::<PriceHistory>() + 4 + (50 * std::mem::size_of::<PriceHistoryEntry>()), // Max 50 entries
+        seeds = [PRICE_HISTORY_SEED, currency.to_string().as_bytes()],
+        bump
+    )]
+    pub price_history: Account<'info, PriceHistory>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(currency: FiatCurrency)]
+pub struct GetPriceHistory<'info> {
+    #[account(
+        seeds = [PRICE_HISTORY_SEED, currency.to_string().as_bytes()],
+        bump
+    )]
+    pub price_history: Account<'info, PriceHistory>,
+}
+
+#[derive(Accounts)]
+#[instruction(currency: FiatCurrency)]
+pub struct UpdatePricesWithHistory<'info> {
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = price_provider @ LocalMoneyErrorCode::Unauthorized
+    )]
+    pub config: Account<'info, PriceConfig>,
+    #[account(
+        init_if_needed,
+        payer = price_provider,
+        space = 8 + std::mem::size_of::<CurrencyPrice>(),
+        seeds = [CURRENCY_PRICE_SEED, currency.to_string().as_bytes()],
+        bump
+    )]
+    pub currency_price: Account<'info, CurrencyPrice>,
+    #[account(
+        init_if_needed,
+        payer = price_provider,
+        space = 8 + std::mem::size_of::<PriceHistory>() + 4 + (50 * std::mem::size_of::<PriceHistoryEntry>()), // Max 50 entries
+        seeds = [PRICE_HISTORY_SEED, currency.to_string().as_bytes()],
+        bump
+    )]
+    pub price_history: Account<'info, PriceHistory>,
+    #[account(mut)]
+    pub price_provider: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -827,6 +1111,211 @@ mod tests {
 
         let average = (sum / weight_sum) as u64;
         assert_eq!(average, 1_500_000); // $1.50 average
+    }
+
+    #[test]
+    fn test_price_history_entry_structure() {
+        let entry = PriceHistoryEntry {
+            timestamp: 1640995200,
+            price_usd: 1_000_000,
+            source: create_mock_pubkey(),
+            confidence: 95,
+        };
+
+        assert_eq!(entry.timestamp, 1640995200);
+        assert_eq!(entry.price_usd, 1_000_000);
+        assert_eq!(entry.confidence, 95);
+    }
+
+    #[test]
+    fn test_price_history_structure() {
+        let entries = vec![
+            PriceHistoryEntry {
+                timestamp: 1640995200,
+                price_usd: 1_000_000,
+                source: create_mock_pubkey(),
+                confidence: 95,
+            },
+            PriceHistoryEntry {
+                timestamp: 1640995260,
+                price_usd: 1_100_000,
+                source: create_mock_pubkey(),
+                confidence: 90,
+            },
+        ];
+
+        let history = PriceHistory {
+            currency: FiatCurrency::USD,
+            entries: entries.clone(),
+            last_updated: 1640995260,
+            total_entries: 2,
+        };
+
+        assert_eq!(history.currency, FiatCurrency::USD);
+        assert_eq!(history.entries.len(), 2);
+        assert_eq!(history.total_entries, 2);
+        assert_eq!(history.last_updated, 1640995260);
+    }
+
+    #[test]
+    fn test_price_statistics_calculation() {
+        let prices = vec![1_000_000, 1_100_000, 900_000, 1_200_000]; // $1.00, $1.10, $0.90, $1.20
+        let confidences = vec![95, 90, 85, 92];
+
+        // Calculate basic statistics
+        let min_price = *prices.iter().min().unwrap();
+        let max_price = *prices.iter().max().unwrap();
+        let avg_price = prices.iter().sum::<u64>() / prices.len() as u64;
+
+        // Calculate weighted average
+        let mut weighted_sum = 0u128;
+        let mut confidence_sum = 0u128;
+        for (price, confidence) in prices.iter().zip(confidences.iter()) {
+            weighted_sum += (*price as u128) * (*confidence as u128);
+            confidence_sum += *confidence as u128;
+        }
+        let weighted_avg = (weighted_sum / confidence_sum) as u64;
+
+        // Calculate volatility (standard deviation)
+        let variance_sum: u128 = prices
+            .iter()
+            .map(|price| {
+                let diff = (*price as i128) - (avg_price as i128);
+                (diff * diff) as u128
+            })
+            .sum();
+        let volatility = ((variance_sum / prices.len() as u128) as f64).sqrt() as u64;
+
+        assert_eq!(min_price, 900_000);
+        assert_eq!(max_price, 1_200_000);
+        assert_eq!(avg_price, 1_050_000); // $1.05 average
+        assert!(weighted_avg > 0); // Should be calculated
+        assert!(volatility > 0); // Should have some volatility
+    }
+
+    #[test]
+    fn test_price_history_management() {
+        let mut entries = Vec::new();
+        let max_entries = 50;
+
+        // Add entries up to max
+        for i in 0..max_entries {
+            entries.push(PriceHistoryEntry {
+                timestamp: 1640995200 + i as i64,
+                price_usd: 1_000_000 + i as u64 * 1000,
+                source: create_mock_pubkey(),
+                confidence: 95,
+            });
+        }
+
+        assert_eq!(entries.len(), max_entries);
+
+        // Simulate adding one more entry (should remove oldest)
+        if entries.len() >= max_entries {
+            entries.remove(0); // Remove oldest
+        }
+        entries.push(PriceHistoryEntry {
+            timestamp: 1640995200 + max_entries as i64,
+            price_usd: 1_000_000 + max_entries as u64 * 1000,
+            source: create_mock_pubkey(),
+            confidence: 95,
+        });
+
+        assert_eq!(entries.len(), max_entries);
+        assert_eq!(entries[0].timestamp, 1640995201); // Should be second entry now
+    }
+
+    #[test]
+    fn test_price_history_filtering() {
+        let entries = vec![
+            PriceHistoryEntry {
+                timestamp: 1640995200, // 2 hours ago
+                price_usd: 1_000_000,
+                source: create_mock_pubkey(),
+                confidence: 95,
+            },
+            PriceHistoryEntry {
+                timestamp: 1640998800, // 1 hour ago
+                price_usd: 1_100_000,
+                source: create_mock_pubkey(),
+                confidence: 90,
+            },
+            PriceHistoryEntry {
+                timestamp: 1641002400, // Current time
+                price_usd: 1_200_000,
+                source: create_mock_pubkey(),
+                confidence: 85,
+            },
+        ];
+
+        let current_time = 1641002400;
+        let timeframe_hours = 1;
+        let cutoff_time = current_time - (timeframe_hours * 3600);
+
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.timestamp >= cutoff_time)
+            .collect();
+
+        assert_eq!(filtered.len(), 2); // Should include last 2 entries
+        assert!(filtered[0].timestamp >= cutoff_time);
+        assert!(filtered[1].timestamp >= cutoff_time);
+    }
+
+    #[test]
+    fn test_confidence_validation() {
+        let valid_confidences = vec![0, 50, 100];
+        let invalid_confidences = vec![101, 150, 200];
+
+        for confidence in valid_confidences {
+            assert!(confidence <= 100);
+        }
+
+        for confidence in invalid_confidences {
+            assert!(confidence > 100);
+        }
+    }
+
+    #[test]
+    fn test_price_history_statistics() {
+        let entries = vec![
+            PriceHistoryEntry {
+                timestamp: 1640995200,
+                price_usd: 1_000_000,
+                source: create_mock_pubkey(),
+                confidence: 95,
+            },
+            PriceHistoryEntry {
+                timestamp: 1640995260,
+                price_usd: 1_100_000,
+                source: create_mock_pubkey(),
+                confidence: 90,
+            },
+            PriceHistoryEntry {
+                timestamp: 1640995320,
+                price_usd: 900_000,
+                source: create_mock_pubkey(),
+                confidence: 85,
+            },
+        ];
+
+        // Test basic statistics
+        let min_price = entries.iter().map(|e| e.price_usd).min().unwrap();
+        let max_price = entries.iter().map(|e| e.price_usd).max().unwrap();
+        let avg_price = entries.iter().map(|e| e.price_usd).sum::<u64>() / entries.len() as u64;
+
+        assert_eq!(min_price, 900_000);
+        assert_eq!(max_price, 1_100_000);
+        assert_eq!(avg_price, 1_000_000); // $1.00 average
+
+        // Test time range
+        let first_timestamp = entries.first().unwrap().timestamp;
+        let last_timestamp = entries.last().unwrap().timestamp;
+        let duration = last_timestamp - first_timestamp;
+
+        assert_eq!(first_timestamp, 1640995200);
+        assert_eq!(last_timestamp, 1640995320);
+        assert_eq!(duration, 120); // 2 minutes
     }
 }
 

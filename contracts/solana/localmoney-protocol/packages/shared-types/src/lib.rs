@@ -99,6 +99,15 @@ pub struct RouteStep {
     pub offer_asset: Pubkey, // Token mint
 }
 
+/// Price History Entry for tracking price changes over time
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct PriceHistoryEntry {
+    pub timestamp: i64,
+    pub price_usd: u64,
+    pub source: Pubkey, // Oracle or price provider
+    pub confidence: u64, // 0-100 confidence level
+}
+
 /// Utility functions for validation
 pub fn validate_fee_percentage(fee_bps: u16) -> Result<()> {
     require!(

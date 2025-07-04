@@ -28,6 +28,7 @@ pub const TRADE_COUNTER_SEED: &[u8] = b"trade_counter";
 pub const PROFILE_SEED: &[u8] = b"profile";
 pub const CURRENCY_PRICE_SEED: &[u8] = b"currency_price";
 pub const PRICE_ROUTE_SEED: &[u8] = b"price_route";
+pub const PRICE_HISTORY_SEED: &[u8] = b"price_history";
 pub const ESCROW_SEED: &[u8] = b"escrow";
 
 /// Scaling factors for price calculations
@@ -52,3 +53,4 @@ pub const TRADE_SIZE: usize =
 pub const PROFILE_SIZE: usize = 8 + 32 + 8 + 8 + 1 + 8 + 8 + 4 + 200 + 4 + 200 + 1 + 1; // ~400 bytes
 pub const CURRENCY_PRICE_SIZE: usize = 8 + 1 + 8 + 8 + 1; // ~30 bytes
 pub const PRICE_ROUTE_SIZE: usize = 8 + 32 + 4 + 100 + 1; // ~150 bytes (assuming max 10 route steps)
+pub const PRICE_HISTORY_SIZE: usize = 8 + 8 + 4 + 2000 + 1; // ~2KB (assuming max 50 history entries)

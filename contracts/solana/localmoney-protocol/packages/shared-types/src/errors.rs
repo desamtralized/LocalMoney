@@ -130,6 +130,9 @@ pub enum ErrorCode {
     #[msg("Trade has not expired yet")]
     TradeNotExpired,
 
+    #[msg("Trade limit exceeded - cannot create more trades")]
+    TradeLimitExceeded,
+
     // Escrow Errors (500-599)
     #[msg("Insufficient escrow balance")]
     InsufficientEscrow,
@@ -231,6 +234,9 @@ pub enum ErrorCode {
 
     #[msg("Confidence level too low")]
     LowConfidence,
+
+    #[msg("No price history data available")]
+    NoHistoryData,
 
     // Arbitration Errors (800-899)
     #[msg("Arbitrator not found")]
@@ -344,7 +350,8 @@ impl ErrorCode {
             | ErrorCode::BelowMinimumAmount
             | ErrorCode::AboveMaximumAmount
             | ErrorCode::TradeCannotExpire
-            | ErrorCode::TradeNotExpired => "Trade",
+            | ErrorCode::TradeNotExpired
+            | ErrorCode::TradeLimitExceeded => "Trade",
 
             ErrorCode::InsufficientEscrow
             | ErrorCode::EscrowFundingMismatch
@@ -380,7 +387,8 @@ impl ErrorCode {
             | ErrorCode::InactiveOracle
             | ErrorCode::InvalidConfidence
             | ErrorCode::StaleOracleData
-            | ErrorCode::LowConfidence => "Price",
+            | ErrorCode::LowConfidence
+            | ErrorCode::NoHistoryData => "Price",
 
             ErrorCode::ArbitratorNotFound
             | ErrorCode::ArbitratorUnavailable
