@@ -143,6 +143,9 @@ pub enum ErrorCode {
     #[msg("Escrow account validation failed")]
     InvalidEscrowAccount,
 
+    #[msg("Invalid escrow state for this operation")]
+    InvalidEscrowState,
+
     // Profile Errors (600-699)
     #[msg("Profile not found")]
     ProfileNotFound,
@@ -340,7 +343,8 @@ impl ErrorCode {
             | ErrorCode::EscrowAlreadyFunded
             | ErrorCode::EscrowNotFunded
             | ErrorCode::EscrowReleaseNotAllowed
-            | ErrorCode::InvalidEscrowAccount => "Escrow",
+            | ErrorCode::InvalidEscrowAccount
+            | ErrorCode::InvalidEscrowState => "Escrow",
 
             ErrorCode::ProfileNotFound
             | ErrorCode::ProfileAlreadyExists

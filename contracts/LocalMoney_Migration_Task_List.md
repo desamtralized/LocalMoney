@@ -230,15 +230,46 @@ This document provides a comprehensive, actionable task list for migrating the L
 **Acceptance Criteria**: Can create and accept trade requests ✅
 
 #### Task 2.5: Escrow Management
-- [ ] **2.5.1** Design escrow account structure
-- [ ] **2.5.2** Implement fund_escrow instruction
-- [ ] **2.5.3** Implement release_escrow instruction
-- [ ] **2.5.4** Implement refund_escrow instruction
-- [ ] **2.5.5** Add escrow validation and security checks
-- [ ] **2.5.6** Implement fee calculation and distribution
+- [x] **2.5.1** Design escrow account structure
+  - ✅ Added dedicated Escrow account with comprehensive state management
+  - ✅ Implemented EscrowState enum (Created, Funded, Released, Refunded, Disputed)
+  - ✅ Created EscrowReleaseConditions with timeout and approval controls
+  - ✅ Added detailed EscrowFeeBreakdown for transparent fee distribution
+  - ✅ Comprehensive escrow account structure with proper PDA management
+- [x] **2.5.2** Implement fund_escrow instruction
+  - ✅ Enhanced fund_escrow with escrow account initialization
+  - ✅ Added comprehensive validation and fee calculation
+  - ✅ Integrated with Hub program configuration for dynamic fee rates
+  - ✅ Proper token transfer from seller to escrow with security checks
+  - ✅ Release conditions setup based on Hub program configuration
+- [x] **2.5.3** Implement release_escrow instruction
+  - ✅ Updated release_escrow with escrow state management
+  - ✅ Added proper fee distribution to multiple collectors (chain, warchest, burn)
+  - ✅ Implemented timeout validation and release condition checks
+  - ✅ Net amount calculation after fee deduction
+  - ✅ Secure token transfer with escrow authority validation
+- [x] **2.5.4** Implement refund_escrow instruction
+  - ✅ Enhanced refund_escrow with escrow state validation
+  - ✅ Added dispute timeout checks for refund eligibility
+  - ✅ Full amount refund to seller (no fees deducted for refunds)
+  - ✅ Proper escrow state transition to Refunded
+  - ✅ Security validation for trade participants
+- [x] **2.5.5** Add escrow validation and security checks
+  - ✅ Comprehensive validate_escrow_security function with 15+ validation checks
+  - ✅ Escrow state transition validation with proper state machine
+  - ✅ Fee limit validation (max 10% chain, 5% burn/warchest/arbitration, 2% platform)
+  - ✅ Timestamp and timeout validation for release conditions
+  - ✅ Token mint and trade account relationship validation
+  - ✅ Added can_release_escrow and can_refund_escrow helper functions
+- [x] **2.5.6** Implement fee calculation and distribution
+  - ✅ Added calculate_escrow_fees with detailed breakdown calculation
+  - ✅ Implemented distribute_escrow_fees for proper fee distribution
+  - ✅ Multiple fee collectors: chain_fee_collector, warchest_collector, burn_collector
+  - ✅ Platform fee calculation (0.5% of total fees for admin operations)
+  - ✅ Math overflow protection and comprehensive error handling
 
-**Deliverable**: Complete escrow system
-**Acceptance Criteria**: Secure escrow operations with proper fee handling
+**Deliverable**: Complete escrow system ✅
+**Acceptance Criteria**: Secure escrow operations with proper fee handling ✅
 
 #### Task 2.6: Trade State Management
 - [ ] **2.6.1** Implement state transition validation
@@ -472,7 +503,17 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Complete test suite with 100+ test scenarios covering all integration points
   - ✅ Error handling and edge case validation
   - ✅ All cross-program interactions working correctly
+
+- ✅ **Task 2.5**: Escrow Management - COMPLETED ✅
+  - ✅ Comprehensive escrow account structure with EscrowState management
+  - ✅ Enhanced fund_escrow with fee calculation and Hub program integration
+  - ✅ Improved release_escrow with multi-collector fee distribution
+  - ✅ Secure refund_escrow with dispute timeout validation
+  - ✅ 15+ security validation checks and state transition management
+  - ✅ Detailed fee breakdown and transparent distribution system
+  - ✅ Math overflow protection and comprehensive error handling
+  - ✅ All escrow operations successfully deployed and tested
   
-**Next Priority:** Task 2.4 - Trade Program Core Structure
+**Next Priority:** Task 2.6 - Trade State Management
 
 This comprehensive task list provides a clear roadmap for successfully migrating the LocalMoney protocol from CosmWasm to Solana while maintaining all functionality.

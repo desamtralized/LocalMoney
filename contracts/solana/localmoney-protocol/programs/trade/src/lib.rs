@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, Transfer};
+use anchor_spl::token::{Token, Transfer, Mint, TokenAccount};
 use shared_types::{
     FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, TradeState, TradeStateItem,
     ESCROW_SEED,
@@ -365,7 +365,9 @@ pub mod trade {
         trade_id: u64,
         amount: u64,
     ) -> Result<()> {
+        let trade_key = ctx.accounts.trade.key();
         let trade = &mut ctx.accounts.trade;
+        let escrow = &mut ctx.accounts.escrow;
         let clock = Clock::get()?;
 
         // Validate current state and transition
@@ -399,18 +401,28 @@ pub mod trade {
             ErrorCode::InvalidAmountRange
         );
 
-        // Validate escrow account PDA
-        let trade_key = trade.key();
-        let (expected_escrow, _escrow_bump) = Pubkey::find_program_address(
-            &[ESCROW_SEED, trade_key.as_ref()],
-            ctx.program_id,
-        );
+        // Initialize escrow account (this is the first time it's being created)
+        escrow.trade_id = trade_id;
+        escrow.trade_account = trade_key;
+        escrow.token_mint = ctx.accounts.token_mint.key();
+        escrow.amount = 0; // Will be set after successful transfer
+        escrow.escrow_state = EscrowState::Created;
+        escrow.funded_at = 0; // Will be set after funding
+        escrow.bump = ctx.bumps.escrow;
+
+        // Calculate fees using hub config
+        let hub_config_data = ctx.accounts.hub_config.try_borrow_data()?;
+        let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
+
+        let fee_breakdown = calculate_escrow_fees(amount, &hub_config)?;
+        
+        // Validate sufficient funds for fees
         require!(
-            ctx.accounts.escrow_token_account.key() == expected_escrow,
-            ErrorCode::InvalidEscrowAccount
+            amount > fee_breakdown.total_fees(),
+            ErrorCode::InsufficientFunds
         );
 
-        // Transfer tokens from seller to escrow
+        // Transfer tokens from seller to escrow token account
         let cpi_accounts = Transfer {
             from: ctx.accounts.seller_token_account.to_account_info(),
             to: ctx.accounts.escrow_token_account.to_account_info(),
@@ -419,6 +431,24 @@ pub mod trade {
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         anchor_spl::token::transfer(cpi_ctx, amount)?;
+
+        // Update escrow state
+        escrow.amount = amount;
+        escrow.escrow_state = EscrowState::Funded;
+        escrow.funded_at = clock.unix_timestamp;
+        escrow.fee_breakdown = fee_breakdown;
+
+        // Set release conditions based on hub config
+        escrow.release_conditions = EscrowReleaseConditions {
+            requires_seller_approval: true,
+            requires_buyer_confirmation: true,
+            dispute_timeout: clock.unix_timestamp + hub_config.trade_dispute_timer as i64,
+            auto_release_timeout: if hub_config.trade_expiration_timer > 0 {
+                clock.unix_timestamp + hub_config.trade_expiration_timer as i64
+            } else {
+                0
+            },
+        };
 
         // Update trade state
         let funded_state = TradeStateItem {
@@ -430,9 +460,10 @@ pub mod trade {
         trade.add_state_history(funded_state)?;
 
         msg!(
-            "Escrow funded: trade ID {}, amount {}, seller: {}",
+            "Escrow funded: trade ID {}, amount {}, fees {}, seller: {}",
             trade_id,
             amount,
+            escrow.fee_breakdown.total_fees(),
             ctx.accounts.seller.key()
         );
 
@@ -495,7 +526,9 @@ pub mod trade {
         ctx: Context<ReleaseEscrow>,
         trade_id: u64,
     ) -> Result<()> {
+        let trade_key = ctx.accounts.trade.key();
         let trade = &mut ctx.accounts.trade;
+        let escrow = &mut ctx.accounts.escrow;
         let clock = Clock::get()?;
 
         // Validate current state and transition
@@ -506,35 +539,62 @@ pub mod trade {
 
         validate_trade_state_transition(&trade.state, &TradeState::EscrowReleased)?;
 
+        // Validate escrow state
+        require!(
+            escrow.escrow_state == EscrowState::Funded,
+            ErrorCode::InvalidEscrowState
+        );
+
+        // Validate escrow account matches trade
+        require!(
+            escrow.trade_id == trade_id,
+            ErrorCode::InvalidEscrowAccount
+        );
+
+        require!(
+            escrow.trade_account == trade_key,
+            ErrorCode::InvalidEscrowAccount
+        );
+
         // Validate that the seller is releasing escrow
         require!(
             ctx.accounts.seller.key() == trade.seller,
             ErrorCode::InvalidTradeSender
         );
 
-        // Calculate fees and net amount
-        let hub_config_data = ctx.accounts.hub_config.try_borrow_data()?;
-        let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
-
-        let (net_amount, total_fees) = calculate_trade_fees(trade.amount, &hub_config)?;
-
-        // Transfer net amount to buyer
-        let trade_key = trade.key();
-        let (expected_escrow, escrow_bump) = Pubkey::find_program_address(
-            &[ESCROW_SEED, trade_key.as_ref()],
-            ctx.program_id,
-        );
+        // Validate release conditions
         require!(
-            ctx.accounts.escrow_token_account.key() == expected_escrow,
-            ErrorCode::InvalidEscrowAccount
+            escrow.release_conditions.requires_seller_approval,
+            ErrorCode::EscrowReleaseNotAllowed
         );
+
+        // Check auto-release timeout hasn't passed (if set)
+        if escrow.release_conditions.auto_release_timeout > 0 {
+            require!(
+                clock.unix_timestamp <= escrow.release_conditions.auto_release_timeout,
+                ErrorCode::OperationTimeout
+            );
+        }
+
+        // Calculate net amount and fees from escrow
+        let net_amount = escrow.get_net_amount();
+        let total_fees = escrow.fee_breakdown.total_fees();
+
+        // Validate sufficient balance
+        require!(
+            escrow.amount >= net_amount + total_fees,
+            ErrorCode::InsufficientEscrow
+        );
+
+        // Get escrow token account authority
         let escrow_seeds = &[
-            ESCROW_SEED,
+            b"escrow",
             trade_key.as_ref(),
-            &[escrow_bump],
+            &[escrow.bump],
         ];
         let signer_seeds = &[&escrow_seeds[..]];
 
+        // Transfer net amount to buyer
         let transfer_to_buyer = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
             to: ctx.accounts.buyer_token_account.to_account_info(),
@@ -549,14 +609,19 @@ pub mod trade {
 
         // Distribute fees if any
         if total_fees > 0 {
-            distribute_trade_fees(
+            distribute_escrow_fees(
                 &ctx.accounts.escrow_token_account.to_account_info(),
-                &ctx.accounts.fee_collector_token_account.to_account_info(),
+                &ctx.accounts.chain_fee_collector.to_account_info(),
+                &ctx.accounts.warchest_collector.to_account_info(),
+                &ctx.accounts.burn_collector.to_account_info(),
                 &ctx.accounts.token_program.to_account_info(),
-                total_fees,
+                &escrow.fee_breakdown,
                 signer_seeds,
             )?;
         }
+
+        // Update escrow state
+        escrow.escrow_state = EscrowState::Released;
 
         // Update trade state
         let released_state = TradeStateItem {
@@ -583,7 +648,9 @@ pub mod trade {
         ctx: Context<RefundEscrow>,
         trade_id: u64,
     ) -> Result<()> {
+        let trade_key = ctx.accounts.trade.key();
         let trade = &mut ctx.accounts.trade;
+        let escrow = &mut ctx.accounts.escrow;
         let clock = Clock::get()?;
 
         // Validate current state - can refund from EscrowFunded
@@ -594,6 +661,23 @@ pub mod trade {
 
         validate_trade_state_transition(&trade.state, &TradeState::EscrowRefunded)?;
 
+        // Validate escrow state
+        require!(
+            escrow.escrow_state == EscrowState::Funded,
+            ErrorCode::InvalidEscrowState
+        );
+
+        // Validate escrow account matches trade
+        require!(
+            escrow.trade_id == trade_id,
+            ErrorCode::InvalidEscrowAccount
+        );
+
+        require!(
+            escrow.trade_account == trade_key,
+            ErrorCode::InvalidEscrowAccount
+        );
+
         // Either party can initiate refund, but validate they're involved in the trade
         let signer = ctx.accounts.signer.key();
         require!(
@@ -601,23 +685,23 @@ pub mod trade {
             ErrorCode::InvalidTradeSender
         );
 
-        // Transfer full amount back to seller
-        let trade_key = trade.key();
-        let (expected_escrow, escrow_bump) = Pubkey::find_program_address(
-            &[ESCROW_SEED, trade_key.as_ref()],
-            ctx.program_id,
-        );
-        require!(
-            ctx.accounts.escrow_token_account.key() == expected_escrow,
-            ErrorCode::InvalidEscrowAccount
-        );
+        // Check if dispute timeout has passed (if applicable)
+        if escrow.release_conditions.dispute_timeout > 0 {
+            require!(
+                clock.unix_timestamp > escrow.release_conditions.dispute_timeout,
+                ErrorCode::RefundNotAllowed
+            );
+        }
+
+        // Get escrow token account authority
         let escrow_seeds = &[
-            ESCROW_SEED,
+            b"escrow",
             trade_key.as_ref(),
-            &[escrow_bump],
+            &[escrow.bump],
         ];
         let signer_seeds = &[&escrow_seeds[..]];
 
+        // Transfer full amount back to seller (no fees deducted for refunds)
         let refund_transfer = Transfer {
             from: ctx.accounts.escrow_token_account.to_account_info(),
             to: ctx.accounts.seller_token_account.to_account_info(),
@@ -628,7 +712,10 @@ pub mod trade {
             refund_transfer,
             signer_seeds,
         );
-        anchor_spl::token::transfer(cpi_ctx, trade.amount)?;
+        anchor_spl::token::transfer(cpi_ctx, escrow.amount)?;
+
+        // Update escrow state
+        escrow.escrow_state = EscrowState::Refunded;
 
         // Update trade state
         let refunded_state = TradeStateItem {
@@ -642,7 +729,7 @@ pub mod trade {
         msg!(
             "Escrow refunded: trade ID {}, amount {}, initiated by: {}",
             trade_id,
-            trade.amount,
+            escrow.amount,
             signer
         );
 
@@ -706,6 +793,7 @@ pub mod trade {
         settlement_for_maker: bool,
         settlement_reason: String,
     ) -> Result<()> {
+        let trade_key = ctx.accounts.trade.key();
         let trade = &mut ctx.accounts.trade;
         let clock = Clock::get()?;
 
@@ -750,7 +838,6 @@ pub mod trade {
         };
 
         // Transfer settled amount to winner
-        let trade_key = trade.key();
         let (expected_escrow, escrow_bump) = Pubkey::find_program_address(
             &[ESCROW_SEED, trade_key.as_ref()],
             ctx.program_id,
@@ -985,6 +1072,88 @@ impl TradeCounter {
         1; // bump
 }
 
+/// Escrow account - manages escrow funds for a trade
+#[account]
+pub struct Escrow {
+    pub trade_id: u64,
+    pub trade_account: Pubkey,
+    pub token_mint: Pubkey,
+    pub amount: u64,
+    pub escrow_state: EscrowState,
+    pub funded_at: i64,
+    pub release_conditions: EscrowReleaseConditions,
+    pub fee_breakdown: EscrowFeeBreakdown,
+    pub bump: u8,
+}
+
+impl Escrow {
+    pub const LEN: usize = 8 + // discriminator
+        8 + // trade_id
+        32 + // trade_account
+        32 + // token_mint
+        8 + // amount
+        1 + 1 + // escrow_state (enum)
+        8 + // funded_at
+        1 + 8 + 8 + 8 + // release_conditions
+        8 + 8 + 8 + 8 + 8 + // fee_breakdown
+        1; // bump
+
+    /// Check if escrow is funded
+    pub fn is_funded(&self) -> bool {
+        self.escrow_state == EscrowState::Funded
+    }
+
+    /// Check if escrow is released
+    pub fn is_released(&self) -> bool {
+        matches!(self.escrow_state, EscrowState::Released | EscrowState::Refunded)
+    }
+
+    /// Check if escrow can be released
+    pub fn can_release(&self) -> bool {
+        self.escrow_state == EscrowState::Funded
+    }
+
+    /// Get net amount after fees
+    pub fn get_net_amount(&self) -> u64 {
+        self.amount.saturating_sub(self.fee_breakdown.total_fees())
+    }
+}
+
+/// Escrow States
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum EscrowState {
+    Created,
+    Funded,
+    Released,
+    Refunded,
+    Disputed,
+}
+
+/// Escrow Release Conditions
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct EscrowReleaseConditions {
+    pub requires_seller_approval: bool,
+    pub requires_buyer_confirmation: bool,
+    pub dispute_timeout: i64,
+    pub auto_release_timeout: i64,
+}
+
+/// Escrow Fee Breakdown
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct EscrowFeeBreakdown {
+    pub chain_fee: u64,
+    pub burn_fee: u64,
+    pub warchest_fee: u64,
+    pub arbitration_fee: u64,
+    pub platform_fee: u64,
+}
+
+impl EscrowFeeBreakdown {
+    pub fn total_fees(&self) -> u64 {
+        self.chain_fee + self.burn_fee + self.warchest_fee + self.arbitration_fee + self.platform_fee
+    }
+}
+
 // Instruction Contexts
 
 #[derive(Accounts)]
@@ -1102,22 +1271,44 @@ pub struct FundEscrow<'info> {
     )]
     pub trade: Account<'info, Trade>,
 
+    #[account(
+        init,
+        payer = seller,
+        space = Escrow::LEN,
+        seeds = [b"escrow", trade.key().as_ref()],
+        bump
+    )]
+    pub escrow: Account<'info, Escrow>,
+
     #[account(mut)]
     pub seller: Signer<'info>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
-    #[account(mut)]
-    pub seller_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        token::mint = token_mint,
+        token::authority = seller
+    )]
+    pub seller_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: This account is validated through manual PDA validation
-    #[account(mut)]
-    pub escrow_token_account: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = seller,
+        token::mint = token_mint,
+        token::authority = escrow,
+        seeds = [ESCROW_SEED, trade.key().as_ref()],
+        bump
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
-    #[account(mut)]
-    pub buyer_token_account: UncheckedAccount<'info>,
+    pub token_mint: Account<'info, Mint>,
+
+    /// Hub configuration for fee calculation
+    /// CHECK: Validated through hub program PDA seeds
+    pub hub_config: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -1146,28 +1337,47 @@ pub struct ReleaseEscrow<'info> {
     )]
     pub trade: Account<'info, Trade>,
 
+    #[account(
+        mut,
+        seeds = [b"escrow", trade.key().as_ref()],
+        bump = escrow.bump,
+        constraint = escrow.trade_id == trade_id @ ErrorCode::InvalidEscrowAccount
+    )]
+    pub escrow: Account<'info, Escrow>,
+
     #[account(mut)]
     pub seller: Signer<'info>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
-    #[account(mut)]
-    pub seller_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        seeds = [ESCROW_SEED, trade.key().as_ref()],
+        bump,
+        token::mint = escrow.token_mint,
+        token::authority = escrow
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: This account is validated through manual PDA validation
-    #[account(mut)]
-    pub escrow_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        token::mint = escrow.token_mint,
+        token::authority = buyer
+    )]
+    pub buyer_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
+    /// CHECK: Fee collector accounts validated through hub program configuration
     #[account(mut)]
-    pub buyer_token_account: UncheckedAccount<'info>,
+    pub chain_fee_collector: UncheckedAccount<'info>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
+    /// CHECK: Warchest collector validated through hub program configuration
     #[account(mut)]
-    pub fee_collector_token_account: UncheckedAccount<'info>,
+    pub warchest_collector: UncheckedAccount<'info>,
 
-    /// Hub configuration for fee calculation
-    /// CHECK: Validated through hub program PDA seeds
-    pub hub_config: UncheckedAccount<'info>,
+    /// CHECK: Burn collector validated through hub program configuration
+    #[account(mut)]
+    pub burn_collector: UncheckedAccount<'info>,
+
+    /// CHECK: Buyer for token account validation
+    pub buyer: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -1183,16 +1393,35 @@ pub struct RefundEscrow<'info> {
     )]
     pub trade: Account<'info, Trade>,
 
+    #[account(
+        mut,
+        seeds = [b"escrow", trade.key().as_ref()],
+        bump = escrow.bump,
+        constraint = escrow.trade_id == trade_id @ ErrorCode::InvalidEscrowAccount
+    )]
+    pub escrow: Account<'info, Escrow>,
+
     #[account(mut)]
     pub signer: Signer<'info>,
 
-    /// CHECK: Token account validation is done through SPL token constraints
-    #[account(mut)]
-    pub seller_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        token::mint = escrow.token_mint,
+        token::authority = seller
+    )]
+    pub seller_token_account: Account<'info, TokenAccount>,
 
-    /// CHECK: This account is validated through manual PDA validation
-    #[account(mut)]
-    pub escrow_token_account: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        seeds = [ESCROW_SEED, trade.key().as_ref()],
+        bump,
+        token::mint = escrow.token_mint,
+        token::authority = escrow
+    )]
+    pub escrow_token_account: Account<'info, TokenAccount>,
+
+    /// CHECK: Seller for token account validation
+    pub seller: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -1583,6 +1812,52 @@ pub fn calculate_trade_fees(
     Ok((net_amount, total_fees))
 }
 
+/// Calculate escrow fees and return detailed breakdown
+pub fn calculate_escrow_fees(
+    amount: u64,
+    hub_config: &GlobalConfigAccount,
+) -> Result<EscrowFeeBreakdown> {
+    let chain_fee = amount
+        .checked_mul(hub_config.chain_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let burn_fee = amount
+        .checked_mul(hub_config.burn_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let warchest_fee = amount
+        .checked_mul(hub_config.warchest_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let arbitration_fee = amount
+        .checked_mul(hub_config.arbitration_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    // Platform fee is calculated as a small percentage on top of other fees for admin costs
+    let base_fees = chain_fee + burn_fee + warchest_fee + arbitration_fee;
+    let platform_fee = base_fees
+        .checked_mul(50) // 0.5% of total fees for platform operations
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    Ok(EscrowFeeBreakdown {
+        chain_fee,
+        burn_fee,
+        warchest_fee,
+        arbitration_fee,
+        platform_fee,
+    })
+}
+
 /// Distribute trade fees to various collectors
 pub fn distribute_trade_fees<'info>(
     escrow_account: &AccountInfo<'info>,
@@ -1610,6 +1885,85 @@ pub fn distribute_trade_fees<'info>(
     anchor_spl::token::transfer(cpi_ctx, total_fees)?;
 
     msg!("Fees distributed: {}", total_fees);
+    Ok(())
+}
+
+/// Distribute escrow fees to specific collectors based on fee breakdown
+pub fn distribute_escrow_fees<'info>(
+    escrow_account: &AccountInfo<'info>,
+    chain_fee_collector: &AccountInfo<'info>,
+    warchest_collector: &AccountInfo<'info>,
+    burn_collector: &AccountInfo<'info>,
+    token_program: &AccountInfo<'info>,
+    fee_breakdown: &EscrowFeeBreakdown,
+    escrow_signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // Transfer chain fee
+    if fee_breakdown.chain_fee > 0 {
+        let chain_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: chain_fee_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            chain_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.chain_fee)?;
+        msg!("Chain fee distributed: {}", fee_breakdown.chain_fee);
+    }
+
+    // Transfer warchest fee
+    if fee_breakdown.warchest_fee > 0 {
+        let warchest_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: warchest_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            warchest_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.warchest_fee)?;
+        msg!("Warchest fee distributed: {}", fee_breakdown.warchest_fee);
+    }
+
+    // Transfer burn fee (send to burn collector)
+    if fee_breakdown.burn_fee > 0 {
+        let burn_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: burn_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            burn_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, fee_breakdown.burn_fee)?;
+        msg!("Burn fee distributed: {}", fee_breakdown.burn_fee);
+    }
+
+    // Arbitration and platform fees can be sent to chain fee collector for simplicity
+    let remaining_fees = fee_breakdown.arbitration_fee + fee_breakdown.platform_fee;
+    if remaining_fees > 0 {
+        let remaining_fee_transfer = Transfer {
+            from: escrow_account.clone(),
+            to: chain_fee_collector.clone(),
+            authority: escrow_account.clone(),
+        };
+        let cpi_ctx = CpiContext::new_with_signer(
+            token_program.clone(),
+            remaining_fee_transfer,
+            escrow_signer_seeds,
+        );
+        anchor_spl::token::transfer(cpi_ctx, remaining_fees)?;
+        msg!("Remaining fees distributed: {}", remaining_fees);
+    }
+
+    msg!("All escrow fees distributed successfully");
     Ok(())
 }
 
@@ -1649,6 +2003,221 @@ pub fn get_trade_stats(trade: &Trade) -> TradeStats {
     }
 }
 
+/// Comprehensive escrow validation function
+/// Note: trade_account validation should be done in instruction context using ctx.accounts.trade.key()
+pub fn validate_escrow_security(
+    escrow: &Escrow,
+    trade: &Trade,
+    expected_trade_id: u64,
+    current_timestamp: i64,
+) -> Result<()> {
+    // Validate basic escrow-trade relationship
+    require!(
+        escrow.trade_id == expected_trade_id,
+        ErrorCode::InvalidEscrowAccount
+    );
+
+    require!(
+        escrow.trade_id == trade.id,
+        ErrorCode::InvalidEscrowAccount
+    );
+
+    // Validate escrow amount is positive
+    require!(
+        escrow.amount > 0,
+        ErrorCode::InsufficientEscrow
+    );
+
+    // Validate token mint matches trade
+    require!(
+        escrow.token_mint == trade.token_mint,
+        ErrorCode::InvalidTokenMint
+    );
+
+    // Validate fee breakdown is reasonable
+    let total_fees = escrow.fee_breakdown.total_fees();
+    require!(
+        total_fees < escrow.amount,
+        ErrorCode::ExcessiveFees
+    );
+
+    // Validate each fee component is not excessive
+    require!(
+        escrow.fee_breakdown.chain_fee <= escrow.amount / 10, // Max 10%
+        ErrorCode::ExcessiveFees
+    );
+
+    require!(
+        escrow.fee_breakdown.burn_fee <= escrow.amount / 20, // Max 5%
+        ErrorCode::ExcessiveFees
+    );
+
+    require!(
+        escrow.fee_breakdown.warchest_fee <= escrow.amount / 20, // Max 5%
+        ErrorCode::ExcessiveFees
+    );
+
+    require!(
+        escrow.fee_breakdown.arbitration_fee <= escrow.amount / 20, // Max 5%
+        ErrorCode::ExcessiveFees
+    );
+
+    require!(
+        escrow.fee_breakdown.platform_fee <= escrow.amount / 50, // Max 2%
+        ErrorCode::ExcessiveFees
+    );
+
+    // Validate funding timestamp
+    if escrow.escrow_state == EscrowState::Funded {
+        require!(
+            escrow.funded_at > 0,
+            ErrorCode::InvalidEscrowState
+        );
+
+        require!(
+            escrow.funded_at <= current_timestamp,
+            ErrorCode::InvalidEscrowState
+        );
+    }
+
+    // Validate release conditions
+    if escrow.release_conditions.dispute_timeout > 0 {
+        require!(
+            escrow.release_conditions.dispute_timeout > escrow.funded_at,
+            ErrorCode::InvalidTimer
+        );
+    }
+
+    if escrow.release_conditions.auto_release_timeout > 0 {
+        require!(
+            escrow.release_conditions.auto_release_timeout > escrow.funded_at,
+            ErrorCode::InvalidTimer
+        );
+    }
+
+    msg!("Escrow security validation passed for trade {}", expected_trade_id);
+    Ok(())
+}
+
+/// Validate escrow state transition
+pub fn validate_escrow_state_transition(
+    current_state: &EscrowState,
+    new_state: &EscrowState,
+) -> Result<()> {
+    let valid = match (current_state, new_state) {
+        // From Created
+        (EscrowState::Created, EscrowState::Funded) => true,
+        
+        // From Funded
+        (EscrowState::Funded, EscrowState::Released) => true,
+        (EscrowState::Funded, EscrowState::Refunded) => true,
+        (EscrowState::Funded, EscrowState::Disputed) => true,
+        
+        // From Disputed
+        (EscrowState::Disputed, EscrowState::Released) => true,
+        (EscrowState::Disputed, EscrowState::Refunded) => true,
+        
+        // All other transitions are invalid
+        _ => false,
+    };
+
+    require!(valid, ErrorCode::InvalidStateTransition);
+    Ok(())
+}
+
+/// Check if escrow can be released given current conditions
+pub fn can_release_escrow(
+    escrow: &Escrow,
+    trade: &Trade,
+    current_timestamp: i64,
+    is_seller: bool,
+    is_buyer_confirmed: bool,
+) -> Result<bool> {
+    // Basic state checks
+    if escrow.escrow_state != EscrowState::Funded {
+        return Ok(false);
+    }
+
+    if trade.state != TradeState::FiatDeposited {
+        return Ok(false);
+    }
+
+    // Check release conditions
+    if escrow.release_conditions.requires_seller_approval && !is_seller {
+        return Ok(false);
+    }
+
+    if escrow.release_conditions.requires_buyer_confirmation && !is_buyer_confirmed {
+        return Ok(false);
+    }
+
+    // Check timeouts
+    if escrow.release_conditions.auto_release_timeout > 0 
+        && current_timestamp > escrow.release_conditions.auto_release_timeout {
+        return Ok(false); // Auto-release timeout passed
+    }
+
+    Ok(true)
+}
+
+/// Check if escrow can be refunded given current conditions
+pub fn can_refund_escrow(
+    escrow: &Escrow,
+    trade: &Trade,
+    current_timestamp: i64,
+) -> Result<bool> {
+    // Basic state checks
+    if escrow.escrow_state != EscrowState::Funded {
+        return Ok(false);
+    }
+
+    if trade.state != TradeState::EscrowFunded {
+        return Ok(false);
+    }
+
+    // Check if dispute timeout has passed (allowing refund)
+    if escrow.release_conditions.dispute_timeout > 0 {
+        if current_timestamp <= escrow.release_conditions.dispute_timeout {
+            return Ok(false); // Still within dispute period
+        }
+    }
+
+    Ok(true)
+}
+
+/// Get detailed escrow status for queries
+pub fn get_escrow_status(escrow: &Escrow, current_timestamp: i64) -> EscrowStatus {
+    let is_expired = escrow.release_conditions.auto_release_timeout > 0 
+        && current_timestamp > escrow.release_conditions.auto_release_timeout;
+
+    let time_until_dispute_timeout = if escrow.release_conditions.dispute_timeout > 0 {
+        escrow.release_conditions.dispute_timeout.saturating_sub(current_timestamp)
+    } else {
+        0
+    };
+
+    let time_until_auto_release = if escrow.release_conditions.auto_release_timeout > 0 {
+        escrow.release_conditions.auto_release_timeout.saturating_sub(current_timestamp)
+    } else {
+        0
+    };
+
+    EscrowStatus {
+        trade_id: escrow.trade_id,
+        state: escrow.escrow_state.clone(),
+        amount: escrow.amount,
+        net_amount: escrow.get_net_amount(),
+        total_fees: escrow.fee_breakdown.total_fees(),
+        is_funded: escrow.is_funded(),
+        is_released: escrow.is_released(),
+        can_release: escrow.can_release(),
+        is_expired,
+        time_until_dispute_timeout,
+        time_until_auto_release,
+        funded_at: escrow.funded_at,
+    }
+}
+
 /// Trade statistics structure
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct TradeStats {
@@ -1660,4 +2229,21 @@ pub struct TradeStats {
     pub is_active: bool,
     pub is_disputed: bool,
     pub is_completed: bool,
+}
+
+/// Escrow status structure for queries
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct EscrowStatus {
+    pub trade_id: u64,
+    pub state: EscrowState,
+    pub amount: u64,
+    pub net_amount: u64,
+    pub total_fees: u64,
+    pub is_funded: bool,
+    pub is_released: bool,
+    pub can_release: bool,
+    pub is_expired: bool,
+    pub time_until_dispute_timeout: i64,
+    pub time_until_auto_release: i64,
+    pub funded_at: i64,
 }
