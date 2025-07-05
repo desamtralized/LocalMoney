@@ -1,6 +1,8 @@
 use anchor_lang::prelude::*;
 use shared_types::*;
 
+pub mod cpi;
+
 declare_id!("J5FDxQmMpiF4vqKBSWQS3JRGLyE8djRgoHF8QQJJKWM1");
 
 #[program]

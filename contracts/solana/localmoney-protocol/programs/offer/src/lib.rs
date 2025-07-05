@@ -1866,6 +1866,111 @@ pub mod offer {
         
         Ok(())
     }
+
+    /// Example: Query Hub configuration and validate offer parameters
+    /// 
+    /// This function demonstrates how to use the Hub configuration queries
+    /// implemented in Task 3.4.2 to validate offer parameters against
+    /// protocol limits and get fee information.
+    pub fn validate_offer_with_hub_config(
+        ctx: Context<ValidateOfferWithHubConfig>,
+        min_amount_usd: u64,
+        max_amount_usd: u64,
+        user_offers: u8,
+        user_trades: u8,
+    ) -> Result<()> {
+        // Query protocol fees from Hub configuration
+        let protocol_fees = hub::cpi::get_protocol_fees_from_config(&ctx.accounts.hub_config);
+        msg!("Protocol fees - Chain: {}bps, Burn: {}bps, Warchest: {}bps, Arbitration: {}bps",
+            protocol_fees.chain_fee_bps,
+            protocol_fees.burn_fee_bps,
+            protocol_fees.warchest_fee_bps,
+            protocol_fees.arbitration_fee_bps
+        );
+
+        // Query trading limits from Hub configuration
+        let trading_limits = hub::cpi::get_trading_limits_from_config(&ctx.accounts.hub_config);
+        msg!("Trading limits - Min: ${}, Max: ${}, Max offers: {}, Max trades: {}",
+            trading_limits.min_amount_usd,
+            trading_limits.max_amount_usd,
+            trading_limits.active_offers_limit,
+            trading_limits.active_trades_limit
+        );
+
+        // Query timer configuration
+        let timer_config = hub::cpi::get_timer_config_from_config(&ctx.accounts.hub_config);
+        msg!("Timer config - Trade expiration: {}s, Dispute window: {}s",
+            timer_config.trade_expiration_timer,
+            timer_config.trade_dispute_timer
+        );
+
+        // Query program addresses
+        let program_addresses = hub::cpi::get_program_addresses_from_config(&ctx.accounts.hub_config);
+        msg!("Program addresses - Offer: {}, Trade: {}, Profile: {}, Price: {}",
+            program_addresses.offer_program,
+            program_addresses.trade_program,
+            program_addresses.profile_program,
+            program_addresses.price_program
+        );
+
+        // Query fee collectors
+        let fee_collectors = hub::cpi::get_fee_collectors_from_config(&ctx.accounts.hub_config);
+        msg!("Fee collectors - Chain: {}, Warchest: {}, Price provider: {}",
+            fee_collectors.chain_fee_collector,
+            fee_collectors.warchest,
+            fee_collectors.price_provider
+        );
+
+        // Get all trading-related configuration in one call
+        let (limits, timers, fees) = hub::cpi::get_trading_config_from_config(&ctx.accounts.hub_config);
+        msg!("Combined trading config retrieved successfully");
+
+        // Get all fee-related configuration in one call
+        let (protocol_fees, collectors) = hub::cpi::get_fee_config_from_config(&ctx.accounts.hub_config);
+        msg!("Combined fee config retrieved successfully");
+
+        // Validate offer amount range against Hub configuration
+        hub::cpi::validate_offer_amount_range_against_config(
+            &ctx.accounts.hub_config,
+            min_amount_usd,
+            max_amount_usd,
+        )?;
+        msg!("Offer amount range validation passed");
+
+        // Validate user activity limits against Hub configuration
+        hub::cpi::validate_user_activity_limits_against_config(
+            &ctx.accounts.hub_config,
+            user_offers,
+            user_trades,
+        )?;
+        msg!("User activity limits validation passed");
+
+        // Validate complete offer setup against Hub configuration
+        hub::cpi::validate_offer_setup_against_config(
+            &ctx.accounts.hub_config,
+            min_amount_usd,
+            max_amount_usd,
+            user_offers,
+            user_trades,
+        )?;
+        msg!("Complete offer setup validation passed");
+
+        // Check if this program is authorized by Hub configuration
+        let is_authorized = hub::cpi::is_program_authorized_by_config(
+            &ctx.accounts.hub_config,
+            &ctx.program_id,
+            RegisteredProgramType::Offer,
+        );
+        require!(is_authorized, LocalMoneyErrorCode::Unauthorized);
+        msg!("Program authorization validation passed");
+
+        // Get full configuration snapshot for detailed analysis
+        let config_snapshot = hub::cpi::get_full_config_from_config(&ctx.accounts.hub_config);
+        msg!("Full config snapshot retrieved - Authority: {}", config_snapshot.authority);
+
+        msg!("All Hub configuration queries and validations completed successfully");
+        Ok(())
+    }
 }
 
 /// Offer account - represents a buy or sell offer
@@ -2617,6 +2722,23 @@ pub struct RegisterWithHub<'info> {
 
     /// System program for account creation
     pub system_program: Program<'info, System>,
+}
+
+/// Account structure for demonstrating Hub configuration queries
+#[derive(Accounts)]
+pub struct ValidateOfferWithHubConfig<'info> {
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: Account<'info, hub::GlobalConfig>,
+
+    /// Hub program ID
+    /// CHECK: This is the hub program we're querying config from
+    pub hub_program: UncheckedAccount<'info>,
 }
 
 #[error_code]
