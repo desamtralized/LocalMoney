@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use shared_types::*;
+use hub::{ProtocolFees, TradingLimits, TimerConfig, ProgramAddresses, FeeCollectors, ConfigSnapshot};
 
 declare_id!("6HJHAiMENmYh4wW99YtHVY6tGDTzdrNeMtwSpDiyGu1k");
 
@@ -794,6 +795,120 @@ pub mod profile {
         };
 
         Ok(health)
+    }
+
+    /// Query protocol fees from hub
+    pub fn get_protocol_fees(ctx: Context<QueryHubConfig>) -> Result<ProtocolFees> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetProtocolFees {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get protocol fees
+        hub::cpi::get_protocol_fees(cpi_ctx).map(|return_value| return_value.get())
+    }
+
+    /// Query trading limits from hub
+    pub fn get_trading_limits(ctx: Context<QueryHubConfig>) -> Result<TradingLimits> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetTradingLimits {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get trading limits
+        hub::cpi::get_trading_limits(cpi_ctx).map(|return_value| return_value.get())
+    }
+
+    /// Query timer configuration from hub
+    pub fn get_timer_config(ctx: Context<QueryHubConfig>) -> Result<TimerConfig> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetTimerConfig {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get timer config
+        hub::cpi::get_timer_config(cpi_ctx).map(|return_value| return_value.get())
+    }
+
+    /// Query program addresses from hub
+    pub fn get_program_addresses(ctx: Context<QueryHubConfig>) -> Result<ProgramAddresses> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetProgramAddresses {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get program addresses
+        hub::cpi::get_program_addresses(cpi_ctx).map(|return_value| return_value.get())
+    }
+
+    /// Query fee collector addresses from hub
+    pub fn get_fee_collectors(ctx: Context<QueryHubConfig>) -> Result<FeeCollectors> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetFeeCollectors {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get fee collectors
+        hub::cpi::get_fee_collectors(cpi_ctx).map(|return_value| return_value.get())
+    }
+
+    /// Query full configuration from hub
+    pub fn get_full_config(ctx: Context<QueryHubConfig>) -> Result<ConfigSnapshot> {
+        let hub_program = &ctx.accounts.hub_program;
+        let hub_config = &ctx.accounts.hub_config;
+        let program_account = &ctx.accounts.program_account;
+
+        // Create CPI context for hub program query
+        let cpi_program = hub_program.to_account_info();
+        let cpi_accounts = hub::cpi::accounts::GetFullConfig {
+            config: hub_config.to_account_info(),
+            program_id: program_account.to_account_info(),
+        };
+        
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        
+        // Call hub program to get full config
+        hub::cpi::get_full_config(cpi_ctx).map(|return_value| return_value.get())
     }
 }
 
@@ -2038,6 +2153,27 @@ fn calculate_improvement_potential(profile: &Profile) -> u8 {
     }
 
     potential.min(100)
+}
+
+/// Account structure for querying hub configuration
+#[derive(Accounts)]
+pub struct QueryHubConfig<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're querying
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// The profile program account (this program) for CPI calls
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
 }
 
 /// Account structure for registering the profile program with the hub
