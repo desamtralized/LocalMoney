@@ -329,6 +329,13 @@ pub enum ErrorCode {
 
     #[msg("Fee collector account is invalid")]
     InvalidFeeCollector,
+
+    // Authority Validation Errors (1300-1399)
+    #[msg("Program is not authorized for this operation")]
+    ProgramNotAuthorized,
+
+    #[msg("Cross-program operation is not allowed")]
+    CrossProgramOperationNotAllowed,
 }
 
 /// Error conversion utilities
@@ -452,6 +459,9 @@ impl ErrorCode {
 
             ErrorCode::InvalidFeeConfiguration
             | ErrorCode::InvalidFeeCollector => "Fee",
+
+            ErrorCode::ProgramNotAuthorized
+            | ErrorCode::CrossProgramOperationNotAllowed => "Authority",
         }
     }
 

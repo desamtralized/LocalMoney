@@ -1,9 +1,17 @@
 use anchor_lang::prelude::*;
 use shared_types::*;
 
-pub mod cpi;
+/// Cross-program operation types for authority validation
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum CrossProgramOperation {
+    Query,
+    UpdateStats,
+    QueryHubConfig,
+}
 
 declare_id!("J5FDxQmMpiF4vqKBSWQS3JRGLyE8djRgoHF8QQJJKWM1");
+
+pub mod helpers;
 
 #[program]
 pub mod hub {
@@ -489,7 +497,7 @@ pub mod hub {
     /// Get program upgrade authority - utility function
     pub fn get_upgrade_authority(
         ctx: Context<GetUpgradeAuthority>,
-        program_type: RegisteredProgramType,
+        _program_type: RegisteredProgramType,
     ) -> Result<Option<Pubkey>> {
         let config = &ctx.accounts.config;
 
@@ -497,6 +505,258 @@ pub mod hub {
         // In a production system, this could track separate upgrade authorities
         Ok(Some(config.authority))
     }
+
+    /// Validate that the caller is an authorized program
+    pub fn validate_program_authority(
+        ctx: Context<ValidateProgramAuthority>,
+        required_program_type: RegisteredProgramType,
+    ) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let caller_program_id = ctx.accounts.program_id.key();
+
+        // Check if the caller matches the expected program type
+        let is_authorized = match required_program_type {
+            RegisteredProgramType::Offer => caller_program_id == config.offer_program,
+            RegisteredProgramType::Trade => caller_program_id == config.trade_program,
+            RegisteredProgramType::Profile => caller_program_id == config.profile_program,
+            RegisteredProgramType::Price => caller_program_id == config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
+            }
+        };
+
+        require!(is_authorized, LocalMoneyErrorCode::ProgramNotAuthorized);
+
+        msg!("Program authority validated: {:?} program {}", required_program_type, caller_program_id);
+        Ok(())
+    }
+
+    /// Validate that the caller is the hub admin authority
+    pub fn validate_hub_authority(ctx: Context<ValidateHubAuthority>) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let caller = ctx.accounts.authority.key();
+
+        require!(
+            caller == config.authority,
+            LocalMoneyErrorCode::Unauthorized
+        );
+
+        msg!("Hub authority validated: {}", caller);
+        Ok(())
+    }
+
+    /// Validate that the caller can perform admin operations
+    pub fn validate_admin_authority(
+        ctx: Context<ValidateAdminAuthority>,
+        operation: AdminOperation,
+    ) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let caller = ctx.accounts.authority.key();
+
+        // Check if caller is the hub authority
+        require!(
+            caller == config.authority,
+            LocalMoneyErrorCode::Unauthorized
+        );
+
+        // Additional validation based on operation type
+        match operation {
+            AdminOperation::UpdateConfig => {
+                msg!("Admin authority validated for config update: {}", caller);
+            }
+            AdminOperation::UpdateAuthority => {
+                msg!("Admin authority validated for authority update: {}", caller);
+            }
+            AdminOperation::RegisterProgram => {
+                msg!("Admin authority validated for program registration: {}", caller);
+            }
+            AdminOperation::UpdateProgramRegistry => {
+                msg!("Admin authority validated for program registry update: {}", caller);
+            }
+            AdminOperation::SetUpgradeAuthority => {
+                msg!("Admin authority validated for upgrade authority update: {}", caller);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate cross-program authorization for sensitive operations
+    pub fn validate_cross_program_authority(
+        ctx: Context<ValidateCrossProgramAuthority>,
+        calling_program_type: RegisteredProgramType,
+        target_program_type: RegisteredProgramType,
+        operation: CrossProgramOperation,
+    ) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let caller_program_id = ctx.accounts.calling_program.key();
+
+        // First validate that the calling program is properly registered
+        let is_calling_program_authorized = match calling_program_type {
+            RegisteredProgramType::Offer => caller_program_id == config.offer_program,
+            RegisteredProgramType::Trade => caller_program_id == config.trade_program,
+            RegisteredProgramType::Profile => caller_program_id == config.profile_program,
+            RegisteredProgramType::Price => caller_program_id == config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
+            }
+        };
+
+        require!(
+            is_calling_program_authorized,
+            LocalMoneyErrorCode::ProgramNotAuthorized
+        );
+
+        // Validate that the operation is allowed between these program types
+        let is_operation_allowed = match (calling_program_type, target_program_type, operation.clone()) {
+            // Offer program can query profile and price programs
+            (RegisteredProgramType::Offer, RegisteredProgramType::Profile, CrossProgramOperation::Query) => true,
+            (RegisteredProgramType::Offer, RegisteredProgramType::Price, CrossProgramOperation::Query) => true,
+            (RegisteredProgramType::Offer, RegisteredProgramType::Profile, CrossProgramOperation::UpdateStats) => true,
+            
+            // Trade program can query and update profile, and query price
+            (RegisteredProgramType::Trade, RegisteredProgramType::Profile, CrossProgramOperation::Query) => true,
+            (RegisteredProgramType::Trade, RegisteredProgramType::Profile, CrossProgramOperation::UpdateStats) => true,
+            (RegisteredProgramType::Trade, RegisteredProgramType::Price, CrossProgramOperation::Query) => true,
+            
+            // Profile program can query hub configuration
+            (RegisteredProgramType::Profile, RegisteredProgramType::Price, CrossProgramOperation::Query) => true,
+            
+            // Price program can query hub configuration
+            (RegisteredProgramType::Price, RegisteredProgramType::Profile, CrossProgramOperation::Query) => true,
+            
+            // All programs can query hub configuration
+            (_, _, CrossProgramOperation::QueryHubConfig) => true,
+            
+            // Default: deny
+            _ => false,
+        };
+
+        require!(
+            is_operation_allowed,
+            LocalMoneyErrorCode::CrossProgramOperationNotAllowed
+        );
+
+        msg!(
+            "Cross-program authority validated: {:?} -> {:?} for {:?}",
+            calling_program_type,
+            target_program_type,
+            operation
+        );
+
+        Ok(())
+    }
+
+    /// Validate that a program registration is legitimate
+    pub fn validate_program_registration_authority(
+        ctx: Context<ValidateProgramRegistrationAuthority>,
+        program_type: RegisteredProgramType,
+    ) -> Result<()> {
+        let config = &ctx.accounts.config;
+        let program_id = ctx.accounts.program_id.key();
+
+        // Check if the program is already registered in the config
+        let expected_program_id = match program_type {
+            RegisteredProgramType::Offer => config.offer_program,
+            RegisteredProgramType::Trade => config.trade_program,
+            RegisteredProgramType::Profile => config.profile_program,
+            RegisteredProgramType::Price => config.price_program,
+            RegisteredProgramType::Arbitration => {
+                // TODO: Add arbitration program field to config
+                return Err(LocalMoneyErrorCode::InvalidProgramType.into());
+            }
+        };
+
+        require!(
+            program_id == expected_program_id,
+            LocalMoneyErrorCode::ProgramNotRegistered
+        );
+
+        msg!("Program registration authority validated: {:?} program {}", program_type, program_id);
+        Ok(())
+    }
+}
+
+/// Admin operation types for authority validation
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum AdminOperation {
+    UpdateConfig,
+    UpdateAuthority,
+    RegisterProgram,
+    UpdateProgramRegistry,
+    SetUpgradeAuthority,
+}
+
+/// Account structures for authority validation
+
+#[derive(Accounts)]
+#[instruction(required_program_type: RegisteredProgramType)]
+pub struct ValidateProgramAuthority<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, GlobalConfig>,
+
+    /// The program requesting validation
+    pub program_id: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ValidateHubAuthority<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, GlobalConfig>,
+
+    /// The authority making the request
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(operation: AdminOperation)]
+pub struct ValidateAdminAuthority<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, GlobalConfig>,
+
+    /// The authority making the request
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(calling_program_type: RegisteredProgramType, target_program_type: RegisteredProgramType, operation: CrossProgramOperation)]
+pub struct ValidateCrossProgramAuthority<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, GlobalConfig>,
+
+    /// The program making the cross-program call
+    pub calling_program: Signer<'info>,
+
+    /// The target program being called (for validation)
+    /// CHECK: This is used for validation purposes only
+    pub target_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(program_type: RegisteredProgramType)]
+pub struct ValidateProgramRegistrationAuthority<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump
+    )]
+    pub config: Account<'info, GlobalConfig>,
+
+    /// The program requesting registration validation
+    pub program_id: Signer<'info>,
 }
 
 /// Validation Functions

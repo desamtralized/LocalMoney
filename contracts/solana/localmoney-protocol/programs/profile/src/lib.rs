@@ -663,6 +663,100 @@ pub mod profile {
         Ok(performance)
     }
 
+    /// Query Hub configuration - get protocol fees
+    pub fn get_hub_protocol_fees(ctx: Context<QueryHubConfig>) -> Result<ProtocolFees> {
+        let hub_config = &ctx.accounts.hub_config;
+        // Directly access the config data rather than using CPI helpers
+        let config_data = hub_config.try_borrow_data()?;
+        let discriminator = &config_data[0..8];
+        
+        // For now, return a mock response - this would need proper deserialization
+        let fees = ProtocolFees {
+            chain_fee_bps: 25,
+            burn_fee_bps: 50,
+            warchest_fee_bps: 25,
+            arbitration_fee_bps: 100,
+        };
+        Ok(fees)
+    }
+
+    /// Query Hub configuration - get trading limits
+    pub fn get_hub_trading_limits(ctx: Context<QueryHubConfig>) -> Result<TradingLimits> {
+        let _hub_config = &ctx.accounts.hub_config;
+        // Return mock data for now
+        let limits = TradingLimits {
+            min_amount_usd: 1000000,
+            max_amount_usd: 1000000000000,
+            active_offers_limit: 10,
+            active_trades_limit: 5,
+        };
+        Ok(limits)
+    }
+
+    /// Query Hub configuration - get timer configuration
+    pub fn get_hub_timer_config(ctx: Context<QueryHubConfig>) -> Result<TimerConfig> {
+        let _hub_config = &ctx.accounts.hub_config;
+        // Return mock data for now
+        let timers = TimerConfig {
+            trade_expiration_timer: 24 * 60 * 60,
+            trade_dispute_timer: 7 * 24 * 60 * 60,
+        };
+        Ok(timers)
+    }
+
+    /// Query Hub configuration - get program addresses
+    pub fn get_hub_program_addresses(ctx: Context<QueryHubConfig>) -> Result<ProgramAddresses> {
+        let _hub_config = &ctx.accounts.hub_config;
+        // Return mock data for now
+        let addresses = ProgramAddresses {
+            offer_program: Pubkey::default(),
+            trade_program: Pubkey::default(),
+            profile_program: Pubkey::default(),
+            price_program: Pubkey::default(),
+        };
+        Ok(addresses)
+    }
+
+    /// Query Hub configuration - get fee collectors
+    pub fn get_hub_fee_collectors(ctx: Context<QueryHubConfig>) -> Result<FeeCollectors> {
+        let _hub_config = &ctx.accounts.hub_config;
+        // Return mock data for now
+        let collectors = FeeCollectors {
+            chain_fee_collector: Pubkey::default(),
+            warchest: Pubkey::default(),
+            price_provider: Pubkey::default(),
+        };
+        Ok(collectors)
+    }
+
+    /// Query Hub configuration - get full configuration
+    pub fn get_hub_full_config(ctx: Context<QueryHubConfig>) -> Result<ConfigSnapshot> {
+        let _hub_config = &ctx.accounts.hub_config;
+        // Return mock data for now
+        let config = ConfigSnapshot {
+            authority: Pubkey::default(),
+            offer_program: Pubkey::default(),
+            trade_program: Pubkey::default(),
+            profile_program: Pubkey::default(),
+            price_program: Pubkey::default(),
+            price_provider: Pubkey::default(),
+            local_mint: Pubkey::default(),
+            chain_fee_collector: Pubkey::default(),
+            warchest: Pubkey::default(),
+            active_offers_limit: 10,
+            active_trades_limit: 5,
+            arbitration_fee_bps: 100,
+            burn_fee_bps: 50,
+            chain_fee_bps: 25,
+            warchest_fee_bps: 25,
+            trade_expiration_timer: 24 * 60 * 60,
+            trade_dispute_timer: 7 * 24 * 60 * 60,
+            trade_limit_min: 1000000,
+            trade_limit_max: 1000000000000,
+        };
+        Ok(config)
+    }
+
     /// Get activity analytics with detailed insights
     pub fn get_activity_analytics(ctx: Context<GetProfile>) -> Result<ActivityAnalytics> {
         let profile = &ctx.accounts.profile;

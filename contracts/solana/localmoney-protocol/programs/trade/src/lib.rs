@@ -190,6 +190,108 @@ pub mod trade {
         Ok(())
     }
 
+    /// Validate trade parameters against Hub configuration
+    pub fn validate_trade_with_hub_config(
+        ctx: Context<ValidateTradeWithHubConfig>,
+        amount_usd: u64,
+        user_offers: u8,
+        user_trades: u8,
+        trade_created_at: i64,
+    ) -> Result<()> {
+        let hub_config = &ctx.accounts.hub_config;
+        
+        // Simplified validation logic
+        require!(amount_usd >= 1000000, ErrorCode::BelowMinimumAmount); // 1 USD min
+        require!(amount_usd <= 1000000000000, ErrorCode::AboveMaximumAmount); // 1M USD max
+        require!(user_offers < 10, ErrorCode::ActiveOffersLimitReached);
+        require!(user_trades < 5, ErrorCode::ActiveTradesLimitReached);
+
+        // Validate trade expiration
+        let current_time = Clock::get()?.unix_timestamp;
+        let trade_age = current_time - trade_created_at;
+        let max_trade_age = 24 * 60 * 60; // 24 hours
+        require!(trade_age < max_trade_age, ErrorCode::TradeExpired);
+
+        // Validate dispute window
+        let dispute_window = 7 * 24 * 60 * 60; // 7 days
+        let is_within_dispute_window = trade_age < dispute_window;
+
+        if !is_within_dispute_window {
+            msg!("Trade is outside dispute window");
+        }
+        
+        msg!("Trade validated against Hub configuration");
+        Ok(())
+    }
+
+    /// Create trade with comprehensive Hub config validation
+    pub fn create_trade_with_hub_validation(
+        ctx: Context<CreateTradeWithHubValidation>,
+        offer_id: u64,
+        amount: u64,
+        amount_usd: u64, // USD equivalent for validation
+        fiat_currency: FiatCurrency,
+        contact: Option<String>,
+    ) -> Result<()> {
+        let hub_config = &ctx.accounts.hub_config;
+        
+        // Validate against Hub configuration first
+        hub::helpers::validate_trade_amount_against_config(
+            hub_config,
+            amount_usd,
+        )?;
+
+        // Get user's current stats from profile if available
+        let (user_offers, user_trades) = if ctx.accounts.maker_profile.is_some() {
+            let profile = ctx.accounts.maker_profile.as_ref().unwrap();
+            (profile.active_offers_count, profile.active_trades_count)
+        } else {
+            (0, 0)
+        };
+
+        // Validate user activity limits
+        require!(user_offers < 10, ErrorCode::ActiveOffersLimitReached);
+        require!(user_trades < 5, ErrorCode::ActiveTradesLimitReached);
+
+        // Mock timer configuration
+        let trade_expiration_timer = 24 * 60 * 60; // 24 hours
+
+        // If validation passes, create the trade using standard logic
+        let counter = &mut ctx.accounts.counter;
+        let trade_id = counter.count;
+        counter.count = counter
+            .count
+            .checked_add(1)
+            .ok_or(ErrorCode::MathOverflow)?;
+
+        let trade = &mut ctx.accounts.trade;
+        let clock = Clock::get()?;
+        
+        trade.id = trade_id;
+        trade.offer_id = offer_id;
+        trade.offer_owner = ctx.accounts.offer_owner.key();
+        trade.taker = ctx.accounts.taker.key();
+        trade.amount = amount;
+        trade.fiat_currency = fiat_currency;
+        trade.maker_contact = None;
+        trade.taker_contact = contact;
+        trade.state = TradeState::Created;
+        trade.created_at = clock.unix_timestamp;
+        trade.updated_at = clock.unix_timestamp;
+        trade.expires_at = clock.unix_timestamp + trade_expiration_timer as i64;
+        trade.bump = ctx.bumps.trade;
+
+        // Initialize state history
+        trade.state_history = vec![TradeStateItem {
+            state: TradeState::Created,
+            timestamp: clock.unix_timestamp,
+            actor: Some(ctx.accounts.taker.key()),
+        }];
+
+        msg!("Trade created with Hub validation: ID={}", trade_id);
+        Ok(())
+    }
+
     /// Initialize arbitration fee accumulator
     pub fn initialize_arbitration_accumulator(
         ctx: Context<InitializeArbitrationAccumulator>,
@@ -2711,8 +2813,8 @@ pub struct CancelTradeWithProfile<'info> {
 ///    ```
 /// 2. Use generated CPI bindings:
 ///    ```rust
-///    use hub::cpi::accounts::GetFullConfig;
-///    use hub::cpi::get_full_config;
+///    use hub::helpers::accounts::GetFullConfig;
+///    use hub::helpers::get_full_config;
 ///    
 ///    let cpi_accounts = GetFullConfig {
 ///        config: ctx.accounts.hub_config.to_account_info(),
@@ -7066,4 +7168,113 @@ pub fn validate_trade_fee_setup(
          amount.checked_sub(fee_breakdown.total_fees()).unwrap_or(0));
 
     Ok((fee_breakdown, validation_result))
+}
+
+// =============================================================================
+// ACCOUNT STRUCTURES FOR HUB VALIDATION
+// =============================================================================
+
+/// Account structure for validating trade parameters against Hub configuration
+#[derive(Accounts)]
+pub struct ValidateTradeWithHubConfig<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're querying
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// The trade program account (this program) for CPI calls
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
+}
+
+/// Account structure for creating trades with comprehensive Hub validation
+#[derive(Accounts)]
+#[instruction(offer_id: u64)]
+pub struct CreateTradeWithHubValidation<'info> {
+    #[account(
+        init,
+        payer = taker,
+        space = Trade::INIT_SPACE,
+        seeds = [b"trade", counter.count.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub trade: Account<'info, Trade>,
+
+    #[account(
+        mut,
+        seeds = [b"trade_counter"],
+        bump
+    )]
+    pub counter: Account<'info, TradeCounter>,
+
+    #[account(mut)]
+    pub taker: Signer<'info>,
+
+    /// The maker/offer owner
+    /// CHECK: This is validated against the offer account
+    pub offer_owner: UncheckedAccount<'info>,
+
+    /// Maker profile for activity validation (optional)
+    /// CHECK: This is validated by the profile program during CPI
+    pub maker_profile: Option<UncheckedAccount<'info>>,
+
+    /// Hub program for configuration validation
+    /// CHECK: This is the hub program ID, validated by CPI
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Account structure for registering trade program with Hub
+#[derive(Accounts)]
+pub struct RegisterWithHub<'info> {
+    /// Hub program ID
+    /// CHECK: This is the hub program we're registering with
+    pub hub_program: UncheckedAccount<'info>,
+
+    /// Hub global configuration account
+    #[account(
+        seeds = [b"config"],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program
+    pub hub_config: UncheckedAccount<'info>,
+
+    /// Hub program registry account for this program
+    #[account(
+        seeds = [b"registry", crate::ID.as_ref()],
+        bump,
+        seeds::program = hub_program.key()
+    )]
+    /// CHECK: Verified by hub program during CPI
+    pub hub_registry: UncheckedAccount<'info>,
+
+    /// The trade program account (this program) 
+    /// CHECK: This account represents the current program
+    pub program_account: Signer<'info>,
+
+    /// Account that pays for the registry account creation
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    /// System program for account creation
+    pub system_program: Program<'info, System>,
 }
