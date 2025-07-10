@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use shared_types::*;
+use hub;
 
 declare_id!("8X9QeHbXRLzKJ4R1WfZhKz8Wn3Rj2MKHvQiVfJYJGqNp");
 
