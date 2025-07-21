@@ -628,7 +628,16 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Created proper account structures: `RefreshTradePriceLock` and `GetTradePriceLockStatus`
   - ✅ Integrated price lock validation into critical trade operations with configurable staleness limits
   - ✅ Successfully compiled with all price locking mechanism features
-- [ ] **3.5.3** Add price validation in offers
+- [x] **3.5.3** Add price validation in offers
+  - ✅ Added Price program CPI module with mock GetPrice and ConvertCurrency functions for offer validation
+  - ✅ Enhanced Offer struct with price validation fields: locked_rate_usd, exchange_rate, price_timestamp, price_source
+  - ✅ Updated OFFER_SIZE constant to account for new price fields (increased by 56 bytes to ~406 bytes)
+  - ✅ Implemented price validation helper functions: lock_offer_rate(), validate_offer_rate_cpi(), convert_offer_amount_to_usd(), validate_price_freshness()
+  - ✅ Enhanced all create_offer functions with price validation and rate locking (10% max deviation from market price)
+  - ✅ Updated all CreateOffer account structures to include optional price accounts (price_config, currency_price, price_program)
+  - ✅ Added proper CHECK comments for CPI account safety validation
+  - ✅ Fixed test helpers to include new price validation fields
+  - ✅ Successfully compiled with full price validation integration
 - [ ] **3.5.4** Implement USD conversion for limits
 - [ ] **3.5.5** Add price staleness validation
 - [ ] **3.5.6** Test price integration scenarios

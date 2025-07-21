@@ -47,7 +47,7 @@ pub const SECONDS_PER_MINUTE: u64 = 60;
 /// Account size constants (for rent calculation)
 pub const GLOBAL_CONFIG_SIZE: usize =
     8 + 32 + 32 + 32 + 32 + 32 + 32 + 32 + 32 + 32 + 1 + 1 + 2 + 2 + 2 + 2 + 8 + 8 + 8 + 8 + 1; // ~300 bytes
-pub const OFFER_SIZE: usize = 8 + 8 + 32 + 1 + 1 + 8 + 8 + 8 + 4 + 140 + 32 + 1 + 8 + 1; // ~350 bytes
+pub const OFFER_SIZE: usize = 8 + 8 + 32 + 1 + 1 + 8 + 8 + 8 + 4 + 140 + 32 + 1 + 8 + 8 + 8 + 8 + 32 + 1; // ~406 bytes (updated for price validation fields)
 pub const TRADE_SIZE: usize =
     8 + 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 32 + 8 + 1 + 8 + 32 + 4 + 200 + 1 + 1; // ~500 bytes base + state history
 pub const PROFILE_SIZE: usize = 8 + 32 + 8 + 8 + 1 + 8 + 8 + 4 + 200 + 4 + 200 + 1 + 1; // ~400 bytes

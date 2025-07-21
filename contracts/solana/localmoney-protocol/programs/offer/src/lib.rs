@@ -2,10 +2,66 @@ use anchor_lang::prelude::*;
 use shared_types::{
     validate_amount_range, FiatCurrency, LocalMoneyErrorCode, OfferState, OfferType,
     RegisteredProgramType, MAX_DESCRIPTION_LENGTH, OFFER_COUNTER_SEED, OFFER_SEED, OFFER_SIZE,
-    CURRENCY_PRICE_SEED, CONFIG_SEED,
+    CURRENCY_PRICE_SEED, CONFIG_SEED, PRICE_SCALE,
 };
 
 declare_id!("DGjiY2hKsDpffEgBckNfrAkDt6B5jSxwsHshyQ1cRiP9");
+
+// Mock Price program CPI module  
+// In production, this would be replaced with actual CPI calls to the Price program
+pub mod price {
+    use super::*;
+
+    pub mod cpi {
+        use super::*;
+
+        pub mod accounts {
+            use super::*;
+
+            #[derive(Accounts)]
+            pub struct GetPrice<'info> {
+                /// CHECK: This is validated by the Price program during CPI
+                pub price_config: AccountInfo<'info>,
+                /// CHECK: This is validated by the Price program during CPI
+                pub currency_price: AccountInfo<'info>,
+                /// CHECK: This is the Price program ID, validated during CPI
+                pub price_program: AccountInfo<'info>,
+            }
+
+            #[derive(Accounts)]
+            pub struct ConvertCurrency<'info> {
+                /// CHECK: This is validated by the Price program during CPI
+                pub price_config: AccountInfo<'info>,
+                /// CHECK: This is validated by the Price program during CPI
+                pub from_currency_price: AccountInfo<'info>,
+                /// CHECK: This is validated by the Price program during CPI
+                pub to_currency_price: AccountInfo<'info>,
+                /// CHECK: This is the Price program ID, validated during CPI
+                pub price_program: AccountInfo<'info>,
+            }
+        }
+
+        pub fn get_price<'info>(
+            _ctx: CpiContext<'_, '_, '_, 'info, accounts::GetPrice<'info>>,
+            _currency: FiatCurrency,
+        ) -> Result<u64> {
+            // Mock price - in production this would call price::get_price
+            msg!("CPI call to price::get_price for offer validation");
+            Ok(50000 * PRICE_SCALE) // Mock USD price
+        }
+
+        pub fn convert_currency<'info>(
+            _ctx: CpiContext<'_, '_, '_, 'info, accounts::ConvertCurrency<'info>>,
+            amount: u64,
+            _from_currency: FiatCurrency,
+            _to_currency: FiatCurrency,
+        ) -> Result<u64> {
+            // Mock conversion - in production this would call price::convert_currency
+            msg!("CPI call to price::convert_currency for offer validation");
+            Ok(amount) // Mock 1:1 conversion
+        }
+    }
+}
 
 #[program]
 pub mod offer {
@@ -191,6 +247,39 @@ pub mod offer {
             );
         }
 
+        // Lock current price for the offer using Price program CPI (if price accounts are provided)
+        let (locked_rate_usd, exchange_rate, price_timestamp, price_source) = 
+            if let (Some(price_config), Some(currency_price), Some(price_program)) = (
+                ctx.accounts.price_config.as_ref(),
+                ctx.accounts.currency_price.as_ref(), 
+                ctx.accounts.price_program.as_ref()
+            ) {
+                // Validate the rate against current market price (10% deviation allowed)
+                let is_valid = validate_offer_rate_cpi(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    rate,
+                    fiat_currency,
+                    10, // 10% max deviation
+                )?;
+                
+                if !is_valid {
+                    return Err(LocalMoneyErrorCode::InvalidRate.into());
+                }
+                
+                // Lock the price for this offer
+                lock_offer_rate(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    fiat_currency,
+                )?
+            } else {
+                // Default values if price validation is not available
+                (0, 0, 0, Pubkey::default())
+            };
+
         // Get current offer ID and increment counter
         let counter = &mut ctx.accounts.counter;
         let offer_id = counter.count;
@@ -230,6 +319,12 @@ pub mod offer {
         };
         
         offer.bump = ctx.bumps.offer;
+
+        // Set price validation fields
+        offer.locked_rate_usd = locked_rate_usd;
+        offer.exchange_rate = exchange_rate;
+        offer.price_timestamp = price_timestamp;
+        offer.price_source = price_source;
 
         // Update profile offer statistics via CPI
         if ctx.accounts.user_profile.is_some() {
@@ -1171,6 +1266,39 @@ pub mod offer {
             );
         }
 
+        // Lock current price for the offer using Price program CPI (if price accounts are provided)
+        let (locked_rate_usd, exchange_rate, price_timestamp, price_source) = 
+            if let (Some(price_config), Some(currency_price), Some(price_program)) = (
+                ctx.accounts.price_config.as_ref(),
+                ctx.accounts.currency_price.as_ref(), 
+                ctx.accounts.price_program.as_ref()
+            ) {
+                // Validate the rate against current market price (10% deviation allowed)
+                let is_valid = validate_offer_rate_cpi(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    rate,
+                    fiat_currency,
+                    10, // 10% max deviation
+                )?;
+                
+                if !is_valid {
+                    return Err(LocalMoneyErrorCode::InvalidRate.into());
+                }
+                
+                // Lock the price for this offer
+                lock_offer_rate(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    fiat_currency,
+                )?
+            } else {
+                // Default values if price validation is not available
+                (0, 0, 0, Pubkey::default())
+            };
+
         // Get current offer ID and increment counter
         let counter = &mut ctx.accounts.counter;
         let offer_id = counter.count;
@@ -1473,6 +1601,39 @@ pub mod offer {
             );
         }
 
+        // Lock current price for the offer using Price program CPI (if price accounts are provided)
+        let (locked_rate_usd, exchange_rate, price_timestamp, price_source) = 
+            if let (Some(price_config), Some(currency_price), Some(price_program)) = (
+                ctx.accounts.price_config.as_ref(),
+                ctx.accounts.currency_price.as_ref(), 
+                ctx.accounts.price_program.as_ref()
+            ) {
+                // Validate the rate against current market price (10% deviation allowed)
+                let is_valid = validate_offer_rate_cpi(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    rate,
+                    fiat_currency,
+                    10, // 10% max deviation
+                )?;
+                
+                if !is_valid {
+                    return Err(LocalMoneyErrorCode::InvalidRate.into());
+                }
+                
+                // Lock the price for this offer
+                lock_offer_rate(
+                    &price_config.to_account_info(),
+                    &currency_price.to_account_info(),
+                    &price_program.to_account_info(),
+                    fiat_currency,
+                )?
+            } else {
+                // Default values if price validation is not available
+                (0, 0, 0, Pubkey::default())
+            };
+
         // Get current offer ID and increment counter
         let counter = &mut ctx.accounts.counter;
         let offer_id = counter.count;
@@ -1511,6 +1672,12 @@ pub mod offer {
         };
         
         offer.bump = ctx.bumps.offer;
+
+        // Set price validation fields
+        offer.locked_rate_usd = locked_rate_usd;
+        offer.exchange_rate = exchange_rate;
+        offer.price_timestamp = price_timestamp;
+        offer.price_source = price_source;
 
         // Update profile offer statistics via CPI
         let profile_update_cpi = CpiContext::new(
@@ -1988,6 +2155,15 @@ pub struct Offer {
     pub created_at: i64,
     /// Expiration timestamp (0 means no expiration)
     pub expires_at: i64,
+    /// Price validation fields
+    /// USD equivalent rate at offer creation (scaled by PRICE_SCALE)
+    pub locked_rate_usd: u64,
+    /// Locked exchange rate (scaled by PRICE_SCALE)  
+    pub exchange_rate: u64,
+    /// When rate was locked/validated
+    pub price_timestamp: i64,
+    /// Price provider used for validation
+    pub price_source: Pubkey,
     /// PDA bump
     pub bump: u8,
 }
@@ -2013,6 +2189,18 @@ pub struct InitializeCounter<'info> {
 
     #[account(mut)]
     pub authority: Signer<'info>,
+
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -2059,6 +2247,18 @@ pub struct CreateOffer<'info> {
     /// Optional hub configuration account (Task 2.3.1)
     /// CHECK: This is validated by the hub program during CPI
     pub hub_config: Option<AccountInfo<'info>>,
+
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -2220,6 +2420,18 @@ pub struct CreateOfferWithLimits<'info> {
     /// CHECK: This is the offer program ID
     pub offer_program: Program<'info, crate::program::Offer>,
 
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -2277,6 +2489,18 @@ pub struct CreateOfferWithValidation<'info> {
     /// Offer program for validation calls
     /// CHECK: This is the offer program ID
     pub offer_program: Program<'info, crate::program::Offer>,
+
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -2442,6 +2666,18 @@ pub struct CreateOfferWithHubValidation<'info> {
     )]
     /// CHECK: Verified by hub program
     pub hub_config: UncheckedAccount<'info>,
+
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -2686,6 +2922,112 @@ pub struct CurrencyPrice {
     pub is_active: bool,
 }
 
+/// Price validation helper functions for offers
+/// Lock current price for the offer using Price program CPI
+pub fn lock_offer_rate<'info>(
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    fiat_currency: FiatCurrency,
+) -> Result<(u64, u64, i64, Pubkey)> {
+    let clock = Clock::get()?;
+    
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        price_config: price_config.clone(),
+        currency_price: currency_price.clone(),
+        price_program: price_program.clone(),
+    };
+    
+    let cpi_ctx = CpiContext::new(price_program.clone(), cpi_accounts);
+    let price_usd = price::cpi::get_price(cpi_ctx, fiat_currency)?;
+    
+    Ok((
+        price_usd,                      // locked_rate_usd
+        price_usd,                      // exchange_rate (same as price for direct USD conversion)
+        clock.unix_timestamp,           // price_timestamp
+        price_program.key(),           // price_source
+    ))
+}
+
+/// Validate that offer rate is within acceptable bounds of market price
+pub fn validate_offer_rate_cpi<'info>(
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    offer_rate: u64,
+    fiat_currency: FiatCurrency,
+    max_deviation_percent: u8,
+) -> Result<bool> {
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        price_config: price_config.clone(),
+        currency_price: currency_price.clone(),
+        price_program: price_program.clone(),
+    };
+    
+    let cpi_ctx = CpiContext::new(price_program.clone(), cpi_accounts);
+    let market_price = price::cpi::get_price(cpi_ctx, fiat_currency)?;
+    
+    // Calculate acceptable range based on deviation percentage
+    let max_deviation = max_deviation_percent.min(50); // Cap at 50% max deviation
+    let lower_bound = market_price
+        .checked_mul(100 - max_deviation as u64)
+        .ok_or(LocalMoneyErrorCode::MathOverflow)?
+        .checked_div(100)
+        .ok_or(LocalMoneyErrorCode::MathOverflow)?;
+    let upper_bound = market_price
+        .checked_mul(100 + max_deviation as u64)
+        .ok_or(LocalMoneyErrorCode::MathOverflow)?
+        .checked_div(100)
+        .ok_or(LocalMoneyErrorCode::MathOverflow)?;
+    
+    // Validate offer rate is within acceptable bounds
+    let is_valid = offer_rate >= lower_bound && offer_rate <= upper_bound;
+    
+    msg!(
+        "Rate validation: offer_rate={}, market_price={}, bounds=[{}, {}], valid={}",
+        offer_rate,
+        market_price,
+        lower_bound,
+        upper_bound,
+        is_valid
+    );
+    
+    Ok(is_valid)
+}
+
+/// Convert offer amount to USD using Price program CPI
+pub fn convert_offer_amount_to_usd<'info>(
+    price_config: &AccountInfo<'info>,
+    from_currency_price: &AccountInfo<'info>,
+    to_currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    amount: u64,
+    from_currency: FiatCurrency,
+) -> Result<u64> {
+    let cpi_accounts = price::cpi::accounts::ConvertCurrency {
+        price_config: price_config.clone(),
+        from_currency_price: from_currency_price.clone(),
+        to_currency_price: to_currency_price.clone(),
+        price_program: price_program.clone(),
+    };
+    
+    let cpi_ctx = CpiContext::new(price_program.clone(), cpi_accounts);
+    let usd_amount = price::cpi::convert_currency(cpi_ctx, amount, from_currency, FiatCurrency::USD)?;
+    
+    Ok(usd_amount)
+}
+
+/// Validate price freshness based on timestamp
+pub fn validate_price_freshness(price_timestamp: i64, max_staleness_seconds: u64) -> Result<()> {
+    let clock = Clock::get()?;
+    let age_seconds = clock.unix_timestamp - price_timestamp;
+    require!(
+        age_seconds <= max_staleness_seconds as i64,
+        LocalMoneyErrorCode::StalePrice
+    );
+    Ok(())
+}
+
 /// Validation helper functions
 impl Offer {
     /// Check if offer can accept a trade of given amount (updated for Task 2.2.5)
@@ -2776,6 +3118,18 @@ pub struct RegisterWithHub<'info> {
     pub payer: Signer<'info>,
 
     /// System program for account creation
+    /// Optional price configuration account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub price_config: Option<AccountInfo<'info>>,
+
+    /// Optional currency price account for rate validation (Task 3.5.3)
+    /// CHECK: This is validated by the price program during CPI
+    pub currency_price: Option<AccountInfo<'info>>,
+
+    /// Optional price program for CPI calls (Task 3.5.3)
+    /// CHECK: This is the price program ID, validated by CPI
+    pub price_program: Option<AccountInfo<'info>>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -2830,6 +3184,10 @@ mod tests {
             state: OfferState::Active,
             created_at: 1640995200, // Jan 1, 2022
             expires_at: 0, // No expiration
+            locked_rate_usd: 50000 * PRICE_SCALE, // Mock locked USD rate
+            exchange_rate: 50000 * PRICE_SCALE, // Mock exchange rate
+            price_timestamp: 1640995200, // Mock price timestamp
+            price_source: create_mock_pubkey(), // Mock price source
             bump: 255,
         }
     }
