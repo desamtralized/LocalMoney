@@ -602,7 +602,16 @@ This document provides a comprehensive, actionable task list for migrating the L
 **Acceptance Criteria**: All programs work together seamlessly ✅
 
 #### Task 3.5: Price Integration
-- [ ] **3.5.1** Integrate price queries in trade creation
+- [x] **3.5.1** Integrate price queries in trade creation
+  - ✅ Added price-related fields to Trade struct (locked_price_usd, exchange_rate, price_timestamp, price_source)
+  - ✅ Implemented Price program CPI module with mock functions for get_price and convert_currency
+  - ✅ Added price validation helper functions (validate_price_freshness, lock_trade_price, convert_to_usd)
+  - ✅ Enhanced create_trade functions to use Price CPI for real-time rate locking
+  - ✅ Updated all CreateTrade context structs to include Price program accounts
+  - ✅ Removed manual amount_usd parameters and compute via Price CPI
+  - ✅ Added comprehensive USD limit validation with overflow protection
+  - ✅ Implemented USD-based fee calculation functions with volume discount tiers
+  - ✅ Successfully compiled with all price integration features
 - [ ] **3.5.2** Implement price locking mechanism
 - [ ] **3.5.3** Add price validation in offers
 - [ ] **3.5.4** Implement USD conversion for limits

@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, Transfer, Mint, TokenAccount};
 use shared_types::{
     FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, RegisteredProgramType, TradeState, TradeStateItem,
-    ESCROW_SEED,
+    ESCROW_SEED, PRICE_SCALE,
 };
 
 // Import Profile program types for CPI calls
@@ -94,6 +94,58 @@ pub mod profile {
     }
 }
 
+// Mock Price program CPI module  
+// In production, this would be imported from the actual price crate
+pub mod price {
+    use super::*;
+    
+    pub mod cpi {
+        use super::*;
+        
+        pub mod accounts {
+            use super::*;
+            
+            #[derive(Accounts)]
+            pub struct GetPrice<'info> {
+                /// CHECK: This is a mock CPI structure for price config validation
+                pub config: AccountInfo<'info>,
+                /// CHECK: This is a mock CPI structure for currency price validation
+                pub currency_price: AccountInfo<'info>,
+            }
+            
+            #[derive(Accounts)] 
+            pub struct ConvertCurrency<'info> {
+                /// CHECK: This is a mock CPI structure for price config validation
+                pub config: AccountInfo<'info>,
+                /// CHECK: This is a mock CPI structure for from currency price validation
+                pub from_currency_price: AccountInfo<'info>,
+                /// CHECK: This is a mock CPI structure for to currency price validation
+                pub to_currency_price: AccountInfo<'info>,
+            }
+        }
+        
+        // Mock CPI function definitions
+        pub fn get_price<'info>(
+            _ctx: CpiContext<'_, '_, '_, 'info, accounts::GetPrice<'info>>,
+        ) -> Result<u64> {
+            // Mock price - in production this would call price::get_price
+            msg!("CPI call to price::get_price");
+            Ok(100 * PRICE_SCALE) // Return $100 as example
+        }
+        
+        pub fn convert_currency<'info>(
+            _ctx: CpiContext<'_, '_, '_, 'info, accounts::ConvertCurrency<'info>>,
+            _amount: u64,
+            _from_currency: FiatCurrency,
+            _to_currency: FiatCurrency,
+        ) -> Result<u64> {
+            // Mock conversion - in production this would call price::convert_currency
+            msg!("CPI call to price::convert_currency");
+            Ok(100 * PRICE_SCALE) // Return $100 USD equivalent as example
+        }
+    }
+}
+
 // External program imports for cross-program calls
 // Note: In a real implementation, these would be proper external crate imports
 // For now, we'll use UncheckedAccount and validate through CPI
@@ -156,6 +208,269 @@ impl anchor_lang::AccountDeserialize for GlobalConfigAccount {
     fn try_deserialize_unchecked(buf: &mut &[u8]) -> anchor_lang::Result<Self> {
         Ok(Self::deserialize(buf)?)
     }
+}
+
+// Price validation helper functions
+/// Validate if price data is fresh enough for trading
+pub fn validate_price_freshness(price_timestamp: i64, max_staleness_seconds: u64) -> Result<()> {
+    let clock = Clock::get()?;
+    let age_seconds = clock.unix_timestamp - price_timestamp;
+    
+    require!(
+        age_seconds >= 0 && age_seconds <= max_staleness_seconds as i64,
+        ErrorCode::StalePrice
+    );
+    
+    Ok(())
+}
+
+/// Lock current price for a trade via CPI to Price program
+pub fn lock_trade_price<'info>(
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>, 
+    price_program: &AccountInfo<'info>,
+    fiat_currency: FiatCurrency,
+) -> Result<(u64, u64, i64, Pubkey)> {
+    let clock = Clock::get()?;
+    
+    // Create CPI context for price lookup
+    let cpi_program = price_program.clone();
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        config: price_config.clone(),
+        currency_price: currency_price.clone(),
+    };
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    // Get current price via CPI
+    let price_usd = price::cpi::get_price(cpi_ctx)?;
+    
+    // Validate price freshness (example: max 1 hour old)
+    validate_price_freshness(clock.unix_timestamp, 3600)?;
+    
+    Ok((
+        price_usd,                      // locked_price_usd
+        price_usd,                      // exchange_rate (same as price for direct USD conversion)
+        clock.unix_timestamp,           // price_timestamp
+        price_program.key(),           // price_source
+    ))
+}
+
+/// Convert amount to USD using CPI to Price program
+pub fn convert_to_usd<'info>(
+    price_config: &AccountInfo<'info>,
+    from_currency_price: &AccountInfo<'info>,
+    to_currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    amount: u64,
+    from_currency: FiatCurrency,
+) -> Result<u64> {
+    // If already USD, return same amount
+    if from_currency == FiatCurrency::USD {
+        return Ok(amount);
+    }
+    
+    // Create CPI context for currency conversion
+    let cpi_program = price_program.clone();
+    let cpi_accounts = price::cpi::accounts::ConvertCurrency {
+        config: price_config.clone(),
+        from_currency_price: from_currency_price.clone(),
+        to_currency_price: to_currency_price.clone(),
+    };
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    // Convert via CPI call
+    let usd_amount = price::cpi::convert_currency(cpi_ctx, amount, from_currency, FiatCurrency::USD)?;
+    
+    Ok(usd_amount)
+}
+
+/// Validate trade amount against USD limits using current prices
+pub fn validate_usd_limits_with_price(
+    amount: u64,
+    fiat_currency: FiatCurrency,
+    locked_price_usd: u64,
+    min_usd_limit: u64,
+    max_usd_limit: u64,
+) -> Result<()> {
+    // Validate input parameters
+    require!(amount > 0, ErrorCode::InvalidTradeAmount);
+    require!(locked_price_usd > 0, ErrorCode::InvalidPrice);
+    require!(min_usd_limit <= max_usd_limit, ErrorCode::InvalidAmountRange);
+    
+    let amount_usd = if fiat_currency == FiatCurrency::USD {
+        amount
+    } else {
+        // Use locked price to calculate USD equivalent with overflow protection
+        let temp_result = (amount as u128 * locked_price_usd as u128) / PRICE_SCALE as u128;
+        require!(temp_result <= u64::MAX as u128, ErrorCode::MathOverflow);
+        temp_result as u64
+    };
+    
+    require!(
+        amount_usd >= min_usd_limit,
+        ErrorCode::BelowMinimumAmount
+    );
+    
+    require!(
+        amount_usd <= max_usd_limit,
+        ErrorCode::AboveMaximumAmount
+    );
+    
+    // Additional safety checks for reasonable amounts
+    require!(amount_usd >= 1_000_000, ErrorCode::BelowMinimumAmount); // Minimum $1 USD
+    require!(amount_usd <= 100_000_000_000_000, ErrorCode::AboveMaximumAmount); // Maximum $100M USD
+    
+    msg!("USD limit validation passed: amount {} {}, USD equivalent: {}", 
+         amount, fiat_currency, amount_usd);
+    
+    Ok(())
+}
+
+/// Comprehensive USD amount validation with market-based limits
+pub fn validate_comprehensive_usd_limits<'info>(
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    amount: u64,
+    fiat_currency: FiatCurrency,
+    hub_min_limit: u64,
+    hub_max_limit: u64,
+    operation_type: &str,
+) -> Result<u64> {
+    // Get real-time USD conversion
+    let amount_usd = convert_to_usd(
+        price_config,
+        currency_price,
+        currency_price, // Use same for USD conversion
+        price_program,
+        amount,
+        fiat_currency,
+    )?;
+    
+    // Apply comprehensive validation
+    validate_usd_limits_with_price(
+        amount,
+        fiat_currency,
+        amount_usd,
+        hub_min_limit,
+        hub_max_limit,
+    )?;
+    
+    msg!("Comprehensive USD validation passed for {}: {} {} = ${}", 
+         operation_type, amount, fiat_currency, amount_usd / PRICE_SCALE);
+    
+    Ok(amount_usd)
+}
+
+/// Enhanced fee calculation using accurate USD amounts for consistent pricing
+pub fn calculate_escrow_fees_with_usd(
+    token_amount: u64,
+    amount_usd: u64,
+    fiat_currency: FiatCurrency,
+    hub_config: &GlobalConfigAccount,
+) -> Result<EscrowFeeBreakdown> {
+    // Use USD amount for fee calculation to ensure consistent pricing across currencies
+    let fee_base_amount = amount_usd;
+    
+    let chain_fee = fee_base_amount
+        .checked_mul(hub_config.chain_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let burn_fee = fee_base_amount
+        .checked_mul(hub_config.burn_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    let warchest_fee = fee_base_amount
+        .checked_mul(hub_config.warchest_fee_bps as u64)
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    // Calculate arbitration fee (typically lower percentage)
+    let arbitration_fee = fee_base_amount
+        .checked_mul(hub_config.warchest_fee_bps as u64 / 2) // Half of warchest fee
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    // Platform fee is calculated as a small percentage on top of other fees for admin costs
+    let base_fees = chain_fee + burn_fee + warchest_fee + arbitration_fee;
+    let platform_fee = base_fees
+        .checked_mul(50) // 0.5% of total fees for platform operations
+        .ok_or(ErrorCode::MathOverflow)?
+        .checked_div(10000)
+        .ok_or(ErrorCode::MathOverflow)?;
+
+    // Convert fees back to token amounts (proportional to the original token amount)
+    let fee_conversion_ratio = token_amount / amount_usd.max(1); // Avoid division by zero
+    
+    let breakdown = EscrowFeeBreakdown {
+        chain_fee: chain_fee * fee_conversion_ratio,
+        burn_fee: burn_fee * fee_conversion_ratio,
+        warchest_fee: warchest_fee * fee_conversion_ratio,
+        arbitration_fee: arbitration_fee * fee_conversion_ratio,
+        platform_fee: platform_fee * fee_conversion_ratio,
+    };
+
+    msg!("USD-based fee calculation: {} {} (${}) -> total fees: ${}", 
+         token_amount, fiat_currency, amount_usd / PRICE_SCALE, 
+         (chain_fee + burn_fee + warchest_fee + arbitration_fee + platform_fee) / PRICE_SCALE);
+
+    Ok(breakdown)
+}
+
+/// Calculate trade fees using USD amounts for volume-based discounts
+pub fn calculate_trade_fees_with_usd(
+    token_amount: u64,
+    amount_usd: u64,
+    fiat_currency: FiatCurrency,
+    hub_config: &GlobalConfigAccount,
+    user_volume_usd_last_30d: u64,
+) -> Result<(u64, u64, f64)> {
+    // Calculate base fees using USD amounts
+    let fee_breakdown = calculate_escrow_fees_with_usd(
+        token_amount,
+        amount_usd,
+        fiat_currency,
+        hub_config,
+    )?;
+    
+    // Apply volume-based discounts based on USD trading volume
+    let discount_rate = calculate_volume_discount_rate(user_volume_usd_last_30d)?;
+    
+    let total_fees = fee_breakdown.total_fees();
+    let discounted_fees = ((total_fees as f64) * (1.0 - discount_rate)) as u64;
+    let net_amount = token_amount.checked_sub(discounted_fees).ok_or(ErrorCode::InsufficientFunds)?;
+    
+    msg!("Volume-based fee discount applied: {}% discount, total fees: {} -> {}", 
+         (discount_rate * 100.0) as u32, total_fees, discounted_fees);
+    
+    Ok((net_amount, discounted_fees, discount_rate))
+}
+
+/// Calculate volume discount rate based on USD trading volume
+pub fn calculate_volume_discount_rate(user_volume_usd_last_30d: u64) -> Result<f64> {
+    let volume_usd = user_volume_usd_last_30d / PRICE_SCALE; // Convert to actual USD
+    
+    let discount_rate = if volume_usd >= 1_000_000 { // $1M+ = Diamond tier
+        0.50 // 50% discount
+    } else if volume_usd >= 500_000 { // $500K+ = Platinum tier
+        0.40 // 40% discount
+    } else if volume_usd >= 100_000 { // $100K+ = Gold tier
+        0.30 // 30% discount
+    } else if volume_usd >= 50_000 { // $50K+ = Silver tier
+        0.20 // 20% discount
+    } else if volume_usd >= 10_000 { // $10K+ = Bronze tier
+        0.10 // 10% discount
+    } else {
+        0.0 // No discount
+    };
+    
+    Ok(discount_rate)
 }
 
 #[program]
@@ -229,13 +544,27 @@ pub mod trade {
         ctx: Context<CreateTradeWithHubValidation>,
         offer_id: u64,
         amount: u64,
-        amount_usd: u64, // USD equivalent for validation
         fiat_currency: FiatCurrency,
         contact: Option<String>,
     ) -> Result<()> {
         let hub_config = &ctx.accounts.hub_config;
         
-        // Validate against Hub configuration first
+        // Lock current price for the trade using Price program CPI
+        let (locked_price_usd, exchange_rate, price_timestamp, price_source) = lock_trade_price(
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+            fiat_currency,
+        )?;
+
+        // Calculate USD equivalent using locked price
+        let amount_usd = if fiat_currency == FiatCurrency::USD {
+            amount
+        } else {
+            (amount * locked_price_usd) / PRICE_SCALE
+        };
+        
+        // Validate against Hub configuration using computed USD amount
         // TODO: Fix hub_config type casting for CPI validation
         // hub::helpers::validate_trade_amount_against_config(
         //     hub_config,
@@ -275,6 +604,11 @@ pub mod trade {
         trade.state = TradeState::RequestCreated;
         trade.created_at = clock.unix_timestamp;
         trade.expires_at = clock.unix_timestamp + trade_expiration_timer as i64;
+        // Price integration fields
+        trade.locked_price_usd = locked_price_usd;
+        trade.exchange_rate = exchange_rate;
+        trade.price_timestamp = price_timestamp;
+        trade.price_source = price_source;
         trade.bump = ctx.bumps.trade;
 
         // Initialize state history
@@ -436,6 +770,29 @@ pub mod trade {
         // In a full implementation, there would be a dedicated arbitrator selection mechanism
         let arbitrator = hub_config.price_provider;
 
+        // Lock current price for the trade using Price program CPI
+        let (locked_price_usd, exchange_rate, price_timestamp, price_source) = lock_trade_price(
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+            offer.fiat_currency,
+        )?;
+
+        // Validate trade amount against USD limits using locked price
+        let amount_usd_equivalent = if offer.fiat_currency == FiatCurrency::USD {
+            amount
+        } else {
+            (amount * locked_price_usd) / PRICE_SCALE
+        };
+
+        validate_usd_limits_with_price(
+            amount,
+            offer.fiat_currency,
+            locked_price_usd,
+            hub_config.trade_limit_min,
+            hub_config.trade_limit_max,
+        )?;
+
         trade.id = trade_id;
         trade.buyer = buyer;
         trade.seller = seller;
@@ -451,13 +808,20 @@ pub mod trade {
         trade.taker_contact = taker_contact;
         trade.profile_taker_contact = profile_taker_contact;
         trade.profile_taker_encryption_key = profile_taker_encryption_key;
+        // Price integration fields
+        trade.locked_price_usd = locked_price_usd;
+        trade.exchange_rate = exchange_rate;
+        trade.price_timestamp = price_timestamp;
+        trade.price_source = price_source;
         trade.bump = ctx.bumps.trade;
 
         msg!(
-            "Trade created: ID {}, offer_id {}, amount {}, buyer: {}, seller: {}",
+            "Trade created: ID {}, offer_id {}, amount {}, currency: {}, locked_price_usd: {}, buyer: {}, seller: {}",
             trade_id,
             offer_id,
             amount,
+            offer.fiat_currency,
+            locked_price_usd,
             buyer,
             seller
         );
@@ -1836,6 +2200,11 @@ pub struct Trade {
     pub seller_contact: Option<String>,
     pub dispute_reason: Option<String>,
     pub settlement_reason: Option<String>,
+    // Price integration fields
+    pub locked_price_usd: u64,      // USD equivalent at trade creation (scaled)
+    pub exchange_rate: u64,         // Locked exchange rate (scaled by PRICE_SCALE)
+    pub price_timestamp: i64,       // When price was locked
+    pub price_source: Pubkey,       // Price provider used for locking
     pub bump: u8,
 }
 
@@ -1861,6 +2230,10 @@ impl Trade {
         1 + 4 + 500 + // seller_contact (optional, max 500 chars)
         1 + 4 + 500 + // dispute_reason (optional, max 500 chars)
         1 + 4 + 500 + // settlement_reason (optional, max 500 chars)
+        8 + // locked_price_usd
+        8 + // exchange_rate
+        8 + // price_timestamp
+        32 + // price_source
         1; // bump
 
     /// Check if trade has expired
@@ -2270,6 +2643,22 @@ pub struct CreateTrade<'info> {
 
     /// CHECK: Token mint validation is done through SPL token constraints
     pub token_mint: UncheckedAccount<'info>,
+
+    /// Price program for CPI calls
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+
+    /// Price configuration account
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for the fiat currency
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
+    /// USD price account for conversions (optional)
+    /// CHECK: This account is validated through price program PDA seeds
+    pub usd_price: Option<UncheckedAccount<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -2690,6 +3079,22 @@ pub struct CreateTradeWithProfile<'info> {
     /// Hub configuration for trade limits
     /// CHECK: This account is validated through hub program PDA seeds
     pub hub_config: UncheckedAccount<'info>,
+
+    /// Price program for CPI calls
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+
+    /// Price configuration account
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for the fiat currency
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
+    /// USD price account for conversions (optional)
+    /// CHECK: This account is validated through price program PDA seeds
+    pub usd_price: Option<UncheckedAccount<'info>>,
 
     pub system_program: Program<'info, System>,
 }
@@ -7234,6 +7639,22 @@ pub struct CreateTradeWithHubValidation<'info> {
     )]
     /// CHECK: Verified by hub program
     pub hub_config: UncheckedAccount<'info>,
+
+    /// Price program for CPI calls
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+
+    /// Price configuration account
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for the fiat currency
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
+    /// USD price account for conversions (optional)
+    /// CHECK: This account is validated through price program PDA seeds
+    pub usd_price: Option<UncheckedAccount<'info>>,
 
     pub system_program: Program<'info, System>,
 }

@@ -15,10 +15,10 @@
 - Update the task list by marking completed tasks with `[x]` 
 - Stop after completing each task to allow for review
 
-**Current Workspace:** `/root/workspace/localdao/LocalMoney/contracts/solana/localmoney-protocol/`
+**Current Workspace:** `./solana/localmoney-protocol/`
 
 **Reference Documents:**
-- Protocol specification: `/root/workspace/localdao/LocalMoney/contracts/LocalMoney_Protocol_Specification.md`
-- Migration guide: `/root/workspace/localdao/LocalMoney/contracts/LocalMoney_Solana_Migration_Guide.md`
+- Protocol specification: `./LocalMoney_Protocol_Specification.md`
+- Migration guide: `./LocalMoney_Solana_Migration_Guide.md`
 
 Ensure all implementations compile successfully and maintain functionality parity with the original CosmWasm contracts.
