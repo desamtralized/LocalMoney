@@ -241,6 +241,12 @@ pub enum ErrorCode {
     #[msg("No price history data available")]
     NoHistoryData,
 
+    #[msg("Price lock has expired and needs to be refreshed")]
+    PriceLockExpired,
+
+    #[msg("Invalid timestamp provided")]
+    InvalidTimestamp,
+
     // Arbitration Errors (800-899)
     #[msg("Arbitrator not found")]
     ArbitratorNotFound,
@@ -425,7 +431,9 @@ impl ErrorCode {
             | ErrorCode::InvalidConfidence
             | ErrorCode::StaleOracleData
             | ErrorCode::LowConfidence
-            | ErrorCode::NoHistoryData => "Price",
+            | ErrorCode::NoHistoryData
+            | ErrorCode::PriceLockExpired
+            | ErrorCode::InvalidTimestamp => "Price",
 
             ErrorCode::ArbitratorNotFound
             | ErrorCode::ArbitratorUnavailable

@@ -612,7 +612,22 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Added comprehensive USD limit validation with overflow protection
   - ✅ Implemented USD-based fee calculation functions with volume discount tiers
   - ✅ Successfully compiled with all price integration features
-- [ ] **3.5.2** Implement price locking mechanism
+- [x] **3.5.2** Implement price locking mechanism
+  - ✅ Added comprehensive price lock validation helper functions outside #[program] module
+  - ✅ Implemented `is_price_lock_valid()` function to check if trade price locks are still valid
+  - ✅ Added `validate_price_lock_for_operation()` for operation-specific price lock validation  
+  - ✅ Created `refresh_trade_price_lock_helper()` for updating trade price locks with fresh price data
+  - ✅ Implemented `validate_price_lock_with_warnings()` with configurable warning thresholds
+  - ✅ Added `calculate_price_deviation()` to track price changes between locked and current market prices
+  - ✅ Created `get_price_lock_status()` for comprehensive price lock health monitoring
+  - ✅ Added new instruction `refresh_trade_price_lock()` for manual price lock refresh
+  - ✅ Implemented `get_trade_price_lock_status()` instruction for price lock status queries
+  - ✅ Added `PriceLockStatus` struct to shared-types with comprehensive status information
+  - ✅ Added `PriceLockExpired` and `InvalidTimestamp` error codes to shared-types
+  - ✅ Enhanced `fund_escrow()` and `release_escrow()` with automatic price lock validation
+  - ✅ Created proper account structures: `RefreshTradePriceLock` and `GetTradePriceLockStatus`
+  - ✅ Integrated price lock validation into critical trade operations with configurable staleness limits
+  - ✅ Successfully compiled with all price locking mechanism features
 - [ ] **3.5.3** Add price validation in offers
 - [ ] **3.5.4** Implement USD conversion for limits
 - [ ] **3.5.5** Add price staleness validation

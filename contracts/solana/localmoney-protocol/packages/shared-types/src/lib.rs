@@ -231,3 +231,17 @@ impl std::fmt::Display for RegisteredProgramType {
         }
     }
 }
+
+/// Price Lock Status for comprehensive price lock validation
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct PriceLockStatus {
+    pub is_valid: bool,
+    pub is_expiring_soon: bool,
+    pub age_seconds: u64,
+    pub expiry_timestamp: i64,
+    pub locked_price_usd: u64,
+    pub current_market_price: u64,
+    pub deviation_percent: f64,
+    pub significant_deviation: bool,
+    pub recommendation: String,
+}

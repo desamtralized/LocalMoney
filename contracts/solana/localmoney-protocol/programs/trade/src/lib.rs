@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, Transfer, Mint, TokenAccount};
 use shared_types::{
-    FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, RegisteredProgramType, TradeState, TradeStateItem,
+    FiatCurrency, LocalMoneyErrorCode as ErrorCode, OfferState, OfferType, PriceLockStatus, RegisteredProgramType, TradeState, TradeStateItem,
     ESCROW_SEED, PRICE_SCALE,
 };
 
@@ -149,6 +149,190 @@ pub mod price {
 // External program imports for cross-program calls
 // Note: In a real implementation, these would be proper external crate imports
 // For now, we'll use UncheckedAccount and validate through CPI
+
+// ========================================================================
+// ENHANCED PRICE LOCKING MECHANISM HELPER FUNCTIONS
+// ========================================================================
+
+/// Check if a trade's price lock is still valid
+pub fn is_price_lock_valid(trade: &Trade, max_staleness_seconds: u64) -> Result<bool> {
+    let clock = Clock::get()?;
+    let age_seconds = clock.unix_timestamp - trade.price_timestamp;
+    
+    Ok(age_seconds >= 0 && (age_seconds as u64) <= max_staleness_seconds)
+}
+
+/// Get price lock expiration timestamp
+pub fn get_price_lock_expiry(trade: &Trade, max_staleness_seconds: u64) -> i64 {
+    trade.price_timestamp + (max_staleness_seconds as i64)
+}
+
+/// Validate that a trade operation can proceed with current price lock
+pub fn validate_price_lock_for_operation(
+    trade: &Trade, 
+    operation_name: &str,
+    max_staleness_seconds: u64
+) -> Result<()> {
+    let is_valid = is_price_lock_valid(trade, max_staleness_seconds)?;
+    
+    if !is_valid {
+        msg!("Price lock expired for operation: {}", operation_name);
+        return Err(ErrorCode::PriceLockExpired.into());
+    }
+    
+    let clock = Clock::get()?;
+    let expiry = get_price_lock_expiry(trade, max_staleness_seconds);
+    let time_remaining = expiry - clock.unix_timestamp;
+    
+    msg!("Price lock validation passed for {}: {} seconds remaining", 
+         operation_name, time_remaining);
+    
+    Ok(())
+}
+
+/// Update trade price lock with fresh price data
+pub fn refresh_trade_price_lock_helper<'info>(
+    trade: &mut Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+) -> Result<()> {
+    let clock = Clock::get()?;
+    
+    // Get fresh price via CPI
+    let cpi_program = price_program.clone();
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        config: price_config.clone(),
+        currency_price: currency_price.clone(),
+    };
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    let fresh_price_usd = price::cpi::get_price(cpi_ctx)?;
+    
+    // Update trade's price lock data
+    let old_price = trade.locked_price_usd;
+    trade.locked_price_usd = fresh_price_usd;
+    trade.exchange_rate = fresh_price_usd;
+    trade.price_timestamp = clock.unix_timestamp;
+    trade.price_source = price_program.key();
+    
+    msg!(
+        "Price lock refreshed for trade {}: {} -> {} USD ({}% change)",
+        trade.id,
+        old_price,
+        fresh_price_usd,
+        if old_price > 0 { 
+            ((fresh_price_usd as i128 - old_price as i128) * 100 / old_price as i128) 
+        } else { 
+            0 
+        }
+    );
+    
+    Ok(())
+}
+
+/// Extended price lock validation with warning thresholds
+pub fn validate_price_lock_with_warnings(
+    trade: &Trade,
+    max_staleness_seconds: u64,
+    warning_threshold_seconds: u64,
+) -> Result<()> {
+    let clock = Clock::get()?;
+    let age_seconds = clock.unix_timestamp - trade.price_timestamp;
+    
+    require!(age_seconds >= 0, ErrorCode::InvalidTimestamp);
+    
+    let age_seconds_u64 = age_seconds as u64;
+    
+    if age_seconds_u64 > max_staleness_seconds {
+        msg!("Price lock expired: {} seconds old (max: {})", age_seconds_u64, max_staleness_seconds);
+        return Err(ErrorCode::PriceLockExpired.into());
+    }
+    
+    if age_seconds_u64 > warning_threshold_seconds {
+        let remaining = max_staleness_seconds - age_seconds_u64;
+        msg!("WARNING: Price lock expiring soon - {} seconds remaining", remaining);
+    }
+    
+    Ok(())
+}
+
+/// Calculate price deviation between locked and current market price
+pub fn calculate_price_deviation<'info>(
+    trade: &Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+) -> Result<(u64, f64)> {
+    // Get current market price
+    let cpi_program = price_program.clone();
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        config: price_config.clone(),
+        currency_price: currency_price.clone(),
+    };
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    let current_price = price::cpi::get_price(cpi_ctx)?;
+    let locked_price = trade.locked_price_usd;
+    
+    if locked_price == 0 {
+        return Ok((current_price, 0.0));
+    }
+    
+    // Calculate percentage deviation
+    let deviation_percent = if current_price > locked_price {
+        ((current_price - locked_price) as f64 / locked_price as f64) * 100.0
+    } else {
+        ((locked_price - current_price) as f64 / locked_price as f64) * -100.0
+    };
+    
+    Ok((current_price, deviation_percent))
+}
+
+/// Comprehensive price lock status check
+pub fn get_price_lock_status<'info>(
+    trade: &Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    max_staleness_seconds: u64,
+    warning_threshold_seconds: u64,
+    max_deviation_percent: f64,
+) -> Result<PriceLockStatus> {
+    let clock = Clock::get()?;
+    let age_seconds = (clock.unix_timestamp - trade.price_timestamp) as u64;
+    
+    // Check validity
+    let is_valid = age_seconds <= max_staleness_seconds;
+    let is_expiring_soon = age_seconds > warning_threshold_seconds;
+    
+    // Calculate price deviation
+    let (current_price, deviation_percent) = calculate_price_deviation(
+        trade, price_config, currency_price, price_program
+    )?;
+    
+    let significant_deviation = deviation_percent.abs() > max_deviation_percent;
+    
+    Ok(PriceLockStatus {
+        is_valid,
+        is_expiring_soon,
+        age_seconds,
+        expiry_timestamp: trade.price_timestamp + (max_staleness_seconds as i64),
+        locked_price_usd: trade.locked_price_usd,
+        current_market_price: current_price,
+        deviation_percent,
+        significant_deviation,
+        recommendation: if !is_valid {
+            "Price lock expired - refresh required".to_string()
+        } else if significant_deviation {
+            format!("Significant price deviation ({:.2}%) - consider refreshing", deviation_percent)
+        } else if is_expiring_soon {
+            "Price lock expiring soon - refresh recommended".to_string()
+        } else {
+            "Price lock healthy".to_string()
+        },
+    })
+}
 
 declare_id!("AxX94noi3AvotjdqnRin3YpKgbQ1rGqQhjkkxpeGUfnM");
 
@@ -476,6 +660,7 @@ pub fn calculate_volume_discount_rate(user_volume_usd_last_30d: u64) -> Result<f
 #[program]
 pub mod trade {
     use super::*;
+
 
     /// Register this program with the Hub
     pub fn register_with_hub(ctx: Context<RegisterWithHub>) -> Result<()> {
@@ -1031,6 +1216,9 @@ pub mod trade {
             amount == trade.amount,
             ErrorCode::InvalidAmountRange
         );
+        
+        // Validate price lock is still valid (1 hour staleness limit)
+        validate_price_lock_for_operation(trade, "fund_escrow", 3600)?;
 
         // Initialize escrow account (this is the first time it's being created)
         escrow.trade_id = trade_id;
@@ -1192,6 +1380,9 @@ pub mod trade {
             ctx.accounts.seller.key() == trade.seller,
             ErrorCode::InvalidTradeSender
         );
+        
+        // Validate price lock is still valid (extended 2 hour staleness for escrow release)
+        validate_price_lock_for_operation(trade, "release_escrow", 7200)?;
 
         // Validate release conditions
         require!(
@@ -1608,6 +1799,80 @@ pub mod trade {
         );
 
         Ok(())
+    }
+
+    /// Refresh the price lock for an existing trade
+    pub fn refresh_trade_price_lock(
+        ctx: Context<RefreshTradePriceLock>,
+        trade_id: u64,
+    ) -> Result<()> {
+        let trade = &mut ctx.accounts.trade;
+        
+        // Validate trade ID matches
+        require!(trade.id == trade_id, ErrorCode::TradeNotFound);
+        
+        // Validate trade is in a state where price lock refresh is meaningful
+        require!(
+            matches!(
+                trade.state,
+                TradeState::RequestCreated 
+                | TradeState::RequestAccepted 
+                | TradeState::EscrowFunded
+                | TradeState::FiatDeposited
+            ),
+            ErrorCode::InvalidTradeState
+        );
+        
+        // Validate caller is authorized (buyer, seller, or arbitrator)
+        let caller = ctx.accounts.authority.key();
+        require!(
+            caller == trade.buyer || 
+            caller == trade.seller || 
+            (trade.arbitrator != Pubkey::default() && caller == trade.arbitrator),
+            ErrorCode::Unauthorized
+        );
+        
+        // Refresh the price lock using the helper function
+        refresh_trade_price_lock_helper(
+            trade,
+            &ctx.accounts.price_config.to_account_info(),
+            &ctx.accounts.currency_price.to_account_info(),
+            &ctx.accounts.price_program.to_account_info(),
+        )?;
+        
+        msg!(
+            "Price lock refreshed for trade {}: new price {} USD, caller: {}",
+            trade_id,
+            trade.locked_price_usd,
+            caller
+        );
+        
+        Ok(())
+    }
+
+    /// Get price lock status for a trade
+    pub fn get_trade_price_lock_status(
+        ctx: Context<GetTradePriceLockStatus>,
+        trade_id: u64,
+        max_staleness_seconds: u64,
+        warning_threshold_seconds: u64,
+        max_deviation_percent: f64,
+    ) -> Result<PriceLockStatus> {
+        let trade = &ctx.accounts.trade;
+        
+        // Validate trade ID matches
+        require!(trade.id == trade_id, ErrorCode::TradeNotFound);
+        
+        // Get comprehensive price lock status
+        get_price_lock_status(
+            trade,
+            &ctx.accounts.price_config.to_account_info(),
+            &ctx.accounts.currency_price.to_account_info(),
+            &ctx.accounts.price_program.to_account_info(),
+            max_staleness_seconds,
+            warning_threshold_seconds,
+            max_deviation_percent,
+        )
     }
 
     // ===== CPI FUNCTIONS FOR PROFILE PROGRAM INTEGRATION =====
@@ -3037,6 +3302,60 @@ pub struct UpdateContactForTradeWithProfile<'info> {
     /// Profile program for CPI calls
     /// CHECK: This is the profile program ID, validated during CPI calls
     pub profile_program: UncheckedAccount<'info>,
+}
+
+// ===== PRICE LOCK ACCOUNT STRUCTURES =====
+
+/// Account structure for refreshing trade price lock
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct RefreshTradePriceLock<'info> {
+    #[account(
+        mut,
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    /// Authority who can refresh price lock (buyer, seller, or arbitrator)
+    pub authority: Signer<'info>,
+
+    /// Price program configuration
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for the trade's fiat currency
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
+    /// Price program for CPI calls
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+}
+
+/// Account structure for getting trade price lock status
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct GetTradePriceLockStatus<'info> {
+    #[account(
+        seeds = [b"trade", trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump,
+        constraint = trade.id == trade_id @ ErrorCode::TradeNotFound
+    )]
+    pub trade: Account<'info, Trade>,
+
+    /// Price program configuration
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for the trade's fiat currency
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
+    /// Price program for CPI calls
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
 }
 
 /// Account structure for creating trade with profile validation
