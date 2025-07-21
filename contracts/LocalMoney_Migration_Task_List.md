@@ -647,7 +647,14 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Implemented fallback to raw validation when price accounts are not available
   - ✅ All trade amount validations now properly convert to USD before checking against Hub configuration limits
   - ✅ Successfully compiled with all USD conversion functionality integrated
-- [ ] **3.5.5** Add price staleness validation
+- [x] **3.5.5** Add price staleness validation
+  - ✅ Added comprehensive price staleness validation framework with configurable thresholds
+  - ✅ Implemented operation-specific validation functions (trade: 30min, offer: 2hr, escrow: 15min)
+  - ✅ Added advanced features: batch validation, auto-refresh, price deviation detection
+  - ✅ Integrated validation into Trade program operations (fund_escrow, create_trade functions)
+  - ✅ Updated account structures (FundEscrow, ReleaseEscrow) with price program accounts
+  - ✅ Added comprehensive error handling with detailed recommendations and logging
+  - ✅ Verified successful compilation of all programs with new validation system
 - [ ] **3.5.6** Test price integration scenarios
 
 **Deliverable**: Complete price integration

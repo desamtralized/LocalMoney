@@ -657,6 +657,334 @@ pub fn calculate_volume_discount_rate(user_volume_usd_last_30d: u64) -> Result<f
     Ok(discount_rate)
 }
 
+// ===== COMPREHENSIVE PRICE STALENESS VALIDATION =====
+
+/// Configuration for price staleness validation with different thresholds
+#[derive(Clone, Debug)]
+pub struct PriceStalenessConfig {
+    /// Maximum age before price is considered stale (seconds)
+    pub max_staleness_seconds: u64,
+    /// Warning threshold for near-stale prices (seconds)
+    pub warning_threshold_seconds: u64,
+    /// Critical threshold requiring immediate refresh (seconds)
+    pub critical_threshold_seconds: u64,
+    /// Maximum price deviation before requiring refresh (percentage)
+    pub max_deviation_percent: f64,
+}
+
+impl Default for PriceStalenessConfig {
+    fn default() -> Self {
+        Self {
+            max_staleness_seconds: 3600,      // 1 hour
+            warning_threshold_seconds: 2700,  // 45 minutes
+            critical_threshold_seconds: 3300, // 55 minutes
+            max_deviation_percent: 5.0,       // 5% price deviation
+        }
+    }
+}
+
+/// Result of comprehensive price staleness validation
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct PriceStalenessResult {
+    pub is_valid: bool,
+    pub is_warning: bool,
+    pub is_critical: bool,
+    pub age_seconds: u64,
+    pub requires_refresh: bool,
+    pub price_deviation_percent: f64,
+    pub current_price: u64,
+    pub locked_price: u64,
+    pub recommendation: String,
+    pub error_code: Option<u32>,
+}
+
+/// Comprehensive price staleness validation for all operations
+pub fn validate_comprehensive_price_staleness<'info>(
+    price_timestamp: i64,
+    locked_price_usd: u64,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    config: &PriceStalenessConfig,
+    operation_name: &str,
+) -> Result<PriceStalenessResult> {
+    let clock = Clock::get()?;
+    let current_timestamp = clock.unix_timestamp;
+    
+    // Validate timestamp is not in the future
+    require!(
+        price_timestamp <= current_timestamp,
+        ErrorCode::InvalidTimestamp
+    );
+    
+    let age_seconds = (current_timestamp - price_timestamp) as u64;
+    
+    // Get current market price for comparison
+    let current_price = get_current_market_price(price_config, currency_price, price_program)?;
+    
+    // Calculate price deviation
+    let price_deviation_percent = if locked_price_usd > 0 {
+        ((current_price as f64 - locked_price_usd as f64) / locked_price_usd as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Determine validation status
+    let is_stale = age_seconds > config.max_staleness_seconds;
+    let is_warning = age_seconds > config.warning_threshold_seconds;
+    let is_critical = age_seconds > config.critical_threshold_seconds;
+    let has_significant_deviation = price_deviation_percent.abs() > config.max_deviation_percent;
+    
+    let requires_refresh = is_stale || has_significant_deviation;
+    
+    // Generate detailed recommendation
+    let recommendation = if is_stale {
+        format!("STALE: Price is {} seconds old (max {}), immediate refresh required", 
+                age_seconds, config.max_staleness_seconds)
+    } else if has_significant_deviation {
+        format!("DEVIATION: Price deviated {:.2}% (max {:.1}%), refresh recommended", 
+                price_deviation_percent, config.max_deviation_percent)
+    } else if is_critical {
+        format!("CRITICAL: Price expires in {} seconds, refresh soon", 
+                config.max_staleness_seconds - age_seconds)
+    } else if is_warning {
+        format!("WARNING: Price expires in {} seconds, consider refreshing", 
+                config.max_staleness_seconds - age_seconds)
+    } else {
+        "HEALTHY: Price is fresh and within acceptable parameters".to_string()
+    };
+    
+    let error_code = if is_stale {
+        Some(ErrorCode::PriceLockExpired as u32)
+    } else if has_significant_deviation {
+        Some(ErrorCode::StalePrice as u32)
+    } else {
+        None
+    };
+    
+    let result = PriceStalenessResult {
+        is_valid: !requires_refresh,
+        is_warning,
+        is_critical,
+        age_seconds,
+        requires_refresh,
+        price_deviation_percent,
+        current_price,
+        locked_price: locked_price_usd,
+        recommendation,
+        error_code,
+    };
+    
+    msg!("Price staleness validation for {}: {}", operation_name, result.recommendation);
+    
+    // Return error if refresh is required
+    if requires_refresh {
+        if is_stale {
+            return Err(ErrorCode::PriceLockExpired.into());
+        } else {
+            return Err(ErrorCode::StalePrice.into());
+        }
+    }
+    
+    Ok(result)
+}
+
+/// Helper function to get current market price via CPI
+pub fn get_current_market_price<'info>(
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+) -> Result<u64> {
+    let cpi_program = price_program.clone();
+    let cpi_accounts = price::cpi::accounts::GetPrice {
+        config: price_config.clone(),
+        currency_price: currency_price.clone(),
+    };
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    price::cpi::get_price(cpi_ctx)
+}
+
+/// Validate price staleness for trade operations with enhanced checks
+pub fn validate_trade_price_staleness<'info>(
+    trade: &Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    operation_name: &str,
+) -> Result<PriceStalenessResult> {
+    // Use conservative config for trade operations
+    let config = PriceStalenessConfig {
+        max_staleness_seconds: 1800,     // 30 minutes for trades
+        warning_threshold_seconds: 1200, // 20 minutes warning
+        critical_threshold_seconds: 1500, // 25 minutes critical
+        max_deviation_percent: 3.0,      // 3% deviation for trades
+    };
+    
+    validate_comprehensive_price_staleness(
+        trade.price_timestamp,
+        trade.locked_price_usd,
+        price_config,
+        currency_price,
+        price_program,
+        &config,
+        operation_name,
+    )
+}
+
+/// Validate price staleness for offer operations with relaxed checks
+pub fn validate_offer_price_staleness<'info>(
+    price_timestamp: i64,
+    locked_price_usd: u64,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    operation_name: &str,
+) -> Result<PriceStalenessResult> {
+    // Use more relaxed config for offers
+    let config = PriceStalenessConfig {
+        max_staleness_seconds: 7200,     // 2 hours for offers
+        warning_threshold_seconds: 5400, // 1.5 hours warning
+        critical_threshold_seconds: 6600, // 1.8 hours critical
+        max_deviation_percent: 10.0,     // 10% deviation for offers
+    };
+    
+    validate_comprehensive_price_staleness(
+        price_timestamp,
+        locked_price_usd,
+        price_config,
+        currency_price,
+        price_program,
+        &config,
+        operation_name,
+    )
+}
+
+/// Enhanced price validation for escrow operations (most strict)
+pub fn validate_escrow_price_staleness<'info>(
+    trade: &Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+) -> Result<PriceStalenessResult> {
+    // Use strictest config for escrow operations
+    let config = PriceStalenessConfig {
+        max_staleness_seconds: 900,      // 15 minutes for escrow
+        warning_threshold_seconds: 600,  // 10 minutes warning
+        critical_threshold_seconds: 750, // 12.5 minutes critical
+        max_deviation_percent: 2.0,      // 2% deviation for escrow
+    };
+    
+    validate_comprehensive_price_staleness(
+        trade.price_timestamp,
+        trade.locked_price_usd,
+        price_config,
+        currency_price,
+        price_program,
+        &config,
+        "escrow_operation",
+    )
+}
+
+/// Batch validation for multiple price locks
+pub fn validate_multiple_price_staleness<'info>(
+    price_data: Vec<(i64, u64)>, // (timestamp, locked_price)
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    operation_name: &str,
+) -> Result<Vec<PriceStalenessResult>> {
+    let config = PriceStalenessConfig::default();
+    let mut results = Vec::new();
+    
+    for (i, (timestamp, locked_price)) in price_data.iter().enumerate() {
+        let operation_detail = format!("{}_item_{}", operation_name, i);
+        
+        let result = validate_comprehensive_price_staleness(
+            *timestamp,
+            *locked_price,
+            price_config,
+            currency_price,
+            price_program,
+            &config,
+            &operation_detail,
+        );
+        
+        match result {
+            Ok(staleness_result) => {
+                results.push(staleness_result);
+            }
+            Err(e) => {
+                msg!("Price validation failed for {}: {:?}", operation_detail, e);
+                return Err(e);
+            }
+        }
+    }
+    
+    msg!("Batch price staleness validation completed for {} items", results.len());
+    Ok(results)
+}
+
+/// Auto-refresh price lock if staleness validation fails
+pub fn auto_refresh_price_if_stale<'info>(
+    trade: &mut Trade,
+    price_config: &AccountInfo<'info>,
+    currency_price: &AccountInfo<'info>,
+    price_program: &AccountInfo<'info>,
+    fiat_currency: FiatCurrency,
+    force_refresh: bool,
+) -> Result<bool> {
+    // Check if refresh is needed
+    let staleness_check = validate_trade_price_staleness(
+        trade,
+        price_config,
+        currency_price,
+        price_program,
+        "auto_refresh_check",
+    );
+    
+    let needs_refresh = match staleness_check {
+        Ok(result) => force_refresh || result.requires_refresh,
+        Err(_) => true, // Refresh on any validation error
+    };
+    
+    if needs_refresh {
+        msg!("Auto-refreshing stale price lock for trade {}", trade.id);
+        
+        // Get fresh price data
+        let (new_locked_price, new_exchange_rate, new_timestamp, new_source) = lock_trade_price(
+            price_config,
+            currency_price,
+            price_program,
+            fiat_currency,
+        )?;
+        
+        // Update trade price data
+        let old_price = trade.locked_price_usd;
+        trade.locked_price_usd = new_locked_price;
+        trade.exchange_rate = new_exchange_rate;
+        trade.price_timestamp = new_timestamp;
+        trade.price_source = new_source;
+        
+        let price_change_percent = if old_price > 0 {
+            ((new_locked_price as f64 - old_price as f64) / old_price as f64) * 100.0
+        } else {
+            0.0
+        };
+        
+        msg!(
+            "Price lock auto-refreshed: {} -> {} USD ({:+.2}% change)",
+            old_price,
+            new_locked_price,
+            price_change_percent
+        );
+        
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 #[program]
 pub mod trade {
     use super::*;
@@ -741,6 +1069,18 @@ pub mod trade {
             &ctx.accounts.price_program,
             fiat_currency,
         )?;
+
+        // Validate price freshness using comprehensive staleness validation
+        let _staleness_result = validate_offer_price_staleness(
+            price_timestamp,
+            locked_price_usd,
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+            "trade_creation_with_hub_validation",
+        )?;
+
+        msg!("Price staleness validation passed for new trade creation");
 
         // Calculate USD equivalent using locked price
         let amount_usd = if fiat_currency == FiatCurrency::USD {
@@ -967,6 +1307,18 @@ pub mod trade {
             &ctx.accounts.price_program,
             offer.fiat_currency,
         )?;
+
+        // Validate price freshness using comprehensive staleness validation
+        let _staleness_result = validate_offer_price_staleness(
+            price_timestamp,
+            locked_price_usd,
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+            "standard_trade_creation",
+        )?;
+
+        msg!("Price staleness validation passed for trade creation");
 
         // Validate trade amount against USD limits using locked price
         let amount_usd_equivalent = if offer.fiat_currency == FiatCurrency::USD {
@@ -1222,8 +1574,15 @@ pub mod trade {
             ErrorCode::InvalidAmountRange
         );
         
-        // Validate price lock is still valid (1 hour staleness limit)
-        validate_price_lock_for_operation(trade, "fund_escrow", 3600)?;
+        // Validate price lock is still valid using comprehensive staleness validation
+        let _staleness_result = validate_escrow_price_staleness(
+            trade,
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+        )?;
+        
+        msg!("Escrow price staleness validation passed for trade {}", trade_id);
 
         // Initialize escrow account (this is the first time it's being created)
         escrow.trade_id = trade_id;
@@ -3031,6 +3390,18 @@ pub struct FundEscrow<'info> {
     /// CHECK: Validated through hub program PDA seeds
     pub hub_config: UncheckedAccount<'info>,
 
+    /// Price program for staleness validation
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+
+    /// Price configuration account
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for staleness validation
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
@@ -3103,6 +3474,18 @@ pub struct ReleaseEscrow<'info> {
 
     /// CHECK: Buyer for token account validation
     pub buyer: UncheckedAccount<'info>,
+
+    /// Price program for staleness validation
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: UncheckedAccount<'info>,
+
+    /// Price configuration account
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: UncheckedAccount<'info>,
+
+    /// Currency price account for staleness validation
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
 }
