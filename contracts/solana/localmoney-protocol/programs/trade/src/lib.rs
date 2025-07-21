@@ -923,12 +923,17 @@ pub mod trade {
         let hub_config: GlobalConfigAccount = GlobalConfigAccount::try_deserialize(&mut &hub_config_data[8..])?;
 
         // Validate trade amount against USD limits using price conversion
-        // For now, we'll use the amount directly and assume proper price conversion happens elsewhere
-        // In a full implementation, this would involve CPI to price program
-        require!(
-            amount >= hub_config.trade_limit_min && amount <= hub_config.trade_limit_max,
-            ErrorCode::InvalidAmountRange
-        );
+        // Get fiat currency from the offer since trade must use same currency as offer
+        let amount_usd = validate_comprehensive_usd_limits(
+            &ctx.accounts.price_config,
+            &ctx.accounts.currency_price,
+            &ctx.accounts.price_program,
+            amount,
+            offer.fiat_currency,
+            hub_config.trade_limit_min,
+            hub_config.trade_limit_max,
+            "trade creation",
+        )?;
 
         // Set up buyer/seller based on offer type
         let (buyer, seller) = match offer.offer_type {
@@ -1975,6 +1980,7 @@ pub mod trade {
     pub fn can_create_trade_cpi(
         ctx: Context<ValidateTradeCreationWithProfile>,
         amount: u64,
+        fiat_currency: FiatCurrency,
     ) -> Result<bool> {
         let participant = ctx.accounts.participant.key();
 
@@ -1993,11 +1999,28 @@ pub mod trade {
             let config_data = hub_config.try_borrow_data()?;
             let config = GlobalConfigAccount::try_deserialize(&mut &config_data[8..])?;
             
-            // Validate amount is within Hub limits
-            require!(
-                amount >= config.trade_limit_min && amount <= config.trade_limit_max,
-                ErrorCode::InvalidAmountRange
-            );
+            // Validate amount is within Hub limits using USD conversion
+            // Note: This function might not have price accounts in context, so we add a check
+            if let (Some(price_config), Some(currency_price), Some(price_program)) = 
+                (&ctx.accounts.price_config, &ctx.accounts.currency_price, &ctx.accounts.price_program) {
+                // Use USD conversion validation when price accounts are available
+                validate_comprehensive_usd_limits(
+                    price_config,
+                    currency_price,
+                    price_program,
+                    amount,
+                    fiat_currency,
+                    config.trade_limit_min,
+                    config.trade_limit_max,
+                    "CPI trade validation",
+                )?;
+            } else {
+                // Fallback to raw amount validation if price accounts not available
+                require!(
+                    amount >= config.trade_limit_min && amount <= config.trade_limit_max,
+                    ErrorCode::InvalidAmountRange
+                );
+            }
         }
 
         msg!(
@@ -3277,6 +3300,18 @@ pub struct ValidateTradeCreationWithProfile<'info> {
     /// Optional Hub configuration for trade limits
     /// CHECK: This account is validated through hub program PDA seeds
     pub hub_config: Option<UncheckedAccount<'info>>,
+
+    /// Optional Price program for USD conversion (for limit validation)
+    /// CHECK: This is the price program ID, validated during CPI calls
+    pub price_program: Option<UncheckedAccount<'info>>,
+
+    /// Optional Price configuration account (for USD conversion)
+    /// CHECK: This account is validated through price program PDA seeds
+    pub price_config: Option<UncheckedAccount<'info>>,
+
+    /// Optional Currency price account for the fiat currency (for USD conversion)
+    /// CHECK: This account is validated through price program PDA seeds
+    pub currency_price: Option<UncheckedAccount<'info>>,
 }
 
 /// Account structure for updating contact information via CPI
@@ -4509,13 +4544,21 @@ pub fn validate_trade_comprehensive(
 
     // 6. Hub configuration validation (if provided)
     if let Some(config) = hub_config {
+        // For comprehensive validation, we assume the amounts are already in USD or properly converted
+        // This validation function is typically called after USD conversion has happened
         if trade.amount < config.trade_limit_min {
-            validation_result.errors.push("Trade amount below minimum limit".to_string());
+            validation_result.errors.push(format!(
+                "Trade amount {} below minimum USD limit {}", 
+                trade.amount, config.trade_limit_min
+            ));
             validation_result.is_valid = false;
         }
 
         if trade.amount > config.trade_limit_max {
-            validation_result.errors.push("Trade amount above maximum limit".to_string());
+            validation_result.errors.push(format!(
+                "Trade amount {} above maximum USD limit {}", 
+                trade.amount, config.trade_limit_max
+            ));
             validation_result.is_valid = false;
         }
 

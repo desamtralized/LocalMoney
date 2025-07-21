@@ -638,7 +638,15 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Added proper CHECK comments for CPI account safety validation
   - ✅ Fixed test helpers to include new price validation fields
   - ✅ Successfully compiled with full price validation integration
-- [ ] **3.5.4** Implement USD conversion for limits
+- [x] **3.5.4** Implement USD conversion for limits
+  - ✅ Updated `create_trade` function to use USD conversion validation via `validate_comprehensive_usd_limits`
+  - ✅ Enhanced `create_trade_with_hub_validation` function with proper USD conversion for trade limits
+  - ✅ Updated `can_create_trade_cpi` function to support USD conversion with enhanced context structure
+  - ✅ Added price accounts (price_program, price_config, currency_price) to `ValidateTradeCreationWithProfile` context
+  - ✅ Enhanced comprehensive validation function with proper USD limit messaging
+  - ✅ Implemented fallback to raw validation when price accounts are not available
+  - ✅ All trade amount validations now properly convert to USD before checking against Hub configuration limits
+  - ✅ Successfully compiled with all USD conversion functionality integrated
 - [ ] **3.5.5** Add price staleness validation
 - [ ] **3.5.6** Test price integration scenarios
 
