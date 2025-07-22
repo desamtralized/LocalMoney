@@ -1,6 +1,20 @@
 // Main SDK export
 export { LocalMoneySDK, createWallet, createConnection, ENDPOINTS } from './sdk';
 
+// Enhanced Wallet System
+export { 
+  LocalMoneyWallet, 
+  WalletType, 
+  WalletConnectionState, 
+  WalletUtils, 
+  createLocalMoneyWallet,
+  type WalletInfo,
+  type WalletState,
+  type WalletConnectionOptions,
+  type WalletEvents,
+  type SigningResult
+} from './wallet';
+
 // Program SDKs
 export { HubSDK } from './programs/hub';
 export { ProfileSDK } from './programs/profile';

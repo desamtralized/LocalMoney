@@ -5,6 +5,15 @@ import { ProfileSDK } from './programs/profile';
 import { PriceSDK } from './programs/price';
 import { PDAGenerator } from './utils';
 import { SDKConfig, ProgramAddresses } from './types';
+import { 
+  LocalMoneyWallet, 
+  WalletType, 
+  WalletInfo, 
+  WalletState, 
+  WalletConnectionOptions,
+  WalletUtils,
+  createLocalMoneyWallet
+} from './wallet';
 
 // Import IDL types (these would be generated from your Anchor programs)
 // You would need to add the actual IDL imports here
@@ -19,6 +28,7 @@ export class LocalMoneySDK {
   private connection: Connection;
   private provider: AnchorProvider;
   private programAddresses: ProgramAddresses;
+  private localMoneyWallet?: LocalMoneyWallet;
   
   // Program SDKs
   public hub: HubSDK;
@@ -94,6 +104,56 @@ export class LocalMoneySDK {
     };
 
     return new LocalMoneySDK(connection, wallet, localProgramAddresses, config);
+  }
+
+  /**
+   * Create SDK with enhanced LocalMoney wallet
+   */
+  static createWithEnhancedWallet(
+    connection: Connection,
+    programAddresses: ProgramAddresses,
+    walletOptions?: WalletConnectionOptions,
+    config?: Partial<SDKConfig>
+  ): { sdk: LocalMoneySDK, wallet: LocalMoneyWallet } {
+    const localMoneyWallet = createLocalMoneyWallet(connection, walletOptions);
+    
+    // Create a mock Anchor wallet that delegates to LocalMoneyWallet
+    const anchorWallet: Wallet = {
+      get publicKey() { return localMoneyWallet.publicKey; },
+      signTransaction: localMoneyWallet.signTransaction.bind(localMoneyWallet),
+      signAllTransactions: localMoneyWallet.signAllTransactions.bind(localMoneyWallet)
+    };
+
+    const sdk = new LocalMoneySDK(connection, anchorWallet, programAddresses, config);
+    sdk.localMoneyWallet = localMoneyWallet;
+    
+    return { sdk, wallet: localMoneyWallet };
+  }
+
+  /**
+   * Create SDK with enhanced wallet for localhost development
+   */
+  static createLocalWithEnhancedWallet(
+    walletOptions?: WalletConnectionOptions,
+    config?: Partial<SDKConfig>
+  ): { sdk: LocalMoneySDK, wallet: LocalMoneyWallet } {
+    const connection = new Connection('http://localhost:8899', 'confirmed');
+    
+    const localProgramAddresses: ProgramAddresses = {
+      hub: new PublicKey('J5FDxQmMpiF4vqKBSWQS3JRGLyE8djRgoHF8QQJJKWM1'),
+      profile: new PublicKey('6HJHAiMENmYh4wW99YtHVY6tGDTzdrNeMtwSpDiyGu1k'),
+      price: new PublicKey('7nkFUfmqKMKrQfm83HxreJHXyJdTK5feYqDEJtNihaw1'),
+      offer: new PublicKey('DGjiY2hKsDpffEgBckNfrAkDt6B5jSxwsHshyQ1cRiP9'),
+      trade: new PublicKey('AxX94noi3AvotjdqnRin3YpKgbQ1rGqQhjkkxpeGUfnM'),
+      arbitration: new PublicKey('3XkiY4D1FBnpKHpuT2pi3AhnZ2WcXXGSsR4vSYJ87RbR'),
+    };
+
+    return LocalMoneySDK.createWithEnhancedWallet(
+      connection, 
+      localProgramAddresses, 
+      walletOptions, 
+      config
+    );
   }
 
   /**
@@ -258,6 +318,98 @@ export class LocalMoneySDK {
     // Reinitialize PDAs and program SDKs with new addresses
     this.pda = new PDAGenerator(this.programAddresses);
     this.initializeProgramSDKs();
+  }
+
+  // Enhanced wallet methods
+
+  /**
+   * Get available wallets
+   */
+  static getAvailableWallets(): WalletInfo[] {
+    return LocalMoneyWallet.getAvailableWallets();
+  }
+
+  /**
+   * Get LocalMoney wallet instance (if using enhanced wallet)
+   */
+  getWallet(): LocalMoneyWallet | undefined {
+    return this.localMoneyWallet;
+  }
+
+  /**
+   * Get wallet state (if using enhanced wallet)
+   */
+  getWalletState(): WalletState | null {
+    return this.localMoneyWallet?.getState() || null;
+  }
+
+  /**
+   * Connect to a specific wallet type (if using enhanced wallet)
+   */
+  async connectWallet(walletType: WalletType): Promise<boolean> {
+    if (!this.localMoneyWallet) {
+      throw new Error('Enhanced wallet not configured. Use createWithEnhancedWallet() method.');
+    }
+    return this.localMoneyWallet.connectWallet(walletType);
+  }
+
+  /**
+   * Connect with keypair (if using enhanced wallet)
+   */
+  async connectWithKeypair(keypair: Keypair): Promise<boolean> {
+    if (!this.localMoneyWallet) {
+      throw new Error('Enhanced wallet not configured. Use createWithEnhancedWallet() method.');
+    }
+    return this.localMoneyWallet.connectWithKeypair(keypair);
+  }
+
+  /**
+   * Disconnect wallet (if using enhanced wallet)
+   */
+  async disconnectWallet(): Promise<void> {
+    if (this.localMoneyWallet) {
+      await this.localMoneyWallet.disconnect();
+    }
+  }
+
+  /**
+   * Auto-reconnect to last wallet (if using enhanced wallet)
+   */
+  async autoReconnectWallet(): Promise<boolean> {
+    if (!this.localMoneyWallet) {
+      return false;
+    }
+    return this.localMoneyWallet.autoReconnect();
+  }
+
+  /**
+   * Get wallet balance (if using enhanced wallet)
+   */
+  async getWalletBalance(): Promise<number> {
+    if (!this.localMoneyWallet) {
+      return 0;
+    }
+    return this.localMoneyWallet.getBalance();
+  }
+
+  /**
+   * Send transaction with enhanced error handling
+   */
+  async sendTransaction(
+    transaction: any,
+    options?: any
+  ): Promise<{ success: boolean; signature?: string; error?: string }> {
+    if (this.localMoneyWallet) {
+      return this.localMoneyWallet.sendTransaction(transaction, options);
+    }
+    
+    // Fallback to standard Anchor provider
+    try {
+      const signature = await this.provider.sendAndConfirm(transaction, [], options);
+      return { success: true, signature };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   }
 
   // Private methods

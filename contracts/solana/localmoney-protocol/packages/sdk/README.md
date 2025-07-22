@@ -2,9 +2,20 @@
 
 TypeScript SDK for interacting with the LocalMoney decentralized P2P trading protocol on Solana.
 
+## 🎉 **NEW: Enhanced Wallet Integration (v0.1.0)**
+
+The SDK now includes comprehensive wallet integration with support for:
+- **Browser Wallets**: Phantom, Solflare, Coinbase Wallet
+- **Wallet Management**: Connection/disconnection, auto-reconnect, state management  
+- **Event System**: Connect, disconnect, account change, error events
+- **Transaction Signing**: Enhanced error handling, user-friendly interfaces
+- **Development Support**: Keypair wallets for testing
+- **Multi-wallet Support**: Wallet detection and switching capabilities
+
 ## Features
 
 - 🔐 **Complete Protocol Coverage**: SDKs for all 6 programs (Hub, Profile, Price, Offer, Trade, Arbitration)
+- 🔗 **Enhanced Wallet Integration**: Support for browser wallets with comprehensive connection management
 - 📊 **Type Safety**: Full TypeScript support with comprehensive type definitions
 - 🛠️ **Developer Friendly**: Easy-to-use APIs with built-in validation and error handling
 - 🔄 **Cross-Program Integration**: Seamless interactions between different protocol components
@@ -263,6 +274,128 @@ if (!validation.valid) {
 const protocolConfig = await sdk.getProtocolConfig();
 console.log('Global config:', protocolConfig?.globalConfig);
 console.log('Price config:', protocolConfig?.priceConfig);
+```
+
+## Wallet Integration
+
+### Enhanced Wallet Support
+
+The SDK now includes comprehensive wallet integration for web applications:
+
+```typescript
+import { 
+  LocalMoneySDK,
+  LocalMoneyWallet,
+  WalletType,
+  WalletUtils,
+  createLocalMoneyWallet
+} from '@localmoney/solana-sdk';
+
+// Check available wallets
+const availableWallets = LocalMoneySDK.getAvailableWallets();
+console.log('Available wallets:', availableWallets);
+
+// Create enhanced wallet
+const connection = createConnection('http://localhost:8899');
+const wallet = createLocalMoneyWallet(connection, {
+  autoConnect: false
+});
+
+// Connect to Phantom wallet
+if (WalletUtils.isWalletInstalled(WalletType.PHANTOM)) {
+  const connected = await wallet.connectWallet(WalletType.PHANTOM);
+  if (connected) {
+    console.log('Connected to Phantom!');
+  }
+}
+
+// Set up event listeners
+wallet.on('connect', (publicKey) => {
+  console.log('Wallet connected:', WalletUtils.formatAddress(publicKey));
+});
+
+wallet.on('disconnect', () => {
+  console.log('Wallet disconnected');
+});
+
+wallet.on('error', (error) => {
+  console.error('Wallet error:', error.message);
+});
+
+// For development with keypair
+const keypair = Keypair.generate();
+await wallet.connectWithKeypair(keypair);
+```
+
+### Enhanced SDK Creation with Wallet
+
+```typescript
+// Create SDK with enhanced wallet support
+const { sdk, wallet } = LocalMoneySDK.createWithEnhancedWallet(
+  connection,
+  programAddresses,
+  { autoConnect: true }
+);
+
+// Or use for localhost development
+const { sdk, wallet } = LocalMoneySDK.createLocalWithEnhancedWallet({
+  autoConnect: false
+});
+
+// Enhanced transaction sending
+const result = await sdk.sendTransaction(transaction, options);
+if (result.success) {
+  console.log('Transaction successful:', result.signature);
+} else {
+  console.error('Transaction failed:', result.error);
+  if (result.cancelled) {
+    console.log('Transaction was cancelled by user');
+  }
+}
+```
+
+### Wallet Management
+
+```typescript
+// Get wallet state
+const state = wallet.getState();
+console.log('Connection state:', state.connectionState);
+console.log('Wallet type:', state.walletType);
+console.log('Balance:', state.balance);
+
+// Auto-reconnect functionality
+const reconnected = await wallet.autoReconnect();
+console.log('Auto-reconnect successful:', reconnected);
+
+// Get balance
+const balance = await wallet.getBalance();
+console.log('Wallet balance:', balance, 'SOL');
+
+// Disconnect wallet
+await wallet.disconnect();
+```
+
+### Multi-wallet Support
+
+```typescript
+// Detect and switch between wallets
+const wallets = LocalMoneySDK.getAvailableWallets();
+const installedWallets = wallets.filter(w => w.installed);
+
+for (const walletInfo of installedWallets) {
+  console.log(`${walletInfo.name}: ${walletInfo.type}`);
+  
+  if (walletInfo.type === WalletType.PHANTOM) {
+    await wallet.connectWallet(WalletType.PHANTOM);
+    break;
+  }
+}
+
+// Installation URLs for missing wallets
+const phantom = wallets.find(w => w.type === WalletType.PHANTOM);
+if (!phantom?.installed) {
+  console.log('Install Phantom:', WalletUtils.getWalletInstallUrl(WalletType.PHANTOM));
+}
 ```
 
 ## Advanced Usage
