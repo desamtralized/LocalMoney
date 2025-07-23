@@ -813,7 +813,17 @@ This document provides a comprehensive, actionable task list for migrating the L
   - ✅ Created comprehensive wallet integration examples (wallet-integration-usage.ts)
   - ✅ Updated README with complete wallet integration documentation
   - ✅ Successfully compiled and integrated with existing SDK infrastructure
-- [ ] **6.1.3** Add transaction building utilities
+- [x] **6.1.3** Add transaction building utilities
+  - ✅ Enhanced TransactionBuilder class with comprehensive instruction builders for all protocol operations
+  - ✅ Added individual instruction builders: Hub initialization, Profile creation, Offer creation, Trade creation, Price updates
+  - ✅ Created batch transaction utilities for combining multiple instructions with custom compute budget and priority fees
+  - ✅ Implemented compute budget and priority fee instruction builders for transaction optimization
+  - ✅ Added complete workflow transaction builders: complete offer creation (profile + offer), complete trade flow
+  - ✅ Created cross-program account meta builders for complex multi-program interactions
+  - ✅ Added transaction size estimation and validation utilities with Solana size limits
+  - ✅ Implemented PDA generator integration for automatic account derivation
+  - ✅ Created comprehensive usage examples demonstrating all transaction building features
+  - ✅ Successfully compiled and integrated with existing SDK infrastructure
 - [ ] **6.1.4** Create account fetching utilities
 - [ ] **6.1.5** Add error handling and retry logic
 - [ ] **6.1.6** Write SDK documentation
