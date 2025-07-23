@@ -134,3 +134,7 @@ Implement programs in dependency order:
 - End-to-end trading workflow tests
 
 Run comprehensive test suites before any major changes to ensure protocol integrity.
+
+## Important Reminders
+
+- DO NOT MOCK TESTS OR ANYTHING
