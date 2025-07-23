@@ -21,6 +21,10 @@ The SDK now includes comprehensive wallet integration with support for:
 - 🔄 **Cross-Program Integration**: Seamless interactions between different protocol components
 - 📈 **Real-time Data**: Live price feeds, trading status, and market data
 - 🎯 **Production Ready**: Robust error handling, retry logic, and transaction confirmation
+- ⚡ **Enhanced Error Handling**: Comprehensive error classification, circuit breakers, and recovery strategies
+- 🔄 **Retry Logic**: Exponential backoff with jitter and configurable retry strategies
+- 🛡️ **Circuit Breakers**: Prevent cascade failures with intelligent failure detection
+- 📊 **Error Analytics**: Detailed error reporting and performance monitoring
 
 ## Installation
 
@@ -255,7 +259,165 @@ try {
 }
 ```
 
-### 6. Protocol Status Monitoring
+### 6. Enhanced Error Handling & Recovery
+
+The SDK includes a comprehensive error handling system with automatic recovery strategies:
+
+```typescript
+import { 
+  EnhancedLocalMoneySDK,
+  DEFAULT_RETRY_CONFIGS,
+  DEFAULT_CIRCUIT_BREAKER_CONFIG,
+  ErrorCategory,
+  ErrorSeverity,
+  RecoveryStrategy
+} from '@localmoney/solana-sdk';
+
+// Create SDK with enhanced error handling
+const enhancedSDK = new EnhancedLocalMoneySDK(connection, wallet, programAddresses, {
+  retryConfig: DEFAULT_RETRY_CONFIGS.conservative,
+  circuitBreakerConfig: DEFAULT_CIRCUIT_BREAKER_CONFIG,
+  enableErrorHandling: true,
+  environment: 'production',
+});
+
+// All operations now have automatic error handling
+const profile = await enhancedSDK.profile.getProfile(userPublicKey);
+const offer = await enhancedSDK.offer.createOffer(params);
+const trade = await enhancedSDK.trade.acceptTrade(tradeId);
+
+// Get error handling statistics
+const stats = enhancedSDK.getErrorStats();
+console.log('Circuit breaker stats:', stats.circuitBreakers);
+console.log('Cache hits:', stats.cacheHits);
+
+// Reset error handling state if needed
+enhancedSDK.resetErrorHandling();
+```
+
+#### Circuit Breaker Pattern
+
+```typescript
+import { CircuitBreaker, CircuitBreakerState } from '@localmoney/solana-sdk';
+
+const circuitBreaker = new CircuitBreaker({
+  failureThreshold: 5,    // Open after 5 failures
+  successThreshold: 3,    // Close after 3 successes
+  timeout: 60000,         // 1 minute timeout
+  resetTimeout: 30000,    // Try again after 30 seconds
+});
+
+// Circuit breaker automatically handles failures
+const result = await circuitBreaker.execute(async () => {
+  return await someRiskyOperation();
+});
+
+// Check circuit breaker status
+const status = circuitBreaker.getStatus();
+console.log('State:', status.state); // CLOSED, OPEN, or HALF_OPEN
+console.log('Failure count:', status.failureCount);
+```
+
+#### Advanced Retry Configuration
+
+```typescript
+import { RetryManager, ErrorCategory } from '@localmoney/solana-sdk';
+
+const retryManager = new RetryManager({
+  maxAttempts: 5,
+  baseDelay: 1000,           // Start with 1 second
+  maxDelay: 30000,           // Max 30 seconds
+  backoffMultiplier: 2,      // Double each time
+  jitter: true,              // Add randomness
+  retryableErrors: [
+    ErrorCategory.NETWORK,
+    ErrorCategory.RPC,
+    ErrorCategory.TIMEOUT,
+    ErrorCategory.RATE_LIMIT,
+  ],
+  timeoutMs: 15000,          // 15 second timeout
+});
+
+// Execute with retry logic
+const result = await retryManager.executeWithRetry(
+  async () => await sdk.price.getPrice(FiatCurrency.USD),
+  { operation: 'getPrice', account: 'USD' }
+);
+
+// Check retry history
+const attempts = retryManager.getAttempts({ operation: 'getPrice' });
+console.log('Retry attempts:', attempts.length);
+```
+
+#### Error Classification & Recovery
+
+```typescript
+import { 
+  LocalMoneyError,
+  ErrorClassifier,
+  RecoveryManager
+} from '@localmoney/solana-sdk';
+
+// Automatic error classification
+const classified = ErrorClassifier.classifyError(
+  new Error('Network connection failed')
+);
+console.log('Category:', classified.category);        // NETWORK
+console.log('Severity:', classified.severity);        // MEDIUM
+console.log('Recoverable:', classified.recoverable);  // true
+console.log('Strategy:', classified.suggestedStrategy); // RETRY
+
+// Recovery manager with multiple strategies
+const recoveryManager = new RecoveryManager(circuitBreakerConfig);
+
+const recoveryResult = await recoveryManager.executeWithRecovery(
+  async () => await primaryOperation(),
+  async () => await fallbackOperation(), // Optional fallback
+  { operation: 'criticalOperation' }
+);
+
+if (recoveryResult.success) {
+  console.log('Data:', recoveryResult.data);
+  console.log('Strategy used:', recoveryResult.strategy);
+  console.log('Attempts:', recoveryResult.attempts);
+} else {
+  console.error('Recovery failed:', recoveryResult.error);
+}
+```
+
+#### Environment-Specific Configuration
+
+```typescript
+// Development environment - minimal retries
+const devSDK = new EnhancedLocalMoneySDK(connection, wallet, addresses, {
+  environment: 'development',
+  retryConfig: DEFAULT_RETRY_CONFIGS.minimal,
+  enableErrorHandling: true,
+});
+
+// Production environment - aggressive retries
+const prodSDK = new EnhancedLocalMoneySDK(connection, wallet, addresses, {
+  environment: 'production',
+  retryConfig: DEFAULT_RETRY_CONFIGS.aggressive,
+  circuitBreakerConfig: {
+    failureThreshold: 10,
+    successThreshold: 5,
+    timeout: 300000,  // 5 minutes
+    resetTimeout: 60000, // 1 minute
+  },
+  enableErrorHandling: true,
+});
+
+// Staging environment - balanced approach
+const stagingSDK = new EnhancedLocalMoneySDK(connection, wallet, addresses, {
+  environment: 'staging',
+  retryConfig: DEFAULT_RETRY_CONFIGS.conservative,
+  cacheEnabled: true,
+  cacheTtl: 600000, // 10 minutes
+});
+```
+
+### 7. Protocol Status Monitoring
 
 ```typescript
 // Check protocol status

@@ -19,6 +19,12 @@ export {
 export { HubSDK } from './programs/hub';
 export { ProfileSDK } from './programs/profile';
 export { PriceSDK } from './programs/price';
+export { OfferSDK } from './programs/offer';
+export { TradeSDK } from './programs/trade';
+export { ArbitrationSDK } from './programs/arbitration';
+
+// Account Fetching
+export { AccountFetcher, createAccountFetcher } from './account-fetcher';
 
 // Types and interfaces
 export * from './types';
