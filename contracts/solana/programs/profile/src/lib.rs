@@ -1,238 +1,226 @@
 use anchor_lang::prelude::*;
-use solana_program::msg;
 
-declare_id!("BG73i544YBJXTQaHVqCcTo94pnwvMw4euWhk5V9UvQxK");
-
-// Constants for account sizes
-pub const MAX_USERNAME_LENGTH: usize = 32;
-pub const PROFILE_SIZE: usize = 8 + // discriminator
-    32 + // owner pubkey
-    4 + // username length
-    MAX_USERNAME_LENGTH + // username bytes
-    4 + // username_len
-    4 + // reputation_score
-    4 + // trades_completed
-    4 + // trades_disputed
-    1 + // is_verified
-    8 + // created_at
-    8 + // updated_at
-    64; // padding for future updates
+declare_id!("3rXtVS7K3Lv1RGLiDiWuKKCd2uvrsD1VxQ9agDTpofg4");
 
 #[program]
 pub mod profile {
     use super::*;
 
     pub fn create_profile(ctx: Context<CreateProfile>, username: String) -> Result<()> {
-        require!(
-            username.len() <= MAX_USERNAME_LENGTH,
-            ProfileError::UsernameTooLong
-        );
-
         let profile = &mut ctx.accounts.profile;
-        profile.owner = ctx.accounts.owner.key();
-        profile.username = [0u8; MAX_USERNAME_LENGTH];
-        profile.username[..username.len()].copy_from_slice(username.as_bytes());
-        profile.username_len = username.len() as u32;
-        profile.reputation_score = 0;
-        profile.trades_completed = 0;
-        profile.trades_disputed = 0;
-        profile.is_verified = false;
-        profile.created_at = Clock::get()?.unix_timestamp;
-        profile.updated_at = Clock::get()?.unix_timestamp;
+        let clock = Clock::get()?;
+        
+        profile.owner = ctx.accounts.user.key();
+        profile.username = username;
+        profile.created_at = clock.unix_timestamp as u64;
+        profile.requested_trades_count = 0;
+        profile.active_trades_count = 0;
+        profile.released_trades_count = 0;
+        profile.last_trade = 0;
+        profile.contact = None;
+        profile.encryption_key = None;
+        profile.active_offers_count = 0;
+        profile.bump = ctx.bumps.profile;
 
-        msg!("Profile created successfully");
         Ok(())
     }
 
-    pub fn update_profile(ctx: Context<UpdateProfile>, username: Option<String>) -> Result<()> {
+    pub fn update_contact(
+        ctx: Context<UpdateContact>, 
+        contact: String, 
+        encryption_key: String
+    ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
+        profile.contact = Some(contact);
+        profile.encryption_key = Some(encryption_key);
+        Ok(())
+    }
 
-        if let Some(new_username) = username {
-            require!(
-                new_username.len() <= MAX_USERNAME_LENGTH,
-                ProfileError::UsernameTooLong
-            );
-            profile.username = [0u8; MAX_USERNAME_LENGTH];
-            profile.username[..new_username.len()].copy_from_slice(new_username.as_bytes());
-            profile.username_len = new_username.len() as u32;
+    pub fn update_active_offers(
+        ctx: Context<UpdateActiveOffers>, 
+        offer_state: OfferState
+    ) -> Result<()> {
+        let profile = &mut ctx.accounts.profile;
+        
+        match offer_state {
+            OfferState::Active => profile.active_offers_count += 1,
+            OfferState::Paused | OfferState::Archive => {
+                if profile.active_offers_count > 0 {
+                    profile.active_offers_count -= 1;
+                }
+            }
         }
 
-        profile.updated_at = Clock::get()?.unix_timestamp;
-        msg!("Profile updated successfully");
         Ok(())
     }
 
-    pub fn update_reputation(ctx: Context<UpdateReputation>, score_delta: i32) -> Result<()> {
+    pub fn update_trade_stats(
+        ctx: Context<UpdateTradeStats>, 
+        trade_state: TradeState
+    ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
+        let clock = Clock::get()?;
 
-        // Update reputation score, ensuring it doesn't underflow
-        if score_delta < 0 && profile.reputation_score < score_delta.abs() as u32 {
-            profile.reputation_score = 0;
-        } else if score_delta < 0 {
-            profile.reputation_score -= score_delta.abs() as u32;
-        } else {
-            profile.reputation_score += score_delta as u32;
+        match trade_state {
+            TradeState::RequestCreated => {
+                profile.requested_trades_count += 1;
+                profile.active_trades_count += 1;
+            },
+            TradeState::EscrowReleased => {
+                if profile.active_trades_count > 0 {
+                    profile.active_trades_count -= 1;
+                }
+                profile.released_trades_count += 1;
+                profile.last_trade = clock.unix_timestamp as u64;
+            },
+            TradeState::RequestCanceled | 
+            TradeState::EscrowCanceled | 
+            TradeState::EscrowRefunded |
+            TradeState::SettledForMaker |
+            TradeState::SettledForTaker => {
+                if profile.active_trades_count > 0 {
+                    profile.active_trades_count -= 1;
+                }
+            },
+            _ => {} // No change for other states
         }
 
-        profile.updated_at = Clock::get()?.unix_timestamp;
-        msg!("Reputation updated successfully");
-        Ok(())
-    }
-
-    pub fn verify_profile(ctx: Context<VerifyProfile>) -> Result<()> {
-        let profile = &mut ctx.accounts.profile;
-        profile.is_verified = true;
-        profile.updated_at = Clock::get()?.unix_timestamp;
-
-        msg!("Profile verified successfully");
-        Ok(())
-    }
-
-    pub fn record_trade_completion(ctx: Context<RecordTrade>) -> Result<()> {
-        let profile = &mut ctx.accounts.profile;
-        profile.trades_completed += 1;
-        profile.updated_at = Clock::get()?.unix_timestamp;
-
-        msg!("Trade completion recorded successfully");
-        Ok(())
-    }
-
-    pub fn record_trade_dispute(ctx: Context<RecordTrade>) -> Result<()> {
-        let profile = &mut ctx.accounts.profile;
-        profile.trades_disputed += 1;
-        profile.updated_at = Clock::get()?.unix_timestamp;
-
-        msg!("Trade dispute recorded successfully");
-        Ok(())
-    }
-
-    pub fn verify_trade_completion(ctx: Context<VerifyTradeCompletion>) -> Result<()> {
-        // Verify trade completion using common module
-        common::verify_trade_completion(&ctx.accounts.trade_program, &ctx.accounts.trade)?;
-
-        // Update profile statistics
-        let profile = &mut ctx.accounts.profile;
-        profile.trades_completed += 1;
-        profile.reputation_score = profile.reputation_score.saturating_add(1);
-        profile.updated_at = Clock::get()?.unix_timestamp;
-
-        msg!("Trade verification and profile update completed successfully");
         Ok(())
     }
 }
 
 #[derive(Accounts)]
+#[instruction(username: String)]
 pub struct CreateProfile<'info> {
     #[account(
         init,
-        payer = owner,
-        space = PROFILE_SIZE,
-        seeds = [b"profile", owner.key().as_ref()],
+        payer = user,
+        space = Profile::SPACE,
+        seeds = [b"profile".as_ref(), user.key().as_ref()],
         bump
     )]
     pub profile: Account<'info, Profile>,
+    
     #[account(mut)]
-    pub owner: Signer<'info>,
+    pub user: Signer<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct UpdateProfile<'info> {
+pub struct UpdateContact<'info> {
     #[account(
         mut,
-        seeds = [b"profile", owner.key().as_ref()],
-        bump,
-        has_one = owner
+        seeds = [b"profile".as_ref(), user.key().as_ref()],
+        bump = profile.bump,
+        constraint = profile.owner == user.key() @ ErrorCode::Unauthorized
     )]
     pub profile: Account<'info, Profile>,
-    pub owner: Signer<'info>,
+    
+    pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
-pub struct UpdateReputation<'info> {
+pub struct UpdateActiveOffers<'info> {
     #[account(
         mut,
-        seeds = [b"profile", owner.key().as_ref()],
-        bump
+        seeds = [b"profile".as_ref(), profile.owner.as_ref()],
+        bump = profile.bump
     )]
     pub profile: Account<'info, Profile>,
-    pub authority: Signer<'info>,
-    /// CHECK: Owner of the profile
-    pub owner: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
-pub struct VerifyProfile<'info> {
+pub struct UpdateTradeStats<'info> {
     #[account(
         mut,
-        seeds = [b"profile", owner.key().as_ref()],
-        bump
+        seeds = [b"profile".as_ref(), profile.owner.as_ref()],
+        bump = profile.bump
     )]
     pub profile: Account<'info, Profile>,
-    pub authority: Signer<'info>,
-    /// CHECK: Owner of the profile
-    pub owner: AccountInfo<'info>,
-}
-
-#[derive(Accounts)]
-pub struct RecordTrade<'info> {
-    #[account(
-        mut,
-        seeds = [b"profile", owner.key().as_ref()],
-        bump
-    )]
-    pub profile: Account<'info, Profile>,
-    /// CHECK: Owner of the profile
-    pub owner: AccountInfo<'info>,
-    /// CHECK: Trade program account, validated in program logic
-    pub trade_program: UncheckedAccount<'info>,
-}
-
-#[derive(Accounts)]
-pub struct VerifyTradeCompletion<'info> {
-    #[account(
-        mut,
-        seeds = [b"profile", owner.key().as_ref()],
-        bump
-    )]
-    pub profile: Account<'info, Profile>,
-    /// CHECK: Owner of the profile
-    pub owner: AccountInfo<'info>,
-    /// CHECK: Trade account to verify
-    pub trade: AccountInfo<'info>,
-    /// CHECK: Trade program
-    pub trade_program: AccountInfo<'info>,
 }
 
 #[account]
-#[derive(Default)]
 pub struct Profile {
     pub owner: Pubkey,
-    pub username: [u8; MAX_USERNAME_LENGTH],
-    pub username_len: u32,
-    pub reputation_score: u32,
-    pub trades_completed: u32,
-    pub trades_disputed: u32,
-    pub is_verified: bool,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub username: String,
+    pub created_at: u64,
+    pub requested_trades_count: u64,
+    pub active_trades_count: u8,
+    pub released_trades_count: u64,
+    pub last_trade: u64,
+    pub contact: Option<String>,
+    pub encryption_key: Option<String>,
+    pub active_offers_count: u8,
+    pub bump: u8,
+}
+
+impl Profile {
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // owner
+        4 + 50 + // username (String with max 50 chars)
+        8 + // created_at
+        8 + // requested_trades_count
+        1 + // active_trades_count
+        8 + // released_trades_count
+        8 + // last_trade
+        1 + 4 + 200 + // contact (Option<String> with max 200 chars)
+        1 + 4 + 100 + // encryption_key (Option<String> with max 100 chars)
+        1 + // active_offers_count
+        1; // bump
+}
+
+// Common types used across programs
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum TradeState {
+    RequestCreated,
+    RequestCanceled,
+    RequestExpired,
+    RequestAccepted,
+    EscrowFunded,
+    EscrowCanceled,
+    EscrowRefunded,
+    FiatDeposited,
+    EscrowReleased,
+    EscrowDisputed,
+    SettledForMaker,
+    SettledForTaker,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum OfferState {
+    Active,
+    Paused,
+    Archive,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum OfferType {
+    Buy,
+    Sell,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum FiatCurrency {
+    USD,
+    EUR, 
+    GBP,
+    CAD,
+    AUD,
+    JPY,
+    BRL,
+    MXN,
+    ARS,
+    CLP,
+    COP,
+    NGN,
+    THB,
+    VES,
+    // Add more as needed based on CosmWasm implementation
 }
 
 #[error_code]
-pub enum ProfileError {
-    #[msg("Username is too long")]
-    UsernameTooLong,
-    #[msg("Invalid authority for this operation")]
-    InvalidAuthority,
-    #[msg("Invalid trade program")]
-    InvalidTradeProgram,
-}
-
-// Re-export for CPI
-pub use profile::*;
-
-#[cfg(test)]
-mod tests {
-
-    // Add tests here
+pub enum ErrorCode {
+    #[msg("Unauthorized access")]
+    Unauthorized,
 }

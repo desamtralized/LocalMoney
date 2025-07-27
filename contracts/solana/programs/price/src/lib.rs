@@ -1,176 +1,180 @@
 use anchor_lang::prelude::*;
-use solana_program::msg;
 
-declare_id!("8uzArQW1YiLwh2CLQhMU1Ya774EMEbdbpgux6Tf8z1rn");
+declare_id!("CC9asnBvEMa1hrwKAeubWr8oBmLdYGdQmCc9hSHMEFmQ");
 
 #[program]
 pub mod price {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let state = &mut ctx.accounts.state;
-        state.admin = ctx.accounts.admin.key();
-        state.price_provider = ctx.accounts.admin.key(); // Initially set to admin
-        state.is_initialized = true;
-        state.prices = Vec::new();
-
-        msg!("Price oracle initialized successfully");
+    pub fn initialize(ctx: Context<InitializePrices>) -> Result<()> {
+        let price_config = &mut ctx.accounts.price_config;
+        price_config.authority = ctx.accounts.authority.key();
+        price_config.bump = ctx.bumps.price_config;
         Ok(())
     }
 
-    pub fn update_prices(ctx: Context<UpdatePrices>, prices: Vec<CurrencyPrice>) -> Result<()> {
-        let oracle = &mut ctx.accounts.oracle;
-
-        // Validate the price provider
-        require!(
-            ctx.accounts.price_provider.key() == oracle.price_provider,
-            PriceError::InvalidPriceProvider
-        );
-
-        // Update all prices
-        oracle.prices = prices.clone();
-
-        msg!("Updated {} prices in the oracle", prices.len());
-        Ok(())
-    }
-
-    pub fn register_price_route(
-        ctx: Context<RegisterPriceRoute>,
-        denom: String,
-        route: Vec<PriceRoute>,
+    pub fn update_price(
+        ctx: Context<UpdatePrice>, 
+        fiat_currency: FiatCurrency,
+        price_per_token: u64,
+        decimals: u8
     ) -> Result<()> {
-        let route_data = &mut ctx.accounts.route_data;
-        route_data.denom = denom;
-        route_data.route = route;
+        let price_feed = &mut ctx.accounts.price_feed;
+        price_feed.authority = ctx.accounts.authority.key();
+        price_feed.fiat_currency = fiat_currency;
+        price_feed.price_per_token = price_per_token;
+        price_feed.decimals = decimals;
+        price_feed.last_updated = Clock::get()?.unix_timestamp as u64;
+        price_feed.bump = ctx.bumps.price_feed;
 
-        msg!("Price route registered successfully");
         Ok(())
     }
 
-    pub fn verify_price_for_trade(
-        ctx: Context<VerifyPrice>,
-        trade_price: u64,
-        currency: String,
-        tolerance_bps: u16, // Basis points (1/10000) of allowed deviation
-    ) -> Result<()> {
-        let oracle = &ctx.accounts.oracle;
-        require!(oracle.is_initialized, PriceError::NotInitialized);
-
-        // Find the reference price for the given currency
-        let reference_price = oracle
-            .prices
-            .iter()
-            .find(|p| p.currency == currency)
-            .ok_or(PriceError::PriceNotFound)?;
-
-        // Calculate allowed deviation range
-        let tolerance = (reference_price.usd_price as u128)
-            .checked_mul(tolerance_bps as u128)
-            .unwrap_or(0)
-            .checked_div(10000)
-            .unwrap_or(0) as u64;
-
-        let min_allowed = reference_price.usd_price.saturating_sub(tolerance);
-        let max_allowed = reference_price.usd_price.saturating_add(tolerance);
-
+    pub fn get_price(
+        ctx: Context<GetPrice>, 
+        _mint: Pubkey, 
+        fiat_currency: FiatCurrency
+    ) -> Result<u64> {
+        let price_feed = &ctx.accounts.price_feed;
         require!(
-            trade_price >= min_allowed && trade_price <= max_allowed,
-            PriceError::PriceOutOfRange
+            price_feed.fiat_currency == fiat_currency, 
+            ErrorCode::InvalidCurrency
         );
-
-        msg!(
-            "Price verified successfully within {}bps tolerance",
-            tolerance_bps
-        );
-        Ok(())
+        
+        // Return price scaled by decimals
+        Ok(price_feed.price_per_token)
     }
 }
 
 #[derive(Accounts)]
-pub struct Initialize<'info> {
+pub struct InitializePrices<'info> {
     #[account(
         init,
-        payer = admin,
-        space = 8 + // discriminator
-            1 + // is_initialized
-            32 + // admin
-            32 + // price_provider
-            4 + // vec length
-            10 * (4 + 32 + 8 + 8) // space for 10 prices (string length + string + price + timestamp)
+        payer = authority,
+        space = PriceConfig::SPACE,
+        seeds = [b"price".as_ref(), b"config".as_ref()],
+        bump
     )]
-    pub state: Account<'info, PriceState>,
+    pub price_config: Account<'info, PriceConfig>,
+    
     #[account(mut)]
-    pub admin: Signer<'info>,
+    pub authority: Signer<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct UpdatePrices<'info> {
-    #[account(mut)]
-    pub oracle: Account<'info, PriceState>,
+#[instruction(fiat_currency: FiatCurrency, price_per_token: u64, decimals: u8)]
+pub struct UpdatePrice<'info> {
     #[account(
-        constraint = price_provider.key() == oracle.price_provider @ PriceError::InvalidPriceProvider
+        seeds = [b"price".as_ref(), b"config".as_ref()],
+        bump = price_config.bump,
+        constraint = price_config.authority == authority.key() @ ErrorCode::Unauthorized
     )]
-    pub price_provider: Signer<'info>,
-}
-
-#[derive(Accounts)]
-pub struct RegisterPriceRoute<'info> {
-    #[account(init, payer = admin, space = 8 + std::mem::size_of::<PriceRouteData>())]
-    pub route_data: Account<'info, PriceRouteData>,
-    #[account(mut, has_one = admin)]
-    pub state: Account<'info, PriceState>,
+    pub price_config: Account<'info, PriceConfig>,
+    
+    #[account(
+        init,
+        payer = authority,
+        space = PriceFeed::SPACE,
+        seeds = [b"price".as_ref(), fiat_currency.to_string().as_bytes()],
+        bump
+    )]
+    pub price_feed: Account<'info, PriceFeed>,
+    
     #[account(mut)]
-    pub admin: Signer<'info>,
+    pub authority: Signer<'info>,
+    
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct VerifyPrice<'info> {
-    pub oracle: Account<'info, PriceState>,
+#[instruction(_mint: Pubkey, fiat_currency: FiatCurrency)]
+pub struct GetPrice<'info> {
+    #[account(
+        seeds = [b"price".as_ref(), fiat_currency.to_string().as_bytes()],
+        bump = price_feed.bump
+    )]
+    pub price_feed: Account<'info, PriceFeed>,
 }
 
 #[account]
-#[derive(Default)]
-pub struct PriceState {
-    pub is_initialized: bool,
-    pub admin: Pubkey,
-    pub price_provider: Pubkey,
-    pub prices: Vec<CurrencyPrice>,
+pub struct PriceConfig {
+    pub authority: Pubkey,
+    pub bump: u8,
+}
+
+impl PriceConfig {
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // authority
+        1; // bump
 }
 
 #[account]
-pub struct PriceRouteData {
-    pub denom: String,
-    pub route: Vec<PriceRoute>,
+pub struct PriceFeed {
+    pub authority: Pubkey,
+    pub fiat_currency: FiatCurrency,
+    pub price_per_token: u64, // Price in smallest fiat unit (e.g., cents for USD)
+    pub decimals: u8,         // Token decimals for scaling
+    pub last_updated: u64,    // Unix timestamp
+    pub bump: u8,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct CurrencyPrice {
-    pub currency: String,
-    pub usd_price: u64,
-    pub updated_at: i64,
+impl PriceFeed {
+    pub const SPACE: usize = 8 + // discriminator
+        32 + // authority
+        1 + // fiat_currency enum (max 1 byte)
+        8 + // price_per_token
+        1 + // decimals
+        8 + // last_updated
+        1; // bump
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct PriceRoute {
-    pub offer_asset: String,
-    pub pool: Pubkey,
+
+// Reuse common types from profile program
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum FiatCurrency {
+    USD,
+    EUR, 
+    GBP,
+    CAD,
+    AUD,
+    JPY,
+    BRL,
+    MXN,
+    ARS,
+    CLP,
+    COP,
+    NGN,
+    THB,
+    VES,
+}
+
+impl std::fmt::Display for FiatCurrency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FiatCurrency::USD => write!(f, "USD"),
+            FiatCurrency::EUR => write!(f, "EUR"),
+            FiatCurrency::GBP => write!(f, "GBP"),
+            FiatCurrency::CAD => write!(f, "CAD"),
+            FiatCurrency::AUD => write!(f, "AUD"),
+            FiatCurrency::JPY => write!(f, "JPY"),
+            FiatCurrency::BRL => write!(f, "BRL"),
+            FiatCurrency::MXN => write!(f, "MXN"),
+            FiatCurrency::ARS => write!(f, "ARS"),
+            FiatCurrency::CLP => write!(f, "CLP"),
+            FiatCurrency::COP => write!(f, "COP"),
+            FiatCurrency::NGN => write!(f, "NGN"),
+            FiatCurrency::THB => write!(f, "THB"),
+            FiatCurrency::VES => write!(f, "VES"),
+        }
+    }
 }
 
 #[error_code]
-pub enum PriceError {
-    #[msg("Price oracle is not initialized")]
-    NotInitialized,
-    #[msg("Invalid price provider")]
-    InvalidPriceProvider,
-    #[msg("Invalid price route configuration")]
-    InvalidPriceRoute,
-    #[msg("Price not found for the specified currency")]
-    PriceNotFound,
-    #[msg("Trade price is outside allowed range")]
-    PriceOutOfRange,
+pub enum ErrorCode {
+    #[msg("Unauthorized access")]
+    Unauthorized,
+    #[msg("Invalid currency for this price feed")]
+    InvalidCurrency,
 }
-
-// Re-export for CPI
-pub use price::*;
