@@ -1468,6 +1468,7 @@ pub struct ExecuteConversionStep<'info> {
 
 // Data structures
 #[account]
+#[derive(Debug)]
 pub struct Trade {
     pub id: u64,
     pub offer_id: u64,
@@ -3451,6 +3452,989 @@ fn execute_conversion_fee_distribution(
     transfer_checked(cpi_ctx, conversion_fee, ctx.accounts.token_mint.decimals)?;
     
     Ok(())
+}
+
+    // ==================== QUERY INSTRUCTIONS ====================
+    
+    /// Get paginated trades with comprehensive filtering
+    pub fn get_trades(
+        ctx: Context<GetTrades>,
+        params: GetTradesParams,
+    ) -> Result<TradesResponse> {
+        validate_pagination_params(&params.pagination)?;
+        
+        let program_id = ctx.program_id;
+        let filters = build_trade_filters(&params.filter)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &params.pagination,
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        let total_count = estimate_total_trades(ctx.accounts.system_program.to_account_info(), program_id)?;
+        
+        let next_cursor = get_next_cursor_trade(&trades);
+        let has_more = trades.len() >= params.pagination.limit as usize;
+        
+        Ok(TradesResponse {
+            trades,
+            pagination: PaginationResponse {
+                next_cursor,
+                has_more,
+                total_estimate: Some(total_count),
+            },
+        })
+    }
+    
+    /// Get trades by specific participant (buyer or seller)
+    pub fn get_trades_by_participant(
+        ctx: Context<GetTradesByParticipant>,
+        params: GetTradesByParticipantParams,
+    ) -> Result<TradesResponse> {
+        validate_pagination_params(&params.pagination)?;
+        
+        let program_id = ctx.program_id;
+        let participant_filter = TradeFilter {
+            participant: Some(params.participant),
+            role: params.participant_role,
+            ..Default::default()
+        };
+        let filters = build_trade_filters(&participant_filter)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &params.pagination,
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        
+        let next_cursor = get_next_cursor_trade(&trades);
+        let has_more = trades.len() >= params.pagination.limit as usize;
+        
+        Ok(TradesResponse {
+            trades,
+            pagination: PaginationResponse {
+                next_cursor,
+                has_more,
+                total_estimate: None,
+            },
+        })
+    }
+    
+    /// Get single trade by ID
+    pub fn get_trade(
+        ctx: Context<GetTrade>,
+        trade_id: u64,
+    ) -> Result<TradeResponse> {
+        let trade = &ctx.accounts.trade;
+        
+        Ok(TradeResponse {
+            trade: trade.clone(),
+            metadata: TradeMetadata {
+                age_seconds: Clock::get()?.unix_timestamp as u64 - trade.created_at,
+                is_expired: Clock::get()?.unix_timestamp as u64 > trade.expires_at,
+                time_to_expiry: if Clock::get()?.unix_timestamp as u64 < trade.expires_at {
+                    Some(trade.expires_at - Clock::get()?.unix_timestamp as u64)
+                } else {
+                    None
+                },
+                state_duration_seconds: calculate_state_duration(trade)?,
+            },
+        })
+    }
+    
+    /// Get trade history with date range and status filters
+    pub fn get_trade_history(
+        ctx: Context<GetTradeHistory>,
+        params: GetTradeHistoryParams,
+    ) -> Result<TradeHistoryResponse> {
+        validate_pagination_params(&params.pagination)?;
+        validate_date_range_params(&params.date_range)?;
+        
+        let program_id = ctx.program_id;
+        let history_filter = TradeFilter {
+            created_after: params.date_range.start_date,
+            created_before: params.date_range.end_date,
+            state: params.state_filter,
+            ..Default::default()
+        };
+        let filters = build_trade_filters(&history_filter)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &params.pagination,
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        let history_items = convert_trades_to_history(&trades, &params.date_range)?;
+        
+        Ok(TradeHistoryResponse {
+            history: history_items,
+            pagination: PaginationResponse {
+                next_cursor: get_next_cursor_trade(&trades),
+                has_more: trades.len() >= params.pagination.limit as usize,
+                total_estimate: None,
+            },
+            summary: calculate_history_summary(&trades)?,
+        })
+    }
+    
+    /// Get trade statistics and analytics
+    pub fn get_trade_stats(
+        ctx: Context<GetTradeStats>,
+        params: GetTradeStatsParams,
+    ) -> Result<TradeStatsResponse> {
+        let program_id = ctx.program_id;
+        let filters = build_trade_filters(&params.filter)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &PaginationParams {
+                limit: 1000, // Reasonable limit for stats calculation
+                cursor: None,
+                direction: PaginationDirection::Forward,
+            },
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        let stats = calculate_trade_statistics(&trades)?;
+        
+        Ok(stats)
+    }
+    
+    /// Search trades with complex filtering and analytics
+    pub fn search_trades(
+        ctx: Context<SearchTrades>,
+        params: SearchTradesParams,
+    ) -> Result<TradesResponse> {
+        validate_pagination_params(&params.pagination)?;
+        validate_search_trade_params(&params)?;
+        
+        let program_id = ctx.program_id;
+        let filters = build_search_trade_filters(&params)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &params.pagination,
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        let filtered_trades = apply_advanced_trade_filters(trades, &params)?;
+        
+        let next_cursor = get_next_cursor_trade(&filtered_trades);
+        let has_more = filtered_trades.len() >= params.pagination.limit as usize;
+        
+        Ok(TradesResponse {
+            trades: filtered_trades,
+            pagination: PaginationResponse {
+                next_cursor,
+                has_more,
+                total_estimate: None,
+            },
+        })
+    }
+    
+    /// Get arbitration cases and dispute analytics
+    pub fn get_arbitration_cases(
+        ctx: Context<GetArbitrationCases>,
+        params: GetArbitrationCasesParams,
+    ) -> Result<ArbitrationCasesResponse> {
+        validate_pagination_params(&params.pagination)?;
+        
+        let program_id = ctx.program_id;
+        let arbitration_filter = TradeFilter {
+            state: Some(TradeState::DisputeOpened),
+            arbitrator: params.arbitrator,
+            ..Default::default()
+        };
+        let filters = build_trade_filters(&arbitration_filter)?;
+        
+        let accounts = load_program_accounts_filtered(
+            ctx.accounts.system_program.to_account_info(),
+            program_id,
+            &filters,
+            &params.pagination,
+        )?;
+        
+        let trades = deserialize_trade_accounts(accounts)?;
+        let cases = convert_trades_to_arbitration_cases(&trades)?;
+        
+        Ok(ArbitrationCasesResponse {
+            cases,
+            pagination: PaginationResponse {
+                next_cursor: get_next_cursor_trade(&trades),
+                has_more: trades.len() >= params.pagination.limit as usize,
+                total_estimate: None,
+            },
+            arbitration_stats: calculate_arbitration_statistics(&trades)?,
+        })
+    }
+
+// ==================== QUERY ACCOUNT CONTEXTS ====================
+
+#[derive(Accounts)]
+pub struct GetTrades<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct GetTradesByParticipant<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct GetTrade<'info> {
+    #[account(
+        seeds = [b"trade".as_ref(), trade_id.to_le_bytes().as_ref()],
+        bump = trade.bump
+    )]
+    pub trade: Account<'info, Trade>,
+}
+
+#[derive(Accounts)]
+pub struct GetTradeHistory<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct GetTradeStats<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SearchTrades<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct GetArbitrationCases<'info> {
+    pub system_program: Program<'info, System>,
+}
+
+// ==================== QUERY PARAMETERS ====================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetTradesParams {
+    pub filter: TradeFilter,
+    pub pagination: PaginationParams,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetTradesByParticipantParams {
+    pub participant: Pubkey,
+    pub participant_role: Option<ParticipantRole>,
+    pub pagination: PaginationParams,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetTradeHistoryParams {
+    pub date_range: DateRangeParams,
+    pub state_filter: Option<TradeState>,
+    pub pagination: PaginationParams,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetTradeStatsParams {
+    pub filter: TradeFilter,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SearchTradesParams {
+    pub filter: TradeFilter,
+    pub pagination: PaginationParams,
+    pub sort_by: Option<TradeSortBy>,
+    pub amount_range: Option<AmountRange>,
+    pub include_expired: Option<bool>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetArbitrationCasesParams {
+    pub arbitrator: Option<Pubkey>,
+    pub case_status: Option<ArbitrationStatus>,
+    pub pagination: PaginationParams,
+}
+
+// ==================== FILTER AND PARAMETER TYPES ====================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, Default)]
+pub struct TradeFilter {
+    pub participant: Option<Pubkey>,
+    pub buyer: Option<Pubkey>,
+    pub seller: Option<Pubkey>,
+    pub arbitrator: Option<Pubkey>,
+    pub offer_id: Option<u64>,
+    pub state: Option<TradeState>,
+    pub fiat_currency: Option<FiatCurrency>,
+    pub token_mint: Option<Pubkey>,
+    pub min_amount: Option<u64>,
+    pub max_amount: Option<u64>,
+    pub created_after: Option<u64>,
+    pub created_before: Option<u64>,
+    pub expires_after: Option<u64>,
+    pub expires_before: Option<u64>,
+    pub role: Option<ParticipantRole>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct DateRangeParams {
+    pub start_date: Option<u64>,
+    pub end_date: Option<u64>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum ParticipantRole {
+    Buyer,
+    Seller,
+    Arbitrator,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum TradeSortBy {
+    CreatedAt,
+    ExpiresAt,
+    Amount,
+    LockedPrice,
+    State,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct AmountRange {
+    pub min_amount: Option<u64>,
+    pub max_amount: Option<u64>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum ArbitrationStatus {
+    Pending,
+    InProgress,
+    Resolved,
+    Expired,
+}
+
+// ==================== RESPONSE TYPES ====================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradesResponse {
+    pub trades: Vec<Trade>,
+    pub pagination: PaginationResponse,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeResponse {
+    pub trade: Trade,
+    pub metadata: TradeMetadata,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeMetadata {
+    pub age_seconds: u64,
+    pub is_expired: bool,
+    pub time_to_expiry: Option<u64>,
+    pub state_duration_seconds: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeHistoryResponse {
+    pub history: Vec<TradeHistoryItem>,
+    pub pagination: PaginationResponse,
+    pub summary: TradeHistorySummary,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeHistoryItem {
+    pub trade_id: u64,
+    pub buyer: Pubkey,
+    pub seller: Pubkey,
+    pub amount: u64,
+    pub fiat_currency: FiatCurrency,
+    pub state: TradeState,
+    pub created_at: u64,
+    pub completed_at: Option<u64>,
+    pub duration_seconds: Option<u64>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeHistorySummary {
+    pub total_trades: u64,
+    pub total_volume: u64,
+    pub completed_trades: u64,
+    pub disputed_trades: u64,
+    pub average_completion_time: u64,
+    pub success_rate: u64, // Basis points (10000 = 100%)
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TradeStatsResponse {
+    pub total_trades: u64,
+    pub trades_by_state: Vec<StateCount>,
+    pub trades_by_currency: Vec<CurrencyTradeStats>,
+    pub volume_statistics: VolumeStatistics,
+    pub time_statistics: TimeStatistics,
+    pub arbitration_statistics: ArbitrationStatistics,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct StateCount {
+    pub state: TradeState,
+    pub count: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct CurrencyTradeStats {
+    pub currency: FiatCurrency,
+    pub trade_count: u64,
+    pub total_volume: u64,
+    pub average_amount: u64,
+    pub average_locked_price: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct VolumeStatistics {
+    pub total_volume: u64,
+    pub average_trade_size: u64,
+    pub largest_trade: u64,
+    pub smallest_trade: u64,
+    pub median_trade_size: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct TimeStatistics {
+    pub average_completion_time: u64,
+    pub fastest_completion: u64,
+    pub slowest_completion: u64,
+    pub average_response_time: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationStatistics {
+    pub total_disputes: u64,
+    pub resolved_disputes: u64,
+    pub pending_disputes: u64,
+    pub dispute_rate: u64, // Basis points
+    pub average_resolution_time: u64,
+    pub buyer_wins: u64,
+    pub seller_wins: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationCasesResponse {
+    pub cases: Vec<ArbitrationCase>,
+    pub pagination: PaginationResponse,
+    pub arbitration_stats: ArbitrationStatistics,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ArbitrationCase {
+    pub trade_id: u64,
+    pub buyer: Pubkey,
+    pub seller: Pubkey,
+    pub arbitrator: Pubkey,
+    pub amount: u64,
+    pub fiat_currency: FiatCurrency,
+    pub dispute_opened_at: u64,
+    pub dispute_expires_at: Option<u64>,
+    pub case_status: ArbitrationStatus,
+    pub resolution: Option<DisputeResolution>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct DisputeResolution {
+    pub winner: Pubkey,
+    pub resolved_at: u64,
+    pub resolution_reason: Option<String>,
+}
+
+// ==================== HELPER FUNCTIONS ====================
+
+fn validate_date_range_params(params: &DateRangeParams) -> Result<()> {
+    if let (Some(start), Some(end)) = (params.start_date, params.end_date) {
+        require!(start <= end, ErrorCode::InvalidParameter);
+    }
+    Ok(())
+}
+
+fn validate_search_trade_params(params: &SearchTradesParams) -> Result<()> {
+    // Validate amount range
+    if let Some(amount_range) = &params.amount_range {
+        if let (Some(min), Some(max)) = (amount_range.min_amount, amount_range.max_amount) {
+            require!(min <= max, ErrorCode::InvalidParameter);
+        }
+    }
+    
+    // Validate date range in filter
+    if let (Some(after), Some(before)) = (params.filter.created_after, params.filter.created_before) {
+        require!(after <= before, ErrorCode::InvalidParameter);
+    }
+    
+    // Validate expiry date range
+    if let (Some(after), Some(before)) = (params.filter.expires_after, params.filter.expires_before) {
+        require!(after <= before, ErrorCode::InvalidParameter);
+    }
+    
+    Ok(())
+}
+
+fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
+    let mut filters = Vec::new();
+    
+    // Add discriminator filter for Trade accounts
+    filters.push(RpcFilterType::Memcmp(Memcmp::new(
+        0, // offset 0 for discriminator
+        MemcmpEncodedBytes::Base64(
+            "TradeDiscriminator".to_string() // Placeholder - replace with actual discriminator
+        ),
+    )));
+    
+    // Filter by buyer if specified
+    if let Some(buyer) = filter.buyer {
+        filters.push(RpcFilterType::Memcmp(Memcmp::new(
+            8 + 8 + 8, // offset: discriminator + id + offer_id
+            MemcmpEncodedBytes::Base58(buyer.to_string()),
+        )));
+    }
+    
+    // Filter by seller if specified
+    if let Some(seller) = filter.seller {
+        filters.push(RpcFilterType::Memcmp(Memcmp::new(
+            8 + 8 + 8 + 32, // offset: discriminator + id + offer_id + buyer
+            MemcmpEncodedBytes::Base58(seller.to_string()),
+        )));
+    }
+    
+    // Filter by state if specified
+    if let Some(state) = &filter.state {
+        let state_byte = trade_state_to_byte(state);
+        filters.push(RpcFilterType::Memcmp(Memcmp::new(
+            get_trade_state_offset(), // Calculate actual offset to state field
+            MemcmpEncodedBytes::Base64(
+                base64::encode([state_byte])
+            ),
+        )));
+    }
+    
+    Ok(filters)
+}
+
+fn build_search_trade_filters(params: &SearchTradesParams) -> Result<Vec<RpcFilterType>> {
+    build_trade_filters(&params.filter)
+}
+
+fn deserialize_trade_accounts(accounts: Vec<(Pubkey, AccountInfo)>) -> Result<Vec<Trade>> {
+    let mut trades = Vec::new();
+    
+    for (_, account_info) in accounts {
+        // Skip discriminator (8 bytes) and deserialize
+        let data = &account_info.data.borrow()[8..];
+        let trade: Trade = AnchorDeserialize::deserialize(&mut &data[..])?;
+        trades.push(trade);
+    }
+    
+    Ok(trades)
+}
+
+fn estimate_total_trades(_system_program: AccountInfo, _program_id: &Pubkey) -> Result<u64> {
+    // Placeholder implementation
+    Ok(0)
+}
+
+fn get_next_cursor_trade(trades: &[Trade]) -> Option<String> {
+    if trades.is_empty() {
+        return None;
+    }
+    
+    let last_trade = trades.last().unwrap();
+    Some(format!("{}_{}", last_trade.id, last_trade.created_at))
+}
+
+fn calculate_state_duration(trade: &Trade) -> Result<u64> {
+    let current_time = Clock::get()?.unix_timestamp as u64;
+    if let Some(last_state_change) = trade.state_history.last() {
+        Ok(current_time.saturating_sub(last_state_change.timestamp))
+    } else {
+        Ok(current_time.saturating_sub(trade.created_at))
+    }
+}
+
+fn convert_trades_to_history(trades: &[Trade], _date_range: &DateRangeParams) -> Result<Vec<TradeHistoryItem>> {
+    let mut history_items = Vec::new();
+    
+    for trade in trades {
+        let completed_at = trade.state_history
+            .iter()
+            .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
+            .map(|item| item.timestamp);
+        
+        let duration_seconds = completed_at.map(|completed| completed.saturating_sub(trade.created_at));
+        
+        history_items.push(TradeHistoryItem {
+            trade_id: trade.id,
+            buyer: trade.buyer,
+            seller: trade.seller,
+            amount: trade.amount,
+            fiat_currency: trade.fiat_currency.clone(),
+            state: trade.state.clone(),
+            created_at: trade.created_at,
+            completed_at,
+            duration_seconds,
+        });
+    }
+    
+    Ok(history_items)
+}
+
+fn calculate_history_summary(trades: &[Trade]) -> Result<TradeHistorySummary> {
+    let total_trades = trades.len() as u64;
+    let mut total_volume = 0u64;
+    let mut completed_trades = 0u64;
+    let mut disputed_trades = 0u64;
+    let mut total_completion_time = 0u64;
+    
+    for trade in trades {
+        total_volume += trade.amount;
+        
+        if matches!(trade.state, TradeState::Released | TradeState::Refunded) {
+            completed_trades += 1;
+            
+            if let Some(completion_time) = trade.state_history
+                .iter()
+                .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
+                .map(|item| item.timestamp.saturating_sub(trade.created_at))
+            {
+                total_completion_time += completion_time;
+            }
+        }
+        
+        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+            disputed_trades += 1;
+        }
+    }
+    
+    let average_completion_time = if completed_trades > 0 {
+        total_completion_time / completed_trades
+    } else {
+        0
+    };
+    
+    let success_rate = if total_trades > 0 {
+        (completed_trades * 10000) / total_trades // Basis points
+    } else {
+        0
+    };
+    
+    Ok(TradeHistorySummary {
+        total_trades,
+        total_volume,
+        completed_trades,
+        disputed_trades,
+        average_completion_time,
+        success_rate,
+    })
+}
+
+fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
+    let total_trades = trades.len() as u64;
+    let mut state_counts = HashMap::new();
+    let mut currency_stats = HashMap::new();
+    let mut amounts = Vec::new();
+    let mut completion_times = Vec::new();
+    let mut dispute_count = 0u64;
+    let mut resolved_disputes = 0u64;
+    
+    for trade in trades {
+        // Count by state
+        *state_counts.entry(trade.state.clone()).or_insert(0u64) += 1;
+        
+        // Collect amounts
+        amounts.push(trade.amount);
+        
+        // Track currency stats
+        let currency_stat = currency_stats.entry(trade.fiat_currency.clone()).or_insert(CurrencyTradeStats {
+            currency: trade.fiat_currency.clone(),
+            trade_count: 0,
+            total_volume: 0,
+            average_amount: 0,
+            average_locked_price: 0,
+        });
+        currency_stat.trade_count += 1;
+        currency_stat.total_volume += trade.amount;
+        
+        // Track dispute statistics
+        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+            dispute_count += 1;
+            if matches!(trade.state, TradeState::DisputeResolved) {
+                resolved_disputes += 1;
+            }
+        }
+        
+        // Track completion times
+        if let Some(completion_time) = trade.state_history
+            .iter()
+            .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
+            .map(|item| item.timestamp.saturating_sub(trade.created_at))
+        {
+            completion_times.push(completion_time);
+        }
+    }
+    
+    // Calculate volume statistics
+    amounts.sort_unstable();
+    let total_volume: u64 = amounts.iter().sum();
+    let volume_statistics = VolumeStatistics {
+        total_volume,
+        average_trade_size: if total_trades > 0 { total_volume / total_trades } else { 0 },
+        largest_trade: amounts.last().copied().unwrap_or(0),
+        smallest_trade: amounts.first().copied().unwrap_or(0),
+        median_trade_size: if amounts.is_empty() { 0 } else { amounts[amounts.len() / 2] },
+    };
+    
+    // Calculate time statistics
+    completion_times.sort_unstable();
+    let time_statistics = TimeStatistics {
+        average_completion_time: if completion_times.is_empty() { 0 } else { 
+            completion_times.iter().sum::<u64>() / completion_times.len() as u64 
+        },
+        fastest_completion: completion_times.first().copied().unwrap_or(0),
+        slowest_completion: completion_times.last().copied().unwrap_or(0),
+        average_response_time: 0, // Placeholder - would need more detailed tracking
+    };
+    
+    // Build response
+    let trades_by_state = state_counts.into_iter().map(|(state, count)| StateCount { state, count }).collect();
+    let trades_by_currency = currency_stats.into_values().collect();
+    
+    let arbitration_statistics = ArbitrationStatistics {
+        total_disputes: dispute_count,
+        resolved_disputes,
+        pending_disputes: dispute_count.saturating_sub(resolved_disputes),
+        dispute_rate: if total_trades > 0 { (dispute_count * 10000) / total_trades } else { 0 },
+        average_resolution_time: 0, // Placeholder
+        buyer_wins: 0, // Placeholder
+        seller_wins: 0, // Placeholder
+    };
+    
+    Ok(TradeStatsResponse {
+        total_trades,
+        trades_by_state,
+        trades_by_currency,
+        volume_statistics,
+        time_statistics,
+        arbitration_statistics,
+    })
+}
+
+fn apply_advanced_trade_filters(trades: Vec<Trade>, params: &SearchTradesParams) -> Result<Vec<Trade>> {
+    let mut filtered = trades;
+    
+    // Apply amount range filter
+    if let Some(amount_range) = &params.amount_range {
+        if let Some(min_amount) = amount_range.min_amount {
+            filtered.retain(|trade| trade.amount >= min_amount);
+        }
+        if let Some(max_amount) = amount_range.max_amount {
+            filtered.retain(|trade| trade.amount <= max_amount);
+        }
+    }
+    
+    // Apply expiry filter
+    if let Some(include_expired) = params.include_expired {
+        let current_time = Clock::get().unwrap().unix_timestamp as u64;
+        if !include_expired {
+            filtered.retain(|trade| trade.expires_at > current_time);
+        }
+    }
+    
+    // Apply sorting
+    if let Some(sort_by) = &params.sort_by {
+        match sort_by {
+            TradeSortBy::CreatedAt => {
+                filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            }
+            TradeSortBy::ExpiresAt => {
+                filtered.sort_by(|a, b| a.expires_at.cmp(&b.expires_at));
+            }
+            TradeSortBy::Amount => {
+                filtered.sort_by(|a, b| b.amount.cmp(&a.amount));
+            }
+            TradeSortBy::LockedPrice => {
+                filtered.sort_by(|a, b| a.locked_price.cmp(&b.locked_price));
+            }
+            TradeSortBy::State => {
+                filtered.sort_by(|a, b| trade_state_to_byte(&a.state).cmp(&trade_state_to_byte(&b.state)));
+            }
+        }
+    }
+    
+    Ok(filtered)
+}
+
+fn convert_trades_to_arbitration_cases(trades: &[Trade]) -> Result<Vec<ArbitrationCase>> {
+    let mut cases = Vec::new();
+    
+    for trade in trades {
+        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+            let case_status = match trade.state {
+                TradeState::DisputeOpened => ArbitrationStatus::Pending,
+                TradeState::DisputeResolved => ArbitrationStatus::Resolved,
+                _ => ArbitrationStatus::Pending,
+            };
+            
+            let dispute_opened_at = trade.state_history
+                .iter()
+                .find(|item| matches!(item.state, TradeState::DisputeOpened))
+                .map(|item| item.timestamp)
+                .unwrap_or(trade.created_at);
+            
+            cases.push(ArbitrationCase {
+                trade_id: trade.id,
+                buyer: trade.buyer,
+                seller: trade.seller,
+                arbitrator: trade.arbitrator,
+                amount: trade.amount,
+                fiat_currency: trade.fiat_currency.clone(),
+                dispute_opened_at,
+                dispute_expires_at: trade.dispute_window_at,
+                case_status,
+                resolution: None, // Would need additional data structure to track resolutions
+            });
+        }
+    }
+    
+    Ok(cases)
+}
+
+fn calculate_arbitration_statistics(trades: &[Trade]) -> Result<ArbitrationStatistics> {
+    let mut total_disputes = 0u64;
+    let mut resolved_disputes = 0u64;
+    let mut pending_disputes = 0u64;
+    
+    for trade in trades {
+        match trade.state {
+            TradeState::DisputeOpened => {
+                total_disputes += 1;
+                pending_disputes += 1;
+            }
+            TradeState::DisputeResolved => {
+                total_disputes += 1;
+                resolved_disputes += 1;
+            }
+            _ => {}
+        }
+    }
+    
+    let dispute_rate = if trades.len() > 0 {
+        (total_disputes * 10000) / trades.len() as u64
+    } else {
+        0
+    };
+    
+    Ok(ArbitrationStatistics {
+        total_disputes,
+        resolved_disputes,
+        pending_disputes,
+        dispute_rate,
+        average_resolution_time: 0, // Placeholder
+        buyer_wins: 0, // Placeholder
+        seller_wins: 0, // Placeholder
+    })
+}
+
+// Helper functions for trade state management
+fn trade_state_to_byte(state: &TradeState) -> u8 {
+    match state {
+        TradeState::RequestCreated => 0,
+        TradeState::RequestAccepted => 1,
+        TradeState::EscrowFunded => 2,
+        TradeState::FiatDeposited => 3,
+        TradeState::Released => 4,
+        TradeState::DisputeOpened => 5,
+        TradeState::DisputeResolved => 6,
+        TradeState::Refunded => 7,
+    }
+}
+
+fn get_trade_state_offset() -> usize {
+    // This would need to be calculated based on the actual Trade struct layout
+    // Placeholder value
+    200
+}
+
+// Common pagination and filtering types (shared with offer program)
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct PaginationParams {
+    pub limit: u32,
+    pub cursor: Option<String>,
+    pub direction: PaginationDirection,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub enum PaginationDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct PaginationResponse {
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_estimate: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RpcFilterType {
+    Memcmp(Memcmp),
+    DataSize(u64),
+}
+
+#[derive(Clone, Debug)]
+pub struct Memcmp {
+    pub offset: usize,
+    pub bytes: MemcmpEncodedBytes,
+}
+
+impl Memcmp {
+    pub fn new(offset: usize, bytes: MemcmpEncodedBytes) -> Self {
+        Self { offset, bytes }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum MemcmpEncodedBytes {
+    Base58(String),
+    Base64(String),
+}
+
+fn validate_pagination_params(params: &PaginationParams) -> Result<()> {
+    const MAX_LIMIT: u32 = 100;
+    const MIN_LIMIT: u32 = 1;
+    
+    require!(
+        params.limit >= MIN_LIMIT && params.limit <= MAX_LIMIT,
+        ErrorCode::InvalidParameter
+    );
+    
+    Ok(())
+}
+
+fn load_program_accounts_filtered<'a>(
+    _system_program: AccountInfo<'a>,
+    program_id: &Pubkey,
+    _filters: &[RpcFilterType],
+    _pagination: &PaginationParams,
+) -> Result<Vec<(Pubkey, AccountInfo<'a>)>> {
+    // Placeholder implementation
+    Ok(Vec::new())
 }
 
 #[error_code]
