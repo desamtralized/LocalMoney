@@ -17,6 +17,11 @@ pub mod hub {
         hub_config.fee_rate = params.fee_rate; // basis points (e.g., 150 = 1.5%)
         hub_config.burn_rate = params.burn_rate; // basis points
         hub_config.warchest_rate = params.warchest_rate; // basis points
+        hub_config.trade_limit_min = params.trade_limit_min;
+        hub_config.trade_limit_max = params.trade_limit_max;
+        hub_config.trade_expiration_timer = params.trade_expiration_timer;
+        hub_config.trade_dispute_timer = params.trade_dispute_timer;
+        hub_config.arbitration_fee_rate = params.arbitration_fee_rate;
         hub_config.bump = ctx.bumps.hub_config;
 
         Ok(())
@@ -36,6 +41,21 @@ pub mod hub {
         }
         if let Some(warchest_rate) = params.warchest_rate {
             hub_config.warchest_rate = warchest_rate;
+        }
+        if let Some(trade_limit_min) = params.trade_limit_min {
+            hub_config.trade_limit_min = trade_limit_min;
+        }
+        if let Some(trade_limit_max) = params.trade_limit_max {
+            hub_config.trade_limit_max = trade_limit_max;
+        }
+        if let Some(trade_expiration_timer) = params.trade_expiration_timer {
+            hub_config.trade_expiration_timer = trade_expiration_timer;
+        }
+        if let Some(trade_dispute_timer) = params.trade_dispute_timer {
+            hub_config.trade_dispute_timer = trade_dispute_timer;
+        }
+        if let Some(arbitration_fee_rate) = params.arbitration_fee_rate {
+            hub_config.arbitration_fee_rate = arbitration_fee_rate;
         }
 
         Ok(())
@@ -106,9 +126,14 @@ pub struct HubConfig {
     pub trade_program: Pubkey,
     pub price_program: Pubkey,
     pub treasury: Pubkey,
-    pub fee_rate: u16,      // basis points (e.g., 150 = 1.5%)
-    pub burn_rate: u16,     // basis points
-    pub warchest_rate: u16, // basis points
+    pub fee_rate: u16,                    // basis points (e.g., 150 = 1.5%)
+    pub burn_rate: u16,                   // basis points
+    pub warchest_rate: u16,               // basis points
+    pub trade_limit_min: u64,             // Minimum trade amount in USD cents
+    pub trade_limit_max: u64,             // Maximum trade amount in USD cents
+    pub trade_expiration_timer: u64,      // Seconds after which trades expire
+    pub trade_dispute_timer: u64,         // Seconds after fiat deposit before dispute is allowed
+    pub arbitration_fee_rate: u16,        // basis points for arbitration fee
     pub bump: u8,
 }
 
@@ -123,6 +148,11 @@ impl HubConfig {
         2 +  // fee_rate
         2 +  // burn_rate
         2 +  // warchest_rate
+        8 +  // trade_limit_min
+        8 +  // trade_limit_max
+        8 +  // trade_expiration_timer
+        8 +  // trade_dispute_timer
+        2 +  // arbitration_fee_rate
         1;   // bump
 }
 
@@ -136,6 +166,11 @@ pub struct InitializeParams {
     pub fee_rate: u16,
     pub burn_rate: u16,
     pub warchest_rate: u16,
+    pub trade_limit_min: u64,
+    pub trade_limit_max: u64,
+    pub trade_expiration_timer: u64,
+    pub trade_dispute_timer: u64,
+    pub arbitration_fee_rate: u16,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -144,6 +179,11 @@ pub struct UpdateConfigParams {
     pub fee_rate: Option<u16>,
     pub burn_rate: Option<u16>,
     pub warchest_rate: Option<u16>,
+    pub trade_limit_min: Option<u64>,
+    pub trade_limit_max: Option<u64>,
+    pub trade_expiration_timer: Option<u64>,
+    pub trade_dispute_timer: Option<u64>,
+    pub arbitration_fee_rate: Option<u16>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
