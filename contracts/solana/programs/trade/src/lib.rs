@@ -2,6 +2,8 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
     Mint, TokenAccount, TokenInterface, TransferChecked, transfer_checked
 };
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_lang::solana_program;
 
 
 declare_id!("5Tb71Y6Z4G5We8WqJiQAo34nVmc8ZmFo5J7D3VUC5LGX");
@@ -219,10 +221,12 @@ pub mod trade {
         Ok(())
     }
 
+    /// ADVANCED FEE MANAGEMENT: Enhanced release_escrow with multi-destination fee distribution
+    /// Matches CosmWasm pattern for complex fee distribution and LOCAL token burn
     pub fn release_escrow(ctx: Context<ReleaseEscrow>) -> Result<()> {
         let clock = Clock::get()?;
 
-        // Check state and authorization first
+        // COMPREHENSIVE VALIDATION: State and authorization checks
         {
             let trade = &ctx.accounts.trade;
             require!(
@@ -235,22 +239,37 @@ pub mod trade {
             );
         }
 
-        // Calculate fees
-        let fee_info = calculate_fees(ctx.accounts.trade.amount)?;
-        let net_amount = ctx.accounts.trade.amount
+        // DYNAMIC FEE CALCULATION: Use enhanced fee calculation system
+        let hub_config = &ctx.accounts.hub_config;
+        let offer = &ctx.accounts.offer;
+        let trade = &ctx.accounts.trade;
+        
+        let fee_info = calculate_dynamic_fees(
+            trade.amount,
+            &ctx.accounts.token_mint.key(),
+            hub_config,
+            Some(trade),
+            Some(offer),
+            FeeCalculationMethod::Dynamic, // Use dynamic calculation for releases
+        )?;
+        
+        // Validate calculated fees
+        fee_info.validate()?;
+        
+        let net_amount = trade.amount
             .checked_sub(fee_info.total_fees())
             .ok_or(ErrorCode::ArithmeticError)?;
 
-        // Prepare signer seeds
-        let trade_id_bytes = ctx.accounts.trade.id.to_le_bytes();
+        // SIGNER SEEDS: Prepare trade authority seeds
+        let trade_id_bytes = trade.id.to_le_bytes();
         let trade_seeds = &[
             b"trade".as_ref(),
             trade_id_bytes.as_ref(),
-            &[ctx.accounts.trade.bump],
+            &[trade.bump],
         ];
         let signer_seeds = &[&trade_seeds[..]];
 
-        // Transfer net amount to buyer
+        // TRANSFER NET AMOUNT: Send net amount to buyer
         let cpi_accounts = TransferChecked {
             from: ctx.accounts.escrow_token_account.to_account_info(),
             to: ctx.accounts.buyer_token_account.to_account_info(),
@@ -262,18 +281,14 @@ pub mod trade {
         
         transfer_checked(cpi_ctx, net_amount, ctx.accounts.token_mint.decimals)?;
 
-        // Transfer fees to treasury
-        let cpi_accounts = TransferChecked {
-            from: ctx.accounts.escrow_token_account.to_account_info(),
-            to: ctx.accounts.treasury_token_account.to_account_info(),
-            authority: ctx.accounts.trade.to_account_info(),
-            mint: ctx.accounts.token_mint.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        
-        transfer_checked(cpi_ctx, fee_info.total_fees(), ctx.accounts.token_mint.decimals)?;
+        // MULTI-DESTINATION FEE DISTRIBUTION: Execute comprehensive fee distribution
+        execute_multi_destination_fee_distribution(
+            &ctx,
+            &fee_info,
+            signer_seeds,
+        )?;
 
-        // Update trade state
+        // UPDATE TRADE STATE: Mark as released
         let trade = &mut ctx.accounts.trade;
         trade.state = TradeState::EscrowReleased;
         trade.state_history.push(TradeStateItem {
@@ -282,7 +297,7 @@ pub mod trade {
             timestamp: clock.unix_timestamp as u64,
         });
 
-        // Update both profiles via CPI
+        // PROFILE UPDATES: Update both buyer and seller profiles
         let cpi_program = ctx.accounts.profile_program.to_account_info();
         
         // Update buyer profile
@@ -498,13 +513,15 @@ pub mod trade {
         Ok(())
     }
 
+    /// ENHANCED SETTLE DISPUTE: Enhanced arbitration with multi-destination fee distribution
+    /// Matches CosmWasm pattern for complex fee distribution and LOCAL token burn
     pub fn settle_dispute(
         ctx: Context<SettleDispute>,
         winner: Pubkey,
     ) -> Result<()> {
         let clock = Clock::get()?;
 
-        // Validate state and authorization first
+        // COMPREHENSIVE VALIDATION: State and authorization checks
         {
             let trade = &ctx.accounts.trade;
             
@@ -525,27 +542,63 @@ pub mod trade {
                 winner == trade.buyer || winner == trade.seller,
                 ErrorCode::InvalidWinner
             );
+
+            // ENHANCED VALIDATION: Validate hub config addresses match accounts
+            require!(
+                ctx.accounts.treasury.key() == ctx.accounts.hub_config.treasury,
+                ErrorCode::InvalidTreasuryAddress
+            );
+            require!(
+                ctx.accounts.chain_fee_collector.key() == ctx.accounts.hub_config.chain_fee_collector,
+                ErrorCode::InvalidChainFeeCollector
+            );
+            require!(
+                ctx.accounts.warchest.key() == ctx.accounts.hub_config.warchest_address,
+                ErrorCode::InvalidWarchestAddress
+            );
         }
 
-        // Calculate complex fee distribution (matching CosmWasm logic exactly)
-        let arbitration_fees = calculate_arbitration_settlement_fees(
-            ctx.accounts.trade.amount,
-            &ctx.accounts.hub_config,
-            &ctx.accounts.offer,
-            &ctx.accounts.trade,
-            &winner,
+        // DYNAMIC FEE CALCULATION: Use enhanced fee calculation system (same as release_escrow)
+        let hub_config = &ctx.accounts.hub_config;
+        let offer = &ctx.accounts.offer;
+        let trade = &ctx.accounts.trade;
+        
+        let fee_info = calculate_dynamic_fees(
+            trade.amount,
+            &ctx.accounts.token_mint.key(),
+            hub_config,
+            Some(trade),
+            Some(offer),
+            FeeCalculationMethod::Dynamic,
         )?;
 
-        // Prepare signer seeds
-        let trade_id_bytes = ctx.accounts.trade.id.to_le_bytes();
+        // ARBITRATION FEE CALCULATION: Calculate arbitrator fee separately
+        let arbitrator_fee_result = calculate_percentage_fees(
+            trade.amount,
+            hub_config,
+            false, // No conversion needed for arbitrator fees
+        )?;
+        let arbitrator_fee = arbitrator_fee_result.0; // Get burn_amount as the fee
+
+        // Calculate net amount for winner (after all fees)
+        let total_fees = fee_info.burn_amount
+            .saturating_add(fee_info.chain_amount)
+            .saturating_add(fee_info.warchest_amount)
+            .saturating_add(fee_info.conversion_fee)
+            .saturating_add(arbitrator_fee);
+        
+        let winner_amount = trade.amount.saturating_sub(total_fees);
+
+        // SIGNER SEEDS: Prepare for CPI calls
+        let trade_id_bytes = trade.id.to_le_bytes();
         let trade_seeds = &[
             b"trade".as_ref(),
             trade_id_bytes.as_ref(),
-            &[ctx.accounts.trade.bump],
+            &[trade.bump],
         ];
         let signer_seeds = &[&trade_seeds[..]];
 
-        // Transfer net amount to winner
+        // WINNER TRANSFER: Transfer net amount to winner
         let cpi_accounts = TransferChecked {
             from: ctx.accounts.escrow_token_account.to_account_info(),
             to: ctx.accounts.winner_token_account.to_account_info(),
@@ -555,33 +608,25 @@ pub mod trade {
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
         
-        transfer_checked(cpi_ctx, arbitration_fees.winner_amount, ctx.accounts.token_mint.decimals)?;
+        transfer_checked(cpi_ctx, winner_amount, ctx.accounts.token_mint.decimals)?;
 
-        // Transfer arbitrator fee
-        let cpi_accounts = TransferChecked {
-            from: ctx.accounts.escrow_token_account.to_account_info(),
-            to: ctx.accounts.arbitrator_token_account.to_account_info(),
-            authority: ctx.accounts.trade.to_account_info(),
-            mint: ctx.accounts.token_mint.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
-        
-        transfer_checked(cpi_ctx, arbitration_fees.arbitrator_fee, ctx.accounts.token_mint.decimals)?;
-
-        // Transfer protocol fee to treasury (if applicable)
-        if arbitration_fees.protocol_fee > 0 {
+        // ARBITRATOR FEE TRANSFER: Transfer arbitrator fee
+        if arbitrator_fee > 0 {
             let cpi_accounts = TransferChecked {
                 from: ctx.accounts.escrow_token_account.to_account_info(),
-                to: ctx.accounts.treasury_token_account.to_account_info(),
+                to: ctx.accounts.arbitrator_token_account.to_account_info(),
                 authority: ctx.accounts.trade.to_account_info(),
                 mint: ctx.accounts.token_mint.to_account_info(),
             };
-            let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+            let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
             
-            transfer_checked(cpi_ctx, arbitration_fees.protocol_fee, ctx.accounts.token_mint.decimals)?;
+            transfer_checked(cpi_ctx, arbitrator_fee, ctx.accounts.token_mint.decimals)?;
         }
 
-        // Update trade state
+        // MULTI-DESTINATION FEE DISTRIBUTION: Execute enhanced fee distribution
+        execute_multi_destination_fee_distribution_for_dispute(&ctx, &fee_info, signer_seeds)?;
+
+        // STATE UPDATE: Update trade state based on winner
         let trade = &mut ctx.accounts.trade;
         let new_state = if winner == trade.buyer && winner == ctx.accounts.offer.owner {
             TradeState::SettledForMaker
@@ -600,11 +645,11 @@ pub mod trade {
             timestamp: clock.unix_timestamp as u64,
         });
 
-        // Update arbitrator stats
+        // ARBITRATOR STATS: Update arbitrator stats
         let arbitrator_info = &mut ctx.accounts.arbitrator_info;
         arbitrator_info.resolved_cases = arbitrator_info.resolved_cases.saturating_add(1);
 
-        // Update both profiles via CPI
+        // PROFILE UPDATES: Update both profiles via CPI
         let cpi_program = ctx.accounts.profile_program.to_account_info();
         
         // Update buyer profile
@@ -804,6 +849,7 @@ pub struct MarkFiatDeposited<'info> {
     pub buyer: Signer<'info>,
 }
 
+/// ENHANCED RELEASE ESCROW: Account context for multi-destination fee distribution
 #[derive(Accounts)]
 pub struct ReleaseEscrow<'info> {
     #[account(
@@ -812,6 +858,18 @@ pub struct ReleaseEscrow<'info> {
         bump = trade.bump
     )]
     pub trade: Account<'info, Trade>,
+
+    #[account(
+        seeds = [b"offer".as_ref(), trade.offer_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub offer: Account<'info, offer::Offer>,
+
+    #[account(
+        seeds = [b"hub".as_ref(), b"config".as_ref()],
+        bump
+    )]
+    pub hub_config: Account<'info, hub::HubConfig>,
 
     #[account(
         mut,
@@ -831,6 +889,7 @@ pub struct ReleaseEscrow<'info> {
     )]
     pub buyer_token_account: InterfaceAccount<'info, TokenAccount>,
 
+    // MULTI-DESTINATION FEE ACCOUNTS: Enhanced fee distribution accounts
     #[account(
         mut,
         associated_token::mint = token_mint,
@@ -839,6 +898,31 @@ pub struct ReleaseEscrow<'info> {
     )]
     pub treasury_token_account: InterfaceAccount<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = chain_fee_collector,
+        associated_token::token_program = token_program,
+    )]
+    pub chain_fee_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = warchest,
+        associated_token::token_program = token_program,
+    )]
+    pub warchest_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = burn_reserve,
+        associated_token::token_program = token_program,
+    )]
+    pub burn_reserve_account: InterfaceAccount<'info, TokenAccount>,
+
+    // PROFILE ACCOUNTS: For CPI updates
     #[account(
         mut,
         seeds = [b"profile".as_ref(), buyer.key().as_ref()],
@@ -853,18 +937,27 @@ pub struct ReleaseEscrow<'info> {
     )]
     pub seller_profile: Account<'info, profile::Profile>,
 
+    // TOKEN AND WALLET ACCOUNTS
     pub token_mint: InterfaceAccount<'info, Mint>,
 
-    /// CHECK: Treasury wallet
+    /// CHECK: Treasury wallet - validated against hub_config
     pub treasury: UncheckedAccount<'info>,
+    /// CHECK: Chain fee collector - validated against hub_config  
+    pub chain_fee_collector: UncheckedAccount<'info>,
+    /// CHECK: Warchest address - validated against hub_config
+    pub warchest: UncheckedAccount<'info>,
+    /// CHECK: Burn reserve for non-LOCAL token conversion
+    pub burn_reserve: UncheckedAccount<'info>,
     /// CHECK: Buyer wallet
     pub buyer: UncheckedAccount<'info>,
     pub seller: Signer<'info>,
 
+    // PROGRAM ACCOUNTS
     /// CHECK: Profile program for CPI call
     pub profile_program: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(Accounts)]
@@ -1067,6 +1160,7 @@ pub struct InitiateDispute<'info> {
     pub profile_program: UncheckedAccount<'info>,
 }
 
+/// ENHANCED SETTLE DISPUTE: Account context for multi-destination fee distribution
 #[derive(Accounts)]
 pub struct SettleDispute<'info> {
     #[account(
@@ -1077,7 +1171,7 @@ pub struct SettleDispute<'info> {
     pub trade: Account<'info, Trade>,
 
     #[account(
-        seeds = [b"hub_config".as_ref()],
+        seeds = [b"hub".as_ref(), b"config".as_ref()],
         bump
     )]
     pub hub_config: Account<'info, hub::HubConfig>,
@@ -1136,6 +1230,7 @@ pub struct SettleDispute<'info> {
     )]
     pub arbitrator_token_account: InterfaceAccount<'info, TokenAccount>,
 
+    // MULTI-DESTINATION FEE ACCOUNTS: Enhanced fee distribution accounts
     #[account(
         mut,
         associated_token::mint = token_mint,
@@ -1144,6 +1239,31 @@ pub struct SettleDispute<'info> {
     )]
     pub treasury_token_account: InterfaceAccount<'info, TokenAccount>,
 
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = chain_fee_collector,
+        associated_token::token_program = token_program,
+    )]
+    pub chain_fee_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = warchest,
+        associated_token::token_program = token_program,
+    )]
+    pub warchest_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = burn_reserve,
+        associated_token::token_program = token_program,
+    )]
+    pub burn_reserve_account: InterfaceAccount<'info, TokenAccount>,
+
+    // PROFILE ACCOUNTS: For CPI updates
     #[account(
         mut,
         seeds = [b"profile".as_ref(), trade.buyer.as_ref()],
@@ -1158,18 +1278,27 @@ pub struct SettleDispute<'info> {
     )]
     pub seller_profile: Account<'info, profile::Profile>,
 
+    // TOKEN AND WALLET ACCOUNTS
     pub token_mint: InterfaceAccount<'info, Mint>,
 
     /// CHECK: Winner wallet (verified in function logic)
     pub winner: UncheckedAccount<'info>,
-    /// CHECK: Treasury wallet
+    /// CHECK: Treasury wallet - validated against hub_config
     pub treasury: UncheckedAccount<'info>,
+    /// CHECK: Chain fee collector - validated against hub_config  
+    pub chain_fee_collector: UncheckedAccount<'info>,
+    /// CHECK: Warchest address - validated against hub_config
+    pub warchest: UncheckedAccount<'info>,
+    /// CHECK: Burn reserve for non-LOCAL token conversion
+    pub burn_reserve: UncheckedAccount<'info>,
     pub arbitrator: Signer<'info>,
 
+    // PROGRAM ACCOUNTS
     /// CHECK: Profile program for CPI call
     pub profile_program: UncheckedAccount<'info>,
 
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(Accounts)]
@@ -1207,6 +1336,133 @@ pub struct AutomaticRefund<'info> {
     /// CHECK: Anyone can trigger automatic refund for expired trades
     pub caller: Signer<'info>,
 
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// ADVANCED FEE MANAGEMENT: Account contexts for token conversion system
+
+#[derive(Accounts)]
+#[instruction(source_mint: Pubkey, target_mint: Pubkey)]
+pub struct RegisterConversionRoute<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = TokenConversionRoute::SPACE,
+        seeds = [
+            b"conversion_route".as_ref(),
+            source_mint.as_ref(),
+            target_mint.as_ref()
+        ],
+        bump
+    )]
+    pub conversion_route: Account<'info, TokenConversionRoute>,
+    
+    #[account(
+        seeds = [b"hub".as_ref(), b"config".as_ref()],
+        bump
+    )]
+    pub hub_config: Account<'info, hub::HubConfig>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(trade_id: u64)]
+pub struct InitializeConversion<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = TokenConversionState::SPACE,
+        seeds = [
+            b"conversion_state".as_ref(),
+            trade_id.to_le_bytes().as_ref()
+        ],
+        bump
+    )]
+    pub conversion_state: Account<'info, TokenConversionState>,
+    
+    #[account(
+        seeds = [
+            b"conversion_route".as_ref(),
+            conversion_route.source_mint.as_ref(),
+            conversion_route.target_mint.as_ref()
+        ],
+        bump = conversion_route.bump
+    )]
+    pub conversion_route: Account<'info, TokenConversionRoute>,
+    
+    #[account(
+        seeds = [b"hub".as_ref(), b"config".as_ref()],
+        bump
+    )]
+    pub hub_config: Account<'info, hub::HubConfig>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ExecuteConversionStep<'info> {
+    #[account(
+        mut,
+        seeds = [
+            b"conversion_state".as_ref(),
+            conversion_state.trade_id.to_le_bytes().as_ref()
+        ],
+        bump = conversion_state.bump
+    )]
+    pub conversion_state: Account<'info, TokenConversionState>,
+    
+    #[account(
+        mut,
+        seeds = [
+            b"conversion_route".as_ref(),
+            conversion_route.source_mint.as_ref(),
+            conversion_route.target_mint.as_ref()
+        ],
+        bump = conversion_route.bump
+    )]
+    pub conversion_route: Account<'info, TokenConversionRoute>,
+    
+    #[account(
+        seeds = [b"trade".as_ref(), conversion_state.trade_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub trade: Account<'info, Trade>,
+    
+    #[account(
+        mut,
+        seeds = [b"trade".as_ref(), b"escrow".as_ref(), conversion_state.trade_id.to_le_bytes().as_ref()],
+        bump,
+        token::mint = source_token_mint,
+        token::authority = trade,
+        token::token_program = token_program
+    )]
+    pub escrow_token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(
+        mut,
+        associated_token::mint = target_token_mint,
+        associated_token::authority = trade,
+        associated_token::token_program = token_program,
+    )]
+    pub trade_target_token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    pub source_token_mint: InterfaceAccount<'info, Mint>,
+    pub target_token_mint: InterfaceAccount<'info, Mint>,
+    
+    /// CHECK: Jupiter program for DEX operations
+    pub jupiter_program: UncheckedAccount<'info>,
+    
+    /// CHECK: Pool address for current conversion step
+    pub pool_address: UncheckedAccount<'info>,
+    
+    pub authority: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
 
@@ -1271,30 +1527,436 @@ pub struct CreateTradeParams {
     pub buyer_contact: String,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+/// ADVANCED FEE MANAGEMENT: Enhanced fee information with multi-destination support
+/// Matches CosmWasm implementation patterns for comprehensive fee distribution
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct FeeInfo {
-    pub burn_amount: u64,
-    pub chain_amount: u64,
-    pub warchest_amount: u64,
+    // MULTI-DESTINATION FEES: Core fee components
+    pub burn_amount: u64,             // Amount to burn as LOCAL tokens
+    pub chain_amount: u64,            // Amount for chain fee sharing
+    pub warchest_amount: u64,         // Amount for warchest/treasury
+    
+    // TOKEN CONVERSION FEES: Additional fees for non-LOCAL tokens
+    pub conversion_fee: u64,          // Fee for DEX conversion operations
+    pub slippage_reserve: u64,        // Reserve for slippage protection
+    
+    // METADATA: Fee calculation context
+    pub original_amount: u64,         // Original trade amount before fees
+    pub requires_conversion: bool,    // Whether token needs to be converted
+    pub fee_calculation_method: FeeCalculationMethod, // How fees were calculated
 }
 
 impl FeeInfo {
+    /// Total fees across all destinations
     pub fn total_fees(&self) -> u64 {
-        self.burn_amount + self.chain_amount + self.warchest_amount
+        self.burn_amount 
+            .saturating_add(self.chain_amount)
+            .saturating_add(self.warchest_amount)
+            .saturating_add(self.conversion_fee)
+            .saturating_add(self.slippage_reserve)
+    }
+    
+    /// Protocol fees only (excluding conversion fees)
+    pub fn protocol_fees(&self) -> u64 {
+        self.burn_amount 
+            .saturating_add(self.chain_amount)
+            .saturating_add(self.warchest_amount)
+    }
+    
+    /// Net amount after all fees
+    pub fn net_amount(&self) -> u64 {
+        self.original_amount.saturating_sub(self.total_fees())
+    }
+    
+    /// Validate fee amounts don't exceed original amount
+    pub fn validate(&self) -> Result<()> {
+        require!(
+            self.total_fees() <= self.original_amount,
+            ErrorCode::ExcessiveFees
+        );
+        
+        // Individual fee validation (max 10% each component)
+        let max_individual_fee = self.original_amount / 10;
+        
+        require!(
+            self.burn_amount <= max_individual_fee,
+            ErrorCode::ExcessiveBurnFee
+        );
+        
+        require!(
+            self.chain_amount <= max_individual_fee,
+            ErrorCode::ExcessiveChainFee
+        );
+        
+        require!(
+            self.warchest_amount <= max_individual_fee,
+            ErrorCode::ExcessiveWarchestFee
+        );
+        
+        require!(
+            self.conversion_fee <= max_individual_fee,
+            ErrorCode::ExcessiveConversionFee
+        );
+        
+        Ok(())
+    }
+    
+    /// Create new FeeInfo with validation
+    pub fn new(
+        original_amount: u64,
+        burn_amount: u64,
+        chain_amount: u64,
+        warchest_amount: u64,
+        conversion_fee: u64,
+        slippage_reserve: u64,
+        requires_conversion: bool,
+        fee_calculation_method: FeeCalculationMethod,
+    ) -> Result<Self> {
+        let fee_info = Self {
+            burn_amount,
+            chain_amount,
+            warchest_amount,
+            conversion_fee,
+            slippage_reserve,
+            original_amount,
+            requires_conversion,
+            fee_calculation_method,
+        };
+        
+        fee_info.validate()?;
+        Ok(fee_info)
     }
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+/// ARBITRATION SETTLEMENT: Enhanced fee structure for dispute resolution
+/// Includes complex fee distribution matching CosmWasm patterns
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct ArbitrationSettlementFees {
-    pub winner_amount: u64,
-    pub arbitrator_fee: u64,
-    pub protocol_fee: u64,
+    pub winner_amount: u64,           // Amount distributed to dispute winner
+    pub arbitrator_fee: u64,          // Fee paid to arbitrator
+    pub protocol_fee: u64,            // Protocol fees (burn + chain + warchest)
+    
+    // ADVANCED ARBITRATION: Additional fee components
+    pub conversion_fee: u64,          // Fee for token conversions during settlement
+    pub gas_compensation: u64,        // Compensation for transaction costs
+    pub penalty_fee: u64,             // Penalty fee for frivolous disputes
 }
 
 impl ArbitrationSettlementFees {
     pub fn total_distributed(&self) -> u64 {
-        self.winner_amount + self.arbitrator_fee + self.protocol_fee
+        self.winner_amount 
+            .saturating_add(self.arbitrator_fee)
+            .saturating_add(self.protocol_fee)
+            .saturating_add(self.conversion_fee)
+            .saturating_add(self.gas_compensation)
+            .saturating_add(self.penalty_fee)
     }
+    
+    /// Validate arbitration fees
+    pub fn validate(&self, original_amount: u64) -> Result<()> {
+        require!(
+            self.total_distributed() <= original_amount,
+            ErrorCode::ExcessiveArbitrationFees
+        );
+        
+        // Arbitrator fee should not exceed 10% of trade amount
+        require!(
+            self.arbitrator_fee <= original_amount / 10,
+            ErrorCode::ExcessiveArbitratorFee
+        );
+        
+        Ok(())
+    }
+}
+
+/// FEE CALCULATION METHODS: Different approaches for calculating fees
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum FeeCalculationMethod {
+    /// Standard percentage-based fees
+    Percentage,
+    /// Dynamic fees based on trade parameters
+    Dynamic,
+    /// Tiered fees based on amount ranges
+    Tiered,
+    /// Market maker vs taker differentiated fees
+    MakerTaker,
+    /// Token-specific fee structure
+    TokenSpecific,
+}
+
+/// TOKEN CONVERSION: Information about token conversion requirements
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct ConversionInfo {
+    pub source_mint: Pubkey,          // Source token mint
+    pub requires_conversion: bool,     // Whether conversion is needed
+    pub conversion_route: Vec<ConversionStep>, // DEX route for conversion
+    pub estimated_slippage: u16,      // Estimated slippage in basis points
+    pub min_output_amount: u64,       // Minimum expected output amount
+}
+
+/// CONVERSION STEP: Individual step in token conversion route
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct ConversionStep {
+    pub dex_program: Pubkey,          // DEX program to use (e.g., Jupiter)
+    pub input_mint: Pubkey,           // Input token mint
+    pub output_mint: Pubkey,          // Output token mint
+    pub pool_address: Pubkey,         // Liquidity pool address
+    pub estimated_fee: u64,           // Estimated DEX fee
+    pub max_slippage_bps: u16,        // Maximum allowed slippage
+}
+
+/// TOKEN CONVERSION ROUTE SYSTEM: Comprehensive routing for non-LOCAL tokens
+/// Matches CosmWasm pattern for DENOM_CONVERSION_ROUTE storage
+#[account]
+pub struct TokenConversionRoute {
+    pub source_mint: Pubkey,          // Source token that needs conversion
+    pub target_mint: Pubkey,          // Target token (usually LOCAL)
+    pub route_steps: Vec<ConversionStep>, // Sequential DEX operations
+    pub total_estimated_fee: u64,     // Sum of all step fees
+    pub max_total_slippage_bps: u16,  // Maximum total slippage allowed
+    pub route_priority: u8,           // Priority ranking (0 = highest)
+    pub is_active: bool,              // Whether route is currently active
+    pub created_at: i64,              // Route creation timestamp
+    pub last_updated: i64,            // Last update timestamp
+    pub success_count: u64,           // Number of successful conversions
+    pub failure_count: u64,           // Number of failed conversions
+    pub authority: Pubkey,            // Authority that can update route
+    pub bump: u8,
+}
+
+impl TokenConversionRoute {
+    pub const SPACE: usize = 8 +      // discriminator
+        32 +                          // source_mint
+        32 +                          // target_mint
+        4 + (6 * 32 + 8 + 2) * 5 +   // route_steps (max 5 steps)
+        8 +                           // total_estimated_fee
+        2 +                           // max_total_slippage_bps
+        1 +                           // route_priority
+        1 +                           // is_active
+        8 +                           // created_at
+        8 +                           // last_updated
+        8 +                           // success_count
+        8 +                           // failure_count
+        32 +                          // authority
+        1;                            // bump
+    
+    /// Validate conversion route configuration
+    pub fn validate(&self) -> Result<()> {
+        // Ensure route has at least one step
+        require!(
+            !self.route_steps.is_empty(),
+            ErrorCode::InvalidConversionRoute
+        );
+        
+        // Ensure route doesn't exceed maximum complexity
+        require!(
+            self.route_steps.len() <= 5,
+            ErrorCode::ConversionRouteTooComplex
+        );
+        
+        // Validate step connectivity
+        for i in 0..self.route_steps.len() {
+            let step = &self.route_steps[i];
+            
+            // First step input should match source_mint
+            if i == 0 {
+                require!(
+                    step.input_mint == self.source_mint,
+                    ErrorCode::InvalidConversionRoute
+                );
+            }
+            
+            // Last step output should match target_mint
+            if i == self.route_steps.len() - 1 {
+                require!(
+                    step.output_mint == self.target_mint,
+                    ErrorCode::InvalidConversionRoute
+                );
+            }
+            
+            // Sequential steps must connect
+            if i > 0 {
+                require!(
+                    step.input_mint == self.route_steps[i - 1].output_mint,
+                    ErrorCode::InvalidConversionRoute
+                );
+            }
+            
+            // Validate slippage limits
+            require!(
+                step.max_slippage_bps <= 1000, // Max 10% slippage per step
+                ErrorCode::SlippageExceeded
+            );
+        }
+        
+        // Validate total slippage
+        require!(
+            self.max_total_slippage_bps <= 2000, // Max 20% total slippage
+            ErrorCode::SlippageExceeded
+        );
+        
+        Ok(())
+    }
+    
+    /// Calculate route efficiency score
+    pub fn efficiency_score(&self) -> u32 {
+        if self.success_count + self.failure_count == 0 {
+            return 5000; // Default score for new routes
+        }
+        
+        let success_rate = (self.success_count * 10000) / (self.success_count + self.failure_count);
+        let complexity_penalty = (self.route_steps.len() as u64) * 500; // Penalty for complexity
+        let slippage_penalty = (self.max_total_slippage_bps as u64) * 2; // Penalty for high slippage
+        
+        success_rate.saturating_sub(complexity_penalty).saturating_sub(slippage_penalty) as u32
+    }
+    
+    /// Update route statistics
+    pub fn record_success(&mut self) {
+        self.success_count = self.success_count.saturating_add(1);
+        self.last_updated = Clock::get().unwrap().unix_timestamp;
+    }
+    
+    pub fn record_failure(&mut self) {
+        self.failure_count = self.failure_count.saturating_add(1);
+        self.last_updated = Clock::get().unwrap().unix_timestamp;
+    }
+}
+
+/// TOKEN CONVERSION MANAGER: Manages active conversion state
+/// Matches CosmWasm DENOM_CONVERSION_STEP pattern
+#[account]
+pub struct TokenConversionState {
+    pub trade_id: u64,                // Associated trade ID
+    pub source_mint: Pubkey,          // Source token being converted
+    pub target_mint: Pubkey,          // Target token (LOCAL)
+    pub conversion_amount: u64,       // Amount being converted
+    pub current_step: u8,             // Current step in route
+    pub route_address: Pubkey,        // Address of conversion route being used
+    pub step_start_balance: u64,      // Balance before current step
+    pub total_fees_paid: u64,         // Total fees paid so far
+    pub slippage_experienced: u16,    // Actual slippage experienced (bps)
+    pub conversion_status: ConversionStatus, // Current status
+    pub started_at: i64,              // Conversion start time
+    pub authority: Pubkey,            // Trade account authority
+    pub bump: u8,
+}
+
+impl TokenConversionState {
+    pub const SPACE: usize = 8 +      // discriminator
+        8 +                           // trade_id
+        32 +                          // source_mint
+        32 +                          // target_mint
+        8 +                           // conversion_amount
+        1 +                           // current_step
+        32 +                          // route_address
+        8 +                           // step_start_balance
+        8 +                           // total_fees_paid
+        2 +                           // slippage_experienced
+        1 +                           // conversion_status
+        8 +                           // started_at
+        32 +                          // authority
+        1;                            // bump
+}
+
+/// CONVERSION STATUS: Track conversion progress
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub enum ConversionStatus {
+    Pending,                          // Conversion not started
+    InProgress,                       // Conversion in progress
+    Completed,                        // Conversion completed successfully
+    Failed,                          // Conversion failed
+    PartiallyCompleted,              // Some steps completed, others failed
+}
+
+/// TOKEN CONVERSION FUNCTIONS: Core conversion logic
+
+/// Register a new token conversion route
+pub fn register_token_conversion_route(
+    ctx: Context<RegisterConversionRoute>,
+    source_mint: Pubkey,
+    target_mint: Pubkey,
+    route_steps: Vec<ConversionStep>,
+    max_total_slippage_bps: u16,
+    priority: u8,
+) -> Result<()> {
+    let conversion_route = &mut ctx.accounts.conversion_route;
+    let clock = Clock::get()?;
+    
+    // Initialize route
+    conversion_route.source_mint = source_mint;
+    conversion_route.target_mint = target_mint;
+    conversion_route.route_steps = route_steps;
+    conversion_route.max_total_slippage_bps = max_total_slippage_bps;
+    conversion_route.route_priority = priority;
+    conversion_route.is_active = true;
+    conversion_route.created_at = clock.unix_timestamp;
+    conversion_route.last_updated = clock.unix_timestamp;
+    conversion_route.success_count = 0;
+    conversion_route.failure_count = 0;
+    conversion_route.authority = ctx.accounts.authority.key();
+    conversion_route.bump = ctx.bumps.conversion_route;
+    
+    // Calculate total estimated fee
+    conversion_route.total_estimated_fee = conversion_route.route_steps
+        .iter()
+        .map(|step| step.estimated_fee)
+        .sum();
+    
+    // Validate route configuration
+    conversion_route.validate()?;
+    
+    Ok(())
+}
+
+/// Get optimal conversion route for token pair
+pub fn get_optimal_conversion_route<'a>(
+    source_mint: &Pubkey,
+    target_mint: &Pubkey,
+    routes: &'a [TokenConversionRoute],
+) -> Option<&'a TokenConversionRoute> {
+    routes
+        .iter()
+        .filter(|route| {
+            route.source_mint == *source_mint 
+                && route.target_mint == *target_mint 
+                && route.is_active
+        })
+        .max_by_key(|route| route.efficiency_score())
+}
+
+/// Initialize token conversion for trade
+pub fn initialize_token_conversion(
+    ctx: Context<InitializeConversion>,
+    trade_id: u64,
+    conversion_amount: u64,
+) -> Result<()> {
+    let conversion_state = &mut ctx.accounts.conversion_state;
+    let conversion_route = &ctx.accounts.conversion_route;
+    let clock = Clock::get()?;
+    
+    // Validate conversion amount
+    require!(
+        conversion_amount >= ctx.accounts.hub_config.min_conversion_amount,
+        ErrorCode::InsufficientConversionAmount
+    );
+    
+    // Initialize conversion state
+    conversion_state.trade_id = trade_id;
+    conversion_state.source_mint = conversion_route.source_mint;
+    conversion_state.target_mint = conversion_route.target_mint;
+    conversion_state.conversion_amount = conversion_amount;
+    conversion_state.current_step = 0;
+    conversion_state.route_address = conversion_route.key();
+    conversion_state.step_start_balance = 0; // Will be set before first step
+    conversion_state.total_fees_paid = 0;
+    conversion_state.slippage_experienced = 0;
+    conversion_state.conversion_status = ConversionStatus::Pending;
+    conversion_state.started_at = clock.unix_timestamp;
+    conversion_state.authority = ctx.accounts.authority.key();
+    conversion_state.bump = ctx.bumps.conversion_state;
+    
+    Ok(())
 }
 
 // Use common types from profile program
@@ -1746,6 +2408,9 @@ pub fn calculate_arbitration_settlement_fees(
         winner_amount,
         arbitrator_fee,
         protocol_fee,
+        conversion_fee: 0,
+        gas_compensation: 0,
+        penalty_fee: 0,
     })
 }
 
@@ -1775,15 +2440,1017 @@ pub fn select_arbitrator_from_pool(
     Ok(available_arbitrators[selected_index])
 }
 
-pub fn calculate_fees(amount: u64) -> Result<FeeInfo> {
-    // Example fee calculation - 1.5% total fees
-    let total_fee = amount * 150 / 10000; // 1.5%
+/// DYNAMIC FEE CALCULATION: Advanced fee calculation with multiple parameters
+/// Matches CosmWasm implementation complexity with Solana optimizations
+pub fn calculate_dynamic_fees(
+    amount: u64,
+    token_mint: &Pubkey,
+    hub_config: &hub::HubConfig,
+    trade: Option<&Trade>,
+    offer: Option<&offer::Offer>,
+    fee_calculation_method: FeeCalculationMethod,
+) -> Result<FeeInfo> {
+    // Determine if token conversion is required
+    let requires_conversion = *token_mint != hub_config.local_token_mint;
     
-    Ok(FeeInfo {
-        burn_amount: total_fee / 3,
-        chain_amount: total_fee / 3,
-        warchest_amount: total_fee / 3,
+    // Calculate base fees using the specified method
+    let (burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve) = 
+        match fee_calculation_method {
+            FeeCalculationMethod::Percentage => {
+                calculate_percentage_fees(amount, hub_config, requires_conversion)?
+            },
+            FeeCalculationMethod::Dynamic => {
+                calculate_adaptive_fees(amount, hub_config, trade, offer, requires_conversion)?
+            },
+            FeeCalculationMethod::Tiered => {
+                calculate_tiered_fees(amount, hub_config, requires_conversion)?
+            },
+            FeeCalculationMethod::MakerTaker => {
+                calculate_maker_taker_fees(amount, hub_config, trade, offer, requires_conversion)?
+            },
+            FeeCalculationMethod::TokenSpecific => {
+                calculate_token_specific_fees(amount, token_mint, hub_config, requires_conversion)?
+            },
+        };
+    
+    // Create and validate fee info
+    FeeInfo::new(
+        amount,
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+        requires_conversion,
+        fee_calculation_method,
+    )
+}
+
+/// PERCENTAGE FEES: Standard percentage-based fee calculation
+fn calculate_percentage_fees(
+    amount: u64,
+    hub_config: &hub::HubConfig,
+    requires_conversion: bool,
+) -> Result<(u64, u64, u64, u64, u64)> {
+    // Use enhanced hub config fee percentages
+    let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 / 10000) as u64;
+    let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 / 10000) as u64;
+    let warchest_amount = (amount as u128 * hub_config.warchest_fee_pct as u128 / 10000) as u64;
+    
+    // Additional fees for token conversion
+    let (conversion_fee, slippage_reserve) = if requires_conversion {
+        let conv_fee = (amount as u128 * hub_config.conversion_fee_pct as u128 / 10000) as u64;
+        let slippage = (amount as u128 * hub_config.max_slippage_bps as u128 / 10000) as u64;
+        (conv_fee, slippage)
+    } else {
+        (0, 0)
+    };
+    
+    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+}
+
+/// DYNAMIC FEES: Adaptive fees based on trade and market conditions
+fn calculate_adaptive_fees(
+    amount: u64,
+    hub_config: &hub::HubConfig,
+    trade: Option<&Trade>,
+    offer: Option<&offer::Offer>,
+    requires_conversion: bool,
+) -> Result<(u64, u64, u64, u64, u64)> {
+    // Start with base percentage fees
+    let (mut burn_amount, mut chain_amount, mut warchest_amount, mut conversion_fee, mut slippage_reserve) = 
+        calculate_percentage_fees(amount, hub_config, requires_conversion)?;
+    
+    // Dynamic adjustments based on trade parameters
+    if let Some(trade_data) = trade {
+        // Time-based fee adjustment (lower fees for longer-duration trades)
+        let current_time = Clock::get()?.unix_timestamp as u64;
+        let trade_age = current_time.saturating_sub(trade_data.created_at);
+        let age_factor = if trade_age > 86400 { 90 } else { 100 }; // 10% discount for trades older than 1 day
+        
+        burn_amount = burn_amount * age_factor / 100;
+        chain_amount = chain_amount * age_factor / 100;
+        warchest_amount = warchest_amount * age_factor / 100;
+        
+        // Volume-based adjustments (lower fees for larger amounts)
+        let volume_factor = if amount > 1_000_000_000 { 90 } else if amount > 100_000_000 { 95 } else { 100 };
+        
+        burn_amount = burn_amount * volume_factor / 100;
+        chain_amount = chain_amount * volume_factor / 100;
+        warchest_amount = warchest_amount * volume_factor / 100;
+    }
+    
+    // Offer-type specific adjustments
+    if let Some(_offer_data) = offer {
+        // Adjust fees based on offer characteristics
+        // Market makers (frequent traders) get slight fee reductions
+        let maker_factor = 95; // 5% discount for offer creators
+        
+        burn_amount = burn_amount * maker_factor / 100;
+        chain_amount = chain_amount * maker_factor / 100;
+        warchest_amount = warchest_amount * maker_factor / 100;
+    }
+    
+    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+}
+
+/// TIERED FEES: Amount-based tiered fee structure
+fn calculate_tiered_fees(
+    amount: u64,
+    hub_config: &hub::HubConfig,
+    requires_conversion: bool,
+) -> Result<(u64, u64, u64, u64, u64)> {
+    // Define fee tiers (in basis points)
+    let (burn_bps, chain_bps, warchest_bps) = match amount {
+        // Tier 1: 0-1M tokens - Standard rates
+        0..=1_000_000_000 => (
+            hub_config.burn_fee_pct,
+            hub_config.chain_fee_pct,
+            hub_config.warchest_fee_pct,
+        ),
+        // Tier 2: 1M-10M tokens - 10% discount
+        1_000_000_001..=10_000_000_000 => (
+            hub_config.burn_fee_pct * 90 / 100,
+            hub_config.chain_fee_pct * 90 / 100,
+            hub_config.warchest_fee_pct * 90 / 100,
+        ),
+        // Tier 3: 10M+ tokens - 20% discount
+        _ => (
+            hub_config.burn_fee_pct * 80 / 100,
+            hub_config.chain_fee_pct * 80 / 100,
+            hub_config.warchest_fee_pct * 80 / 100,
+        ),
+    };
+    
+    let burn_amount = (amount as u128 * burn_bps as u128 / 10000) as u64;
+    let chain_amount = (amount as u128 * chain_bps as u128 / 10000) as u64;
+    let warchest_amount = (amount as u128 * warchest_bps as u128 / 10000) as u64;
+    
+    // Conversion fees with tiered discounts
+    let (conversion_fee, slippage_reserve) = if requires_conversion {
+        let conv_bps = match amount {
+            0..=1_000_000_000 => hub_config.conversion_fee_pct,
+            1_000_000_001..=10_000_000_000 => hub_config.conversion_fee_pct * 90 / 100,
+            _ => hub_config.conversion_fee_pct * 80 / 100,
+        };
+        
+        let conv_fee = (amount as u128 * conv_bps as u128 / 10000) as u64;
+        let slippage = (amount as u128 * hub_config.max_slippage_bps as u128 / 10000) as u64;
+        (conv_fee, slippage)
+    } else {
+        (0, 0)
+    };
+    
+    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+}
+
+/// MAKER-TAKER FEES: Differentiated fees based on market role
+fn calculate_maker_taker_fees(
+    amount: u64,
+    hub_config: &hub::HubConfig,
+    trade: Option<&Trade>,
+    offer: Option<&offer::Offer>,
+    requires_conversion: bool,
+) -> Result<(u64, u64, u64, u64, u64)> {
+    // Determine if this is maker or taker
+    let is_maker = if let (Some(trade_data), Some(offer_data)) = (trade, offer) {
+        // Offer owner is the maker, trade creator is the taker
+        trade_data.buyer == offer_data.owner || trade_data.seller == offer_data.owner
+    } else {
+        false // Default to taker fees
+    };
+    
+    // Apply maker/taker fee structure
+    let fee_multiplier = if is_maker { 90 } else { 100 }; // 10% discount for makers
+    
+    let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
+    let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
+    let warchest_amount = (amount as u128 * hub_config.warchest_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
+    
+    // Conversion fees
+    let (conversion_fee, slippage_reserve) = if requires_conversion {
+        let conv_fee = (amount as u128 * hub_config.conversion_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
+        let slippage = (amount as u128 * hub_config.max_slippage_bps as u128 / 10000) as u64;
+        (conv_fee, slippage)
+    } else {
+        (0, 0)
+    };
+    
+    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+}
+
+/// TOKEN-SPECIFIC FEES: Custom fees based on token characteristics
+fn calculate_token_specific_fees(
+    amount: u64,
+    token_mint: &Pubkey,
+    hub_config: &hub::HubConfig,
+    requires_conversion: bool,
+) -> Result<(u64, u64, u64, u64, u64)> {
+    // Start with base fees
+    let (mut burn_amount, mut chain_amount, mut warchest_amount, mut conversion_fee, mut slippage_reserve) = 
+        calculate_percentage_fees(amount, hub_config, requires_conversion)?;
+    
+    // LOCAL token gets special treatment
+    if *token_mint == hub_config.local_token_mint {
+        // Lower fees for native LOCAL token trades
+        let local_discount = 80; // 20% discount
+        burn_amount = burn_amount * local_discount / 100;
+        chain_amount = chain_amount * local_discount / 100;
+        warchest_amount = warchest_amount * local_discount / 100;
+        conversion_fee = 0; // No conversion needed
+        slippage_reserve = 0;
+    } else {
+        // Higher conversion fees for exotic tokens (simplified logic)
+        // In production, this would check against a token registry
+        conversion_fee = conversion_fee * 120 / 100; // 20% higher conversion fees
+        slippage_reserve = slippage_reserve * 130 / 100; // 30% higher slippage protection
+    }
+    
+    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+}
+
+/// LEGACY COMPATIBILITY: Simple fee calculation for backward compatibility
+pub fn calculate_fees(amount: u64) -> Result<FeeInfo> {
+    // Create a default hub config for legacy support
+    let default_hub_config = hub::HubConfig {
+        authority: Pubkey::default(),
+        profile_program: Pubkey::default(),
+        offer_program: Pubkey::default(),
+        trade_program: Pubkey::default(),
+        price_program: Pubkey::default(),
+        treasury: Pubkey::default(),
+        local_token_mint: Pubkey::default(),
+        jupiter_program: Pubkey::default(),
+        chain_fee_collector: Pubkey::default(),
+        warchest_address: Pubkey::default(),
+        burn_fee_pct: 50,  // 0.5%
+        chain_fee_pct: 50, // 0.5%
+        warchest_fee_pct: 50, // 0.5%
+        conversion_fee_pct: 25, // 0.25%
+        max_slippage_bps: 100, // 1%
+        min_conversion_amount: 1000,
+        max_conversion_routes: 3,
+        fee_rate: 150, // Legacy field
+        burn_rate: 50,
+        warchest_rate: 50,
+        trade_limit_min: 1000,
+        trade_limit_max: 1000000,
+        trade_expiration_timer: 86400,
+        trade_dispute_timer: 3600,
+        arbitration_fee_rate: 200,
+        bump: 0,
+    };
+    
+    calculate_dynamic_fees(
+        amount,
+        &Pubkey::default(), // Default token (treated as non-LOCAL)
+        &default_hub_config,
+        None,
+        None,
+        FeeCalculationMethod::Percentage,
+    )
+}
+
+/// LOCAL TOKEN BURN MECHANISM: Comprehensive burn system with automatic conversion
+/// Matches CosmWasm pattern for LOCAL token burning and token conversion
+
+/// Execute LOCAL token burn with automatic conversion for non-LOCAL tokens
+pub fn execute_local_token_burn(
+    ctx: Context<ExecuteTokenBurn>,
+    burn_amount: u64,
+) -> Result<()> {
+    let hub_config = &ctx.accounts.hub_config;
+    let token_mint = &ctx.accounts.token_mint;
+    
+    // Check if token is LOCAL or needs conversion
+    if token_mint.key() == hub_config.local_token_mint {
+        // Direct burn for LOCAL tokens
+        burn_local_tokens(ctx, burn_amount)?;
+    } else {
+        // Convert to LOCAL then burn
+        convert_and_burn_tokens(ctx, burn_amount)?;
+    }
+    
+    Ok(())
+}
+
+/// Direct burn of LOCAL tokens using SPL token program
+fn burn_local_tokens(
+    ctx: Context<ExecuteTokenBurn>,
+    burn_amount: u64,
+) -> Result<()> {
+    use anchor_spl::token_interface::Burn;
+    
+    // Validate burn amount
+    require!(burn_amount > 0, ErrorCode::InvalidParameter);
+    
+    // Create burn instruction
+    let cpi_accounts = Burn {
+        mint: ctx.accounts.token_mint.to_account_info(),
+        from: ctx.accounts.source_token_account.to_account_info(),
+        authority: ctx.accounts.authority.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    // Execute burn using anchor helper
+    anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
+    
+    // Update burn statistics
+    // Note: burn_statistics update would require mutable context
+    // This functionality can be added when the calling function has mutable access
+    
+    Ok(())
+}
+
+/// Convert non-LOCAL token to LOCAL and burn the result
+fn convert_and_burn_tokens(
+    ctx: Context<ExecuteTokenBurn>,
+    burn_amount: u64,
+) -> Result<()> {
+    let hub_config = &ctx.accounts.hub_config;
+    
+    // Validate minimum conversion amount
+    require!(
+        burn_amount >= hub_config.min_conversion_amount,
+        ErrorCode::InsufficientConversionAmount
+    );
+    
+    // Step 1: Convert non-LOCAL token to LOCAL via DEX
+    let converted_amount = execute_token_conversion_for_burn(
+        &ctx,
+        burn_amount,
+    )?;
+    
+    // Step 2: Burn the converted LOCAL tokens
+    burn_converted_local_tokens(&ctx, converted_amount)?;
+    
+    Ok(())
+}
+
+/// Execute token conversion through DEX protocols
+fn execute_token_conversion_for_burn(
+    ctx: &Context<ExecuteTokenBurn>,
+    amount: u64,
+) -> Result<u64> {
+    let hub_config = &ctx.accounts.hub_config;
+    let source_mint = &ctx.accounts.token_mint;
+    let target_mint = &hub_config.local_token_mint;
+    
+    // Get conversion route (in production, this would query stored routes)
+    let conversion_route = get_conversion_route_for_burn(
+        &source_mint.key(),
+        target_mint,
+        ctx,
+    )?;
+    
+    // Execute conversion through Jupiter or other DEX
+    let converted_amount = match conversion_route.route_steps.len() {
+        1 => execute_single_step_conversion(ctx, amount, &conversion_route.route_steps[0])?,
+        2..=5 => execute_multi_step_conversion(ctx, amount, &conversion_route.route_steps)?,
+        _ => return Err(ErrorCode::ConversionRouteTooComplex.into()),
+    };
+    
+    // Validate slippage
+    let expected_min_output = calculate_min_output_with_slippage(
+        amount,
+        hub_config.max_slippage_bps,
+    )?;
+    
+    require!(
+        converted_amount >= expected_min_output,
+        ErrorCode::SlippageExceeded
+    );
+    
+    Ok(converted_amount)
+}
+
+/// Execute single-step token conversion
+fn execute_single_step_conversion(
+    ctx: &Context<ExecuteTokenBurn>,
+    amount: u64,
+    conversion_step: &ConversionStep,
+) -> Result<u64> {
+    // Query initial balance of target token
+    let initial_balance = get_token_account_balance(
+        &ctx.accounts.temp_local_token_account.to_account_info(),
+    )?;
+    
+    // Execute swap through Jupiter CPI
+    execute_jupiter_swap_cpi(
+        ctx,
+        amount,
+        conversion_step,
+    )?;
+    
+    // Query final balance to determine converted amount
+    let final_balance = get_token_account_balance(
+        &ctx.accounts.temp_local_token_account.to_account_info(),
+    )?;
+    
+    let converted_amount = final_balance.saturating_sub(initial_balance);
+    
+    require!(converted_amount > 0, ErrorCode::TokenConversionFailed);
+    
+    Ok(converted_amount)
+}
+
+/// Execute multi-step token conversion
+fn execute_multi_step_conversion(
+    ctx: &Context<ExecuteTokenBurn>,
+    initial_amount: u64,
+    conversion_steps: &[ConversionStep],
+) -> Result<u64> {
+    let mut current_amount = initial_amount;
+    
+    for (step_index, step) in conversion_steps.iter().enumerate() {
+        // For multi-step conversions, we need intermediate token accounts
+        // This would require more complex account management in production
+        current_amount = execute_single_step_conversion(ctx, current_amount, step)?;
+        
+        // Validate intermediate amounts
+        require!(
+            current_amount > 0,
+            ErrorCode::TokenConversionFailed
+        );
+        
+        // Apply step-by-step slippage checks
+        if step_index > 0 {
+            let expected_min = calculate_step_min_output(
+                current_amount,
+                step.max_slippage_bps,
+            )?;
+            
+            require!(
+                current_amount >= expected_min,
+                ErrorCode::SlippageExceeded
+            );
+        }
+    }
+    
+    Ok(current_amount)
+}
+
+/// Execute Jupiter DEX swap via CPI
+fn execute_jupiter_swap_cpi(
+    ctx: &Context<ExecuteTokenBurn>,
+    amount: u64,
+    conversion_step: &ConversionStep,
+) -> Result<()> {
+    // This is a simplified Jupiter CPI call
+    // In production, this would use the full Jupiter CPI interface
+    
+    let jupiter_program = &ctx.accounts.jupiter_program;
+    let _pool_address = &conversion_step.pool_address;
+    
+    // Validate Jupiter program
+    require!(
+        jupiter_program.key() == ctx.accounts.hub_config.jupiter_program,
+        ErrorCode::InvalidDexProgram
+    );
+    
+    // Create Jupiter swap instruction data
+    let swap_instruction_data = create_jupiter_swap_instruction(
+        amount,
+        conversion_step.max_slippage_bps,
+        &conversion_step.input_mint,
+        &conversion_step.output_mint,
+    )?;
+    
+    // Execute CPI call to Jupiter
+    let cpi_accounts = vec![
+        ctx.accounts.source_token_account.to_account_info(),
+        ctx.accounts.temp_local_token_account.to_account_info(),
+        ctx.accounts.authority.to_account_info(),
+        ctx.accounts.token_mint.to_account_info(),
+        jupiter_program.to_account_info(),
+    ];
+    
+    // In production, this would be a proper CPI call using Jupiter's interface
+    solana_program::program::invoke(
+        &solana_program::instruction::Instruction {
+            program_id: jupiter_program.key(),
+            accounts: cpi_accounts.iter().map(|acc| solana_program::instruction::AccountMeta {
+                pubkey: acc.key(),
+                is_signer: acc.is_signer,
+                is_writable: acc.is_writable,
+            }).collect(),
+            data: swap_instruction_data,
+        },
+        &cpi_accounts,
+    )?;
+    
+    Ok(())
+}
+
+/// Burn converted LOCAL tokens
+fn burn_converted_local_tokens(
+    ctx: &Context<ExecuteTokenBurn>,
+    amount: u64,
+) -> Result<()> {
+    use anchor_spl::token_interface::Burn;
+    
+    // Create burn instruction for converted LOCAL tokens
+    let cpi_accounts = Burn {
+        mint: ctx.accounts.local_token_mint.to_account_info(),
+        from: ctx.accounts.temp_local_token_account.to_account_info(),
+        authority: ctx.accounts.authority.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+    
+    // Execute burn
+    anchor_spl::token_interface::burn(cpi_ctx, amount)?;
+    
+    // Update conversion burn statistics
+    // Note: burn_statistics update would require mutable context
+    // This functionality can be added when the calling function has mutable access
+    
+    Ok(())
+}
+
+/// HELPER FUNCTIONS for burn mechanism
+
+/// Get conversion route for burn operation
+fn get_conversion_route_for_burn(
+    source_mint: &Pubkey,
+    target_mint: &Pubkey,
+    _ctx: &Context<ExecuteTokenBurn>,
+) -> Result<TokenConversionRoute> {
+    // In production, this would query stored conversion routes
+    // For now, create a default single-step route
+    let default_step = ConversionStep {
+        dex_program: Pubkey::default(), // Would be Jupiter program ID
+        input_mint: *source_mint,
+        output_mint: *target_mint,
+        pool_address: Pubkey::default(), // Would be actual pool address
+        estimated_fee: 1000, // 0.1% estimated fee
+        max_slippage_bps: 100, // 1% max slippage
+    };
+    
+    Ok(TokenConversionRoute {
+        source_mint: *source_mint,
+        target_mint: *target_mint,
+        route_steps: vec![default_step],
+        total_estimated_fee: 1000,
+        max_total_slippage_bps: 100,
+        route_priority: 0,
+        is_active: true,
+        created_at: Clock::get()?.unix_timestamp,
+        last_updated: Clock::get()?.unix_timestamp,
+        success_count: 0,
+        failure_count: 0,
+        authority: Pubkey::default(),
+        bump: 0,
     })
+}
+
+/// Calculate minimum output amount considering slippage
+fn calculate_min_output_with_slippage(
+    input_amount: u64,
+    max_slippage_bps: u16,
+) -> Result<u64> {
+    let slippage_factor = 10000u64.saturating_sub(max_slippage_bps as u64);
+    let min_output = (input_amount as u128 * slippage_factor as u128 / 10000u128) as u64;
+    Ok(min_output)
+}
+
+/// Calculate minimum output for individual step
+fn calculate_step_min_output(
+    input_amount: u64,
+    step_slippage_bps: u16,
+) -> Result<u64> {
+    calculate_min_output_with_slippage(input_amount, step_slippage_bps)
+}
+
+/// Get token account balance
+fn get_token_account_balance(account_info: &AccountInfo) -> Result<u64> {
+    let account_data = account_info.try_borrow_data()?;
+    
+    // SPL Token account balance is at offset 64 (8 bytes)
+    if account_data.len() < 72 {
+        return Err(ErrorCode::InvalidAccount.into());
+    }
+    
+    let balance_bytes = &account_data[64..72];
+    let balance = u64::from_le_bytes(
+        balance_bytes.try_into()
+            .map_err(|_| ErrorCode::InvalidAccount)?
+    );
+    
+    Ok(balance)
+}
+
+/// Create Jupiter swap instruction data (simplified)
+fn create_jupiter_swap_instruction(
+    amount: u64,
+    slippage_bps: u16,
+    input_mint: &Pubkey,
+    output_mint: &Pubkey,
+) -> Result<Vec<u8>> {
+    // This is a simplified instruction format
+    // In production, this would use Jupiter's actual instruction format
+    let mut instruction_data = Vec::new();
+    
+    // Add swap discriminator (8 bytes)
+    instruction_data.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    
+    // Add amount (8 bytes)
+    instruction_data.extend_from_slice(&amount.to_le_bytes());
+    
+    // Add slippage (2 bytes)
+    instruction_data.extend_from_slice(&slippage_bps.to_le_bytes());
+    
+    // Add input mint (32 bytes)
+    instruction_data.extend_from_slice(input_mint.as_ref());
+    
+    // Add output mint (32 bytes)
+    instruction_data.extend_from_slice(output_mint.as_ref());
+    
+    Ok(instruction_data)
+}
+
+/// BURN STATISTICS: Track burn operations for analytics
+#[account]
+pub struct BurnStatistics {
+    pub total_burned: u64,                    // Total LOCAL tokens burned directly
+    pub total_converted_burned: u64,          // Total LOCAL tokens burned after conversion
+    pub burn_count: u64,                      // Number of direct burns
+    pub conversion_burn_count: u64,           // Number of conversion burns
+    pub last_burn_timestamp: i64,             // Last direct burn timestamp
+    pub last_conversion_burn_timestamp: i64,  // Last conversion burn timestamp
+    pub authority: Pubkey,                    // Statistics authority
+    pub bump: u8,
+}
+
+impl BurnStatistics {
+    pub const SPACE: usize = 8 +              // discriminator
+        8 +                                   // total_burned
+        8 +                                   // total_converted_burned
+        8 +                                   // burn_count
+        8 +                                   // conversion_burn_count
+        8 +                                   // last_burn_timestamp
+        8 +                                   // last_conversion_burn_timestamp
+        32 +                                  // authority
+        1;                                    // bump
+}
+
+/// ACCOUNT CONTEXT: Token burn operations
+#[derive(Accounts)]
+pub struct ExecuteTokenBurn<'info> {
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority = authority,
+        associated_token::token_program = token_program,
+    )]
+    pub source_token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(
+        init_if_needed,
+        payer = authority,
+        associated_token::mint = local_token_mint,
+        associated_token::authority = authority,
+        associated_token::token_program = token_program,
+    )]
+    pub temp_local_token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(mut)]
+    pub token_mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        mut,
+        seeds = [b"mint".as_ref(), b"local".as_ref()],
+        bump,
+        mint::token_program = token_program
+    )]
+    pub local_token_mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        seeds = [b"hub".as_ref(), b"config".as_ref()],
+        bump
+    )]
+    pub hub_config: Account<'info, hub::HubConfig>,
+    
+    #[account(
+        mut,
+        seeds = [b"burn_statistics".as_ref()],
+        bump
+    )]
+    pub burn_statistics: Option<Account<'info, BurnStatistics>>,
+    
+    /// CHECK: Jupiter program for DEX operations
+    pub jupiter_program: UncheckedAccount<'info>,
+    
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+/// MULTI-DESTINATION FEE DISTRIBUTION: Core fee distribution logic
+/// Matches CosmWasm implementation pattern for comprehensive fee handling
+
+/// Execute multi-destination fee distribution with LOCAL token burn
+fn execute_multi_destination_fee_distribution(
+    ctx: &Context<ReleaseEscrow>,
+    fee_info: &FeeInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let _hub_config = &ctx.accounts.hub_config;
+    let _token_mint = &ctx.accounts.token_mint;
+    
+    // BURN FEE DISTRIBUTION: Handle LOCAL token burn or conversion + burn
+    if fee_info.burn_amount > 0 {
+        execute_burn_fee_distribution(ctx, fee_info.burn_amount, signer_seeds)?;
+    }
+    
+    // CHAIN FEE DISTRIBUTION: Transfer to chain fee collector
+    if fee_info.chain_amount > 0 {
+        execute_chain_fee_distribution(ctx, fee_info.chain_amount, signer_seeds)?;
+    }
+    
+    // WARCHEST FEE DISTRIBUTION: Transfer to warchest address
+    if fee_info.warchest_amount > 0 {
+        execute_warchest_fee_distribution(ctx, fee_info.warchest_amount, signer_seeds)?;
+    }
+    
+    // CONVERSION FEE HANDLING: Handle conversion fees if applicable
+    if fee_info.conversion_fee > 0 {
+        execute_conversion_fee_distribution(ctx, fee_info.conversion_fee, signer_seeds)?;
+    }
+    
+    Ok(())
+}
+
+/// Execute multi-destination fee distribution for dispute settlement with LOCAL token burn
+fn execute_multi_destination_fee_distribution_for_dispute(
+    ctx: &Context<SettleDispute>,
+    fee_info: &FeeInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let _hub_config = &ctx.accounts.hub_config;
+    let _token_mint = &ctx.accounts.token_mint;
+    
+    // BURN FEE DISTRIBUTION: Handle LOCAL token burn or conversion + burn
+    if fee_info.burn_amount > 0 {
+        execute_burn_fee_distribution_for_dispute(ctx, fee_info.burn_amount, signer_seeds)?;
+    }
+    
+    // CHAIN FEE DISTRIBUTION: Transfer to chain fee collector
+    if fee_info.chain_amount > 0 {
+        execute_chain_fee_distribution_for_dispute(ctx, fee_info.chain_amount, signer_seeds)?;
+    }
+    
+    // WARCHEST FEE DISTRIBUTION: Transfer to warchest address
+    if fee_info.warchest_amount > 0 {
+        execute_warchest_fee_distribution_for_dispute(ctx, fee_info.warchest_amount, signer_seeds)?;
+    }
+    
+    // CONVERSION FEE HANDLING: Handle conversion fees if applicable
+    if fee_info.conversion_fee > 0 {
+        execute_conversion_fee_distribution_for_dispute(ctx, fee_info.conversion_fee, signer_seeds)?;
+    }
+    
+    Ok(())
+}
+
+/// Execute burn fee distribution for dispute settlement with automatic LOCAL token conversion
+fn execute_burn_fee_distribution_for_dispute(
+    ctx: &Context<SettleDispute>,
+    burn_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let hub_config = &ctx.accounts.hub_config;
+    let token_mint = &ctx.accounts.token_mint;
+    
+    if token_mint.key() == hub_config.local_token_mint {
+        // Direct burn for LOCAL tokens
+        use anchor_spl::token_interface::Burn;
+        
+        let cpi_accounts = Burn {
+            mint: ctx.accounts.token_mint.to_account_info(),
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            authority: ctx.accounts.trade.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+        
+        anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
+    } else {
+        // Transfer to burn reserve account for later conversion + burn
+        let cpi_accounts = TransferChecked {
+            from: ctx.accounts.escrow_token_account.to_account_info(),
+            to: ctx.accounts.burn_reserve_account.to_account_info(),
+            authority: ctx.accounts.trade.to_account_info(),
+            mint: ctx.accounts.token_mint.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+        
+        transfer_checked(cpi_ctx, burn_amount, token_mint.decimals)?;
+    }
+    
+    Ok(())
+}
+
+/// Execute chain fee distribution for dispute settlement
+fn execute_chain_fee_distribution_for_dispute(
+    ctx: &Context<SettleDispute>,
+    chain_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.chain_fee_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, chain_amount, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute warchest fee distribution for dispute settlement
+fn execute_warchest_fee_distribution_for_dispute(
+    ctx: &Context<SettleDispute>,
+    warchest_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.warchest_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, warchest_amount, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute conversion fee distribution for dispute settlement
+fn execute_conversion_fee_distribution_for_dispute(
+    ctx: &Context<SettleDispute>,
+    conversion_fee: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // For now, route conversion fees to treasury until DEX integration is complete
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.treasury_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, conversion_fee, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute burn fee distribution with automatic LOCAL token conversion
+fn execute_burn_fee_distribution(
+    ctx: &Context<ReleaseEscrow>,
+    burn_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let hub_config = &ctx.accounts.hub_config;
+    let token_mint = &ctx.accounts.token_mint;
+    
+    if token_mint.key() == hub_config.local_token_mint {
+        // Direct burn for LOCAL tokens
+        execute_direct_local_burn(ctx, burn_amount, signer_seeds)?;
+    } else {
+        // Convert to LOCAL and burn (requires conversion infrastructure)
+        execute_convert_and_burn(ctx, burn_amount, signer_seeds)?;
+    }
+    
+    Ok(())
+}
+
+/// Execute direct LOCAL token burn
+fn execute_direct_local_burn(
+    ctx: &Context<ReleaseEscrow>,
+    burn_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    use anchor_spl::token_interface::Burn;
+    
+    // Burn LOCAL tokens directly from escrow
+    let cpi_accounts = Burn {
+        mint: ctx.accounts.token_mint.to_account_info(),
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
+    
+    Ok(())
+}
+
+/// Execute convert and burn for non-LOCAL tokens
+fn execute_convert_and_burn(
+    ctx: &Context<ReleaseEscrow>,
+    burn_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // In production, this would:
+    // 1. Transfer non-LOCAL tokens to conversion account
+    // 2. Execute Jupiter swap to LOCAL
+    // 3. Burn the resulting LOCAL tokens
+    
+    // For now, transfer to burn reserve account (to be converted later)
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.burn_reserve_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, burn_amount, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute chain fee distribution
+fn execute_chain_fee_distribution(
+    ctx: &Context<ReleaseEscrow>,
+    chain_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.chain_fee_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, chain_amount, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute warchest fee distribution
+fn execute_warchest_fee_distribution(
+    ctx: &Context<ReleaseEscrow>,
+    warchest_amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.warchest_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, warchest_amount, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
+}
+
+/// Execute conversion fee distribution
+fn execute_conversion_fee_distribution(
+    ctx: &Context<ReleaseEscrow>,
+    conversion_fee: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> Result<()> {
+    // Conversion fees go to treasury for DEX operation compensation
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.escrow_token_account.to_account_info(),
+        to: ctx.accounts.treasury_token_account.to_account_info(),
+        authority: ctx.accounts.trade.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
+    };
+    
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+    
+    transfer_checked(cpi_ctx, conversion_fee, ctx.accounts.token_mint.decimals)?;
+    
+    Ok(())
 }
 
 #[error_code]
@@ -1844,4 +3511,40 @@ pub enum ErrorCode {
     RefundTooEarly,
     #[msg("Invalid parameter")]
     InvalidParameter,
+    
+    // ADVANCED FEE MANAGEMENT: New error codes for enhanced fee system
+    #[msg("Excessive conversion fee")]
+    ExcessiveConversionFee,
+    #[msg("Excessive arbitration fees")]
+    ExcessiveArbitrationFees,
+    #[msg("Excessive arbitrator fee")]
+    ExcessiveArbitratorFee,
+    #[msg("Token conversion failed")]
+    TokenConversionFailed,
+    #[msg("Slippage exceeded maximum")]
+    SlippageExceeded,
+    #[msg("Insufficient conversion amount")]
+    InsufficientConversionAmount,
+    #[msg("Invalid conversion route")]
+    InvalidConversionRoute,
+    #[msg("DEX operation failed")]
+    DexOperationFailed,
+    #[msg("Token burn failed")]
+    TokenBurnFailed,
+    #[msg("Invalid fee calculation method")]
+    InvalidFeeCalculationMethod,
+    #[msg("Conversion route too complex")]
+    ConversionRouteTooComplex,
+    #[msg("LOCAL token conversion required")]
+    LocalTokenConversionRequired,
+    #[msg("Invalid DEX program")]
+    InvalidDexProgram,
+    #[msg("Pool not found")]
+    PoolNotFound,
+    #[msg("Invalid treasury address")]
+    InvalidTreasuryAddress,
+    #[msg("Invalid chain fee collector")]
+    InvalidChainFeeCollector,
+    #[msg("Invalid warchest address")]
+    InvalidWarchestAddress,
 }

@@ -14,9 +14,29 @@ pub mod hub {
         hub_config.trade_program = params.trade_program;
         hub_config.price_program = params.price_program;
         hub_config.treasury = params.treasury;
-        hub_config.fee_rate = params.fee_rate; // basis points (e.g., 150 = 1.5%)
-        hub_config.burn_rate = params.burn_rate; // basis points
-        hub_config.warchest_rate = params.warchest_rate; // basis points
+        
+        // ADVANCED FEE MANAGEMENT: Initialize new fields
+        hub_config.local_token_mint = params.local_token_mint;
+        hub_config.jupiter_program = params.jupiter_program;
+        hub_config.chain_fee_collector = params.chain_fee_collector;
+        hub_config.warchest_address = params.warchest_address;
+        
+        // ENHANCED FEE STRUCTURE: Initialize fee percentages
+        hub_config.burn_fee_pct = params.burn_fee_pct;
+        hub_config.chain_fee_pct = params.chain_fee_pct;
+        hub_config.warchest_fee_pct = params.warchest_fee_pct;
+        hub_config.conversion_fee_pct = params.conversion_fee_pct;
+        
+        // DEX INTEGRATION SETTINGS: Initialize conversion parameters
+        hub_config.max_slippage_bps = params.max_slippage_bps;
+        hub_config.min_conversion_amount = params.min_conversion_amount;
+        hub_config.max_conversion_routes = params.max_conversion_routes;
+        
+        // LEGACY COMPATIBILITY: Keep existing fields
+        hub_config.fee_rate = params.fee_rate;
+        hub_config.burn_rate = params.burn_rate;
+        hub_config.warchest_rate = params.warchest_rate;
+        
         hub_config.trade_limit_min = params.trade_limit_min;
         hub_config.trade_limit_max = params.trade_limit_max;
         hub_config.trade_expiration_timer = params.trade_expiration_timer;
@@ -33,6 +53,47 @@ pub mod hub {
         if let Some(treasury) = params.treasury {
             hub_config.treasury = treasury;
         }
+        
+        // ADVANCED FEE MANAGEMENT: Update new fields
+        if let Some(local_token_mint) = params.local_token_mint {
+            hub_config.local_token_mint = local_token_mint;
+        }
+        if let Some(jupiter_program) = params.jupiter_program {
+            hub_config.jupiter_program = jupiter_program;
+        }
+        if let Some(chain_fee_collector) = params.chain_fee_collector {
+            hub_config.chain_fee_collector = chain_fee_collector;
+        }
+        if let Some(warchest_address) = params.warchest_address {
+            hub_config.warchest_address = warchest_address;
+        }
+        
+        // ENHANCED FEE STRUCTURE: Update fee percentages
+        if let Some(burn_fee_pct) = params.burn_fee_pct {
+            hub_config.burn_fee_pct = burn_fee_pct;
+        }
+        if let Some(chain_fee_pct) = params.chain_fee_pct {
+            hub_config.chain_fee_pct = chain_fee_pct;
+        }
+        if let Some(warchest_fee_pct) = params.warchest_fee_pct {
+            hub_config.warchest_fee_pct = warchest_fee_pct;
+        }
+        if let Some(conversion_fee_pct) = params.conversion_fee_pct {
+            hub_config.conversion_fee_pct = conversion_fee_pct;
+        }
+        
+        // DEX INTEGRATION SETTINGS: Update conversion parameters
+        if let Some(max_slippage_bps) = params.max_slippage_bps {
+            hub_config.max_slippage_bps = max_slippage_bps;
+        }
+        if let Some(min_conversion_amount) = params.min_conversion_amount {
+            hub_config.min_conversion_amount = min_conversion_amount;
+        }
+        if let Some(max_conversion_routes) = params.max_conversion_routes {
+            hub_config.max_conversion_routes = max_conversion_routes;
+        }
+        
+        // LEGACY COMPATIBILITY: Update existing fields
         if let Some(fee_rate) = params.fee_rate {
             hub_config.fee_rate = fee_rate;
         }
@@ -126,9 +187,29 @@ pub struct HubConfig {
     pub trade_program: Pubkey,
     pub price_program: Pubkey,
     pub treasury: Pubkey,
-    pub fee_rate: u16,                    // basis points (e.g., 150 = 1.5%)
-    pub burn_rate: u16,                   // basis points
-    pub warchest_rate: u16,               // basis points
+    
+    // ADVANCED FEE MANAGEMENT: Token and DEX Integration
+    pub local_token_mint: Pubkey,         // LOCAL token mint address for burn mechanism
+    pub jupiter_program: Pubkey,          // Jupiter aggregator program for DEX swaps
+    pub chain_fee_collector: Pubkey,      // Chain fee collector address (separate from treasury)
+    pub warchest_address: Pubkey,         // Warchest address (separate from treasury)
+    
+    // ENHANCED FEE STRUCTURE: Multi-destination fee parameters
+    pub burn_fee_pct: u16,                // basis points for LOCAL token burn (matches CosmWasm)
+    pub chain_fee_pct: u16,               // basis points for chain fee sharing
+    pub warchest_fee_pct: u16,            // basis points for warchest fee
+    pub conversion_fee_pct: u16,          // basis points for token conversion fee
+    
+    // DEX INTEGRATION SETTINGS: Slippage and conversion parameters
+    pub max_slippage_bps: u16,            // maximum allowed slippage in basis points
+    pub min_conversion_amount: u64,       // minimum amount required for conversion
+    pub max_conversion_routes: u8,        // maximum DEX routes for token conversion
+    
+    // LEGACY COMPATIBILITY: Keep existing fields for backward compatibility
+    pub fee_rate: u16,                    // basis points (e.g., 150 = 1.5%) - legacy
+    pub burn_rate: u16,                   // basis points - legacy
+    pub warchest_rate: u16,               // basis points - legacy
+    
     pub trade_limit_min: u64,             // Minimum trade amount in USD cents
     pub trade_limit_max: u64,             // Maximum trade amount in USD cents
     pub trade_expiration_timer: u64,      // Seconds after which trades expire
@@ -145,9 +226,29 @@ impl HubConfig {
         32 + // trade_program
         32 + // price_program
         32 + // treasury
+        
+        // ADVANCED FEE MANAGEMENT: New fields
+        32 + // local_token_mint
+        32 + // jupiter_program
+        32 + // chain_fee_collector
+        32 + // warchest_address
+        
+        // ENHANCED FEE STRUCTURE
+        2 +  // burn_fee_pct
+        2 +  // chain_fee_pct
+        2 +  // warchest_fee_pct
+        2 +  // conversion_fee_pct
+        
+        // DEX INTEGRATION SETTINGS
+        2 +  // max_slippage_bps
+        8 +  // min_conversion_amount
+        1 +  // max_conversion_routes
+        
+        // LEGACY COMPATIBILITY
         2 +  // fee_rate
         2 +  // burn_rate
         2 +  // warchest_rate
+        
         8 +  // trade_limit_min
         8 +  // trade_limit_max
         8 +  // trade_expiration_timer
@@ -163,9 +264,29 @@ pub struct InitializeParams {
     pub trade_program: Pubkey,
     pub price_program: Pubkey,
     pub treasury: Pubkey,
+    
+    // ADVANCED FEE MANAGEMENT: Token and DEX Integration
+    pub local_token_mint: Pubkey,
+    pub jupiter_program: Pubkey,
+    pub chain_fee_collector: Pubkey,
+    pub warchest_address: Pubkey,
+    
+    // ENHANCED FEE STRUCTURE
+    pub burn_fee_pct: u16,
+    pub chain_fee_pct: u16,
+    pub warchest_fee_pct: u16,
+    pub conversion_fee_pct: u16,
+    
+    // DEX INTEGRATION SETTINGS
+    pub max_slippage_bps: u16,
+    pub min_conversion_amount: u64,
+    pub max_conversion_routes: u8,
+    
+    // LEGACY COMPATIBILITY
     pub fee_rate: u16,
     pub burn_rate: u16,
     pub warchest_rate: u16,
+    
     pub trade_limit_min: u64,
     pub trade_limit_max: u64,
     pub trade_expiration_timer: u64,
@@ -176,9 +297,29 @@ pub struct InitializeParams {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct UpdateConfigParams {
     pub treasury: Option<Pubkey>,
+    
+    // ADVANCED FEE MANAGEMENT: Optional updates for new fields
+    pub local_token_mint: Option<Pubkey>,
+    pub jupiter_program: Option<Pubkey>,
+    pub chain_fee_collector: Option<Pubkey>,
+    pub warchest_address: Option<Pubkey>,
+    
+    // ENHANCED FEE STRUCTURE
+    pub burn_fee_pct: Option<u16>,
+    pub chain_fee_pct: Option<u16>,
+    pub warchest_fee_pct: Option<u16>,
+    pub conversion_fee_pct: Option<u16>,
+    
+    // DEX INTEGRATION SETTINGS
+    pub max_slippage_bps: Option<u16>,
+    pub min_conversion_amount: Option<u64>,
+    pub max_conversion_routes: Option<u8>,
+    
+    // LEGACY COMPATIBILITY
     pub fee_rate: Option<u16>,
     pub burn_rate: Option<u16>,
     pub warchest_rate: Option<u16>,
+    
     pub trade_limit_min: Option<u64>,
     pub trade_limit_max: Option<u64>,
     pub trade_expiration_timer: Option<u64>,
