@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
 };
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_lang::solana_program;
+use std::collections::HashMap;
 
 
 declare_id!("5Tb71Y6Z4G5We8WqJiQAo34nVmc8ZmFo5J7D3VUC5LGX");
@@ -239,33 +240,37 @@ pub mod trade {
             );
         }
 
-        // DYNAMIC FEE CALCULATION: Use enhanced fee calculation system
-        let hub_config = &ctx.accounts.hub_config;
-        let offer = &ctx.accounts.offer;
-        let trade = &ctx.accounts.trade;
-        
-        let fee_info = calculate_dynamic_fees(
-            trade.amount,
-            &ctx.accounts.token_mint.key(),
-            hub_config,
-            Some(trade),
-            Some(offer),
-            FeeCalculationMethod::Dynamic, // Use dynamic calculation for releases
-        )?;
+        // Extract needed values to reduce stack usage
+        let trade_amount = ctx.accounts.trade.amount;
+        let trade_id = ctx.accounts.trade.id;
+        let trade_bump = ctx.accounts.trade.bump;
+        let token_mint_key = ctx.accounts.token_mint.key();
+        let token_decimals = ctx.accounts.token_mint.decimals;
+        let seller_key = ctx.accounts.seller.key();
+
+        // DYNAMIC FEE CALCULATION: Use boxed fee info to reduce stack usage
+        let fee_info = Box::new(calculate_dynamic_fees(
+            trade_amount,
+            &token_mint_key,
+            &ctx.accounts.hub_config,
+            Some(&ctx.accounts.trade),
+            Some(&ctx.accounts.offer),
+            FeeCalculationMethod::Dynamic,
+        )?);
         
         // Validate calculated fees
         fee_info.validate()?;
         
-        let net_amount = trade.amount
+        let net_amount = trade_amount
             .checked_sub(fee_info.total_fees())
             .ok_or(ErrorCode::ArithmeticError)?;
 
         // SIGNER SEEDS: Prepare trade authority seeds
-        let trade_id_bytes = trade.id.to_le_bytes();
+        let trade_id_bytes = trade_id.to_le_bytes();
         let trade_seeds = &[
             b"trade".as_ref(),
             trade_id_bytes.as_ref(),
-            &[trade.bump],
+            &[trade_bump],
         ];
         let signer_seeds = &[&trade_seeds[..]];
 
@@ -277,9 +282,9 @@ pub mod trade {
             mint: ctx.accounts.token_mint.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
         
-        transfer_checked(cpi_ctx, net_amount, ctx.accounts.token_mint.decimals)?;
+        transfer_checked(cpi_ctx, net_amount, token_decimals)?;
 
         // MULTI-DESTINATION FEE DISTRIBUTION: Execute comprehensive fee distribution
         execute_multi_destination_fee_distribution(
@@ -292,7 +297,7 @@ pub mod trade {
         let trade = &mut ctx.accounts.trade;
         trade.state = TradeState::EscrowReleased;
         trade.state_history.push(TradeStateItem {
-            actor: ctx.accounts.seller.key(),
+            actor: seller_key,
             state: TradeState::EscrowReleased,
             timestamp: clock.unix_timestamp as u64,
         });
@@ -316,6 +321,7 @@ pub mod trade {
 
         Ok(())
     }
+
 
     pub fn cancel_request(ctx: Context<CancelRequest>) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
@@ -558,45 +564,50 @@ pub mod trade {
             );
         }
 
-        // DYNAMIC FEE CALCULATION: Use enhanced fee calculation system (same as release_escrow)
-        let hub_config = &ctx.accounts.hub_config;
-        let offer = &ctx.accounts.offer;
-        let trade = &ctx.accounts.trade;
-        
-        let fee_info = calculate_dynamic_fees(
-            trade.amount,
-            &ctx.accounts.token_mint.key(),
-            hub_config,
-            Some(trade),
-            Some(offer),
+        // Extract values to reduce stack usage
+        let trade_amount = ctx.accounts.trade.amount;
+        let trade_id = ctx.accounts.trade.id;
+        let trade_bump = ctx.accounts.trade.bump;
+        let trade_buyer = ctx.accounts.trade.buyer;
+        let trade_seller = ctx.accounts.trade.seller;
+        let offer_owner = ctx.accounts.offer.owner;
+        let token_mint_key = ctx.accounts.token_mint.key();
+        let token_decimals = ctx.accounts.token_mint.decimals;
+        let arbitrator_key = ctx.accounts.arbitrator.key();
+
+        // DYNAMIC FEE CALCULATION: Use boxed fee info to reduce stack usage
+        let fee_info = Box::new(calculate_dynamic_fees(
+            trade_amount,
+            &token_mint_key,
+            &ctx.accounts.hub_config,
+            Some(&ctx.accounts.trade),
+            Some(&ctx.accounts.offer),
             FeeCalculationMethod::Dynamic,
-        )?;
+        )?);
 
         // ARBITRATION FEE CALCULATION: Calculate arbitrator fee separately
         let arbitrator_fee_result = calculate_percentage_fees(
-            trade.amount,
-            hub_config,
+            trade_amount,
+            &ctx.accounts.hub_config,
             false, // No conversion needed for arbitrator fees
         )?;
         let arbitrator_fee = arbitrator_fee_result.0; // Get burn_amount as the fee
 
         // Calculate net amount for winner (after all fees)
-        let total_fees = fee_info.burn_amount
-            .saturating_add(fee_info.chain_amount)
-            .saturating_add(fee_info.warchest_amount)
-            .saturating_add(fee_info.conversion_fee)
-            .saturating_add(arbitrator_fee);
-        
-        let winner_amount = trade.amount.saturating_sub(total_fees);
+        let total_fees = fee_info.total_fees().saturating_add(arbitrator_fee);
+        let winner_amount = trade_amount.saturating_sub(total_fees);
 
         // SIGNER SEEDS: Prepare for CPI calls
-        let trade_id_bytes = trade.id.to_le_bytes();
+        let trade_id_bytes = trade_id.to_le_bytes();
         let trade_seeds = &[
             b"trade".as_ref(),
             trade_id_bytes.as_ref(),
-            &[trade.bump],
+            &[trade_bump],
         ];
         let signer_seeds = &[&trade_seeds[..]];
+
+        // Execute transfers
+        let cpi_program = ctx.accounts.token_program.to_account_info();
 
         // WINNER TRANSFER: Transfer net amount to winner
         let cpi_accounts = TransferChecked {
@@ -605,10 +616,8 @@ pub mod trade {
             authority: ctx.accounts.trade.to_account_info(),
             mint: ctx.accounts.token_mint.to_account_info(),
         };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
-        
-        transfer_checked(cpi_ctx, winner_amount, ctx.accounts.token_mint.decimals)?;
+        transfer_checked(cpi_ctx, winner_amount, token_decimals)?;
 
         // ARBITRATOR FEE TRANSFER: Transfer arbitrator fee
         if arbitrator_fee > 0 {
@@ -618,30 +627,29 @@ pub mod trade {
                 authority: ctx.accounts.trade.to_account_info(),
                 mint: ctx.accounts.token_mint.to_account_info(),
             };
-            let cpi_ctx = CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
-            
-            transfer_checked(cpi_ctx, arbitrator_fee, ctx.accounts.token_mint.decimals)?;
+            let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+            transfer_checked(cpi_ctx, arbitrator_fee, token_decimals)?;
         }
 
         // MULTI-DESTINATION FEE DISTRIBUTION: Execute enhanced fee distribution
         execute_multi_destination_fee_distribution_for_dispute(&ctx, &fee_info, signer_seeds)?;
 
         // STATE UPDATE: Update trade state based on winner
-        let trade = &mut ctx.accounts.trade;
-        let new_state = if winner == trade.buyer && winner == ctx.accounts.offer.owner {
+        let new_state = if winner == trade_buyer && winner == offer_owner {
             TradeState::SettledForMaker
-        } else if winner == trade.seller && winner == ctx.accounts.offer.owner {
+        } else if winner == trade_seller && winner == offer_owner {
             TradeState::SettledForMaker
-        } else if winner == trade.buyer {
+        } else if winner == trade_buyer {
             TradeState::SettledForTaker
         } else {
             TradeState::SettledForTaker
         };
-
+        
+        let trade = &mut ctx.accounts.trade;
         trade.state = new_state.clone();
         trade.state_history.push(TradeStateItem {
-            actor: ctx.accounts.arbitrator.key(),
-            state: new_state,
+            actor: arbitrator_key,
+            state: new_state.clone(),
             timestamp: clock.unix_timestamp as u64,
         });
 
@@ -657,17 +665,18 @@ pub mod trade {
             profile: ctx.accounts.buyer_profile.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(cpi_program.clone(), cpi_accounts);
-        profile::cpi::update_trade_stats(cpi_ctx, trade.state.clone())?;
+        profile::cpi::update_trade_stats(cpi_ctx, new_state.clone())?;
 
         // Update seller profile
         let cpi_accounts = profile::cpi::accounts::UpdateTradeStats {
             profile: ctx.accounts.seller_profile.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        profile::cpi::update_trade_stats(cpi_ctx, trade.state.clone())?;
+        profile::cpi::update_trade_stats(cpi_ctx, new_state.clone())?;
 
         Ok(())
     }
+
 
     /// Automatic refund mechanism for expired trades
     pub fn automatic_refund(ctx: Context<AutomaticRefund>) -> Result<()> {
@@ -986,20 +995,20 @@ pub struct RegisterArbitrator<'info> {
         payer = authority,
         space = ArbitratorPool::SPACE,
         seeds = [b"arbitrator-pool".as_ref(), match fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN", 
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN", 
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1010,20 +1019,20 @@ pub struct RegisterArbitrator<'info> {
         payer = authority,
         space = ArbitratorInfo::SPACE,
         seeds = [b"arbitrator".as_ref(), arbitrator.key().as_ref(), match fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN",
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN",
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1050,20 +1059,20 @@ pub struct DeactivateArbitrator<'info> {
     #[account(
         mut,
         seeds = [b"arbitrator-pool".as_ref(), match fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN",
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN",
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1072,20 +1081,20 @@ pub struct DeactivateArbitrator<'info> {
     #[account(
         mut,
         seeds = [b"arbitrator".as_ref(), arbitrator.key().as_ref(), match fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN",
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN",
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1109,20 +1118,20 @@ pub struct AssignArbitrator<'info> {
 
     #[account(
         seeds = [b"arbitrator-pool".as_ref(), match trade.fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN",
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN",
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1185,20 +1194,20 @@ pub struct SettleDispute<'info> {
     #[account(
         mut,
         seeds = [b"arbitrator".as_ref(), arbitrator.key().as_ref(), match trade.fiat_currency {
-            FiatCurrency::USD => b"USD",
-            FiatCurrency::EUR => b"EUR",
-            FiatCurrency::GBP => b"GBP",
-            FiatCurrency::CAD => b"CAD",
-            FiatCurrency::AUD => b"AUD",
-            FiatCurrency::JPY => b"JPY",
-            FiatCurrency::BRL => b"BRL",
-            FiatCurrency::MXN => b"MXN",
-            FiatCurrency::ARS => b"ARS",
-            FiatCurrency::CLP => b"CLP",
-            FiatCurrency::COP => b"COP",
-            FiatCurrency::NGN => b"NGN",
-            FiatCurrency::THB => b"THB",
-            FiatCurrency::VES => b"VES",
+            FiatCurrency::Usd => b"USD",
+            FiatCurrency::Eur => b"EUR",
+            FiatCurrency::Gbp => b"GBP",
+            FiatCurrency::Cad => b"CAD",
+            FiatCurrency::Aud => b"AUD",
+            FiatCurrency::Jpy => b"JPY",
+            FiatCurrency::Brl => b"BRL",
+            FiatCurrency::Mxn => b"MXN",
+            FiatCurrency::Ars => b"ARS",
+            FiatCurrency::Clp => b"CLP",
+            FiatCurrency::Cop => b"COP",
+            FiatCurrency::Ngn => b"NGN",
+            FiatCurrency::Thb => b"THB",
+            FiatCurrency::Ves => b"VES",
         }],
         bump
     )]
@@ -1510,7 +1519,7 @@ impl Trade {
         1; // bump
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct TradeStateItem {
     pub actor: Pubkey,
     pub state: TradeState,
@@ -1964,7 +1973,7 @@ pub fn initialize_token_conversion(
 pub use profile::{TradeState, FiatCurrency};
 
 // Constants
-const DISPUTE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 24 hours
+const _DISPUTE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 24 hours
 
 // Arbitrator account structures
 #[account]
@@ -2324,20 +2333,20 @@ pub fn get_fiat_to_usd_rate(
     // In a real implementation, this would query the price oracle
     // For now, we'll use approximate rates (this should be replaced with actual oracle calls)
     let rate = match fiat_currency {
-        FiatCurrency::USD => 1_000_000, // 1:1 ratio, 6 decimal places
-        FiatCurrency::EUR => 1_100_000, // ~1.1 USD per EUR
-        FiatCurrency::GBP => 1_250_000, // ~1.25 USD per GBP
-        FiatCurrency::CAD => 750_000,   // ~0.75 USD per CAD
-        FiatCurrency::AUD => 670_000,   // ~0.67 USD per AUD
-        FiatCurrency::JPY => 7_000,     // ~0.007 USD per JPY
-        FiatCurrency::BRL => 200_000,   // ~0.2 USD per BRL
-        FiatCurrency::MXN => 60_000,    // ~0.06 USD per MXN
-        FiatCurrency::ARS => 1_200,     // ~0.0012 USD per ARS
-        FiatCurrency::CLP => 1_100,     // ~0.0011 USD per CLP
-        FiatCurrency::COP => 250,       // ~0.00025 USD per COP
-        FiatCurrency::NGN => 1_300,     // ~0.0013 USD per NGN
-        FiatCurrency::THB => 28_000,    // ~0.028 USD per THB
-        FiatCurrency::VES => 30,        // ~0.00003 USD per VES
+        FiatCurrency::Usd => 1_000_000, // 1:1 ratio, 6 decimal places
+        FiatCurrency::Eur => 1_100_000, // ~1.1 USD per EUR
+        FiatCurrency::Gbp => 1_250_000, // ~1.25 USD per GBP
+        FiatCurrency::Cad => 750_000,   // ~0.75 USD per CAD
+        FiatCurrency::Aud => 670_000,   // ~0.67 USD per AUD
+        FiatCurrency::Jpy => 7_000,     // ~0.007 USD per JPY
+        FiatCurrency::Brl => 200_000,   // ~0.2 USD per BRL
+        FiatCurrency::Mxn => 60_000,    // ~0.06 USD per MXN
+        FiatCurrency::Ars => 1_200,     // ~0.0012 USD per ARS
+        FiatCurrency::Clp => 1_100,     // ~0.0011 USD per CLP
+        FiatCurrency::Cop => 250,       // ~0.00025 USD per COP
+        FiatCurrency::Ngn => 1_300,     // ~0.0013 USD per NGN
+        FiatCurrency::Thb => 28_000,    // ~0.028 USD per THB
+        FiatCurrency::Ves => 30,        // ~0.00003 USD per VES
     };
     
     Ok(rate)
@@ -2357,20 +2366,20 @@ pub enum AuthorizationRole {
 // Helper functions
 pub fn fiat_currency_to_string(currency: &FiatCurrency) -> &'static str {
     match currency {
-        FiatCurrency::USD => "USD",
-        FiatCurrency::EUR => "EUR",
-        FiatCurrency::GBP => "GBP",
-        FiatCurrency::CAD => "CAD",
-        FiatCurrency::AUD => "AUD",
-        FiatCurrency::JPY => "JPY",
-        FiatCurrency::BRL => "BRL",
-        FiatCurrency::MXN => "MXN",
-        FiatCurrency::ARS => "ARS",
-        FiatCurrency::CLP => "CLP",
-        FiatCurrency::COP => "COP",
-        FiatCurrency::NGN => "NGN",
-        FiatCurrency::THB => "THB",
-        FiatCurrency::VES => "VES",
+        FiatCurrency::Usd => "USD",
+        FiatCurrency::Eur => "EUR",
+        FiatCurrency::Gbp => "GBP",
+        FiatCurrency::Cad => "CAD",
+        FiatCurrency::Aud => "AUD",
+        FiatCurrency::Jpy => "JPY",
+        FiatCurrency::Brl => "BRL",
+        FiatCurrency::Mxn => "MXN",
+        FiatCurrency::Ars => "ARS",
+        FiatCurrency::Clp => "CLP",
+        FiatCurrency::Cop => "COP",
+        FiatCurrency::Ngn => "NGN",
+        FiatCurrency::Thb => "THB",
+        FiatCurrency::Ves => "VES",
     }
 }
 
@@ -2519,7 +2528,7 @@ fn calculate_adaptive_fees(
     requires_conversion: bool,
 ) -> Result<(u64, u64, u64, u64, u64)> {
     // Start with base percentage fees
-    let (mut burn_amount, mut chain_amount, mut warchest_amount, mut conversion_fee, mut slippage_reserve) = 
+    let (mut burn_amount, mut chain_amount, mut warchest_amount, conversion_fee, slippage_reserve) = 
         calculate_percentage_fees(amount, hub_config, requires_conversion)?;
     
     // Dynamic adjustments based on trade parameters
@@ -3529,16 +3538,16 @@ fn execute_conversion_fee_distribution(
     /// Get single trade by ID
     pub fn get_trade(
         ctx: Context<GetTrade>,
-        trade_id: u64,
+        _trade_id: u64,
     ) -> Result<TradeResponse> {
         let trade = &ctx.accounts.trade;
         
         Ok(TradeResponse {
-            trade: trade.clone(),
+            trade: (**trade).clone(),
             metadata: TradeMetadata {
                 age_seconds: Clock::get()?.unix_timestamp as u64 - trade.created_at,
                 is_expired: Clock::get()?.unix_timestamp as u64 > trade.expires_at,
-                time_to_expiry: if Clock::get()?.unix_timestamp as u64 < trade.expires_at {
+                time_to_expiry: if (Clock::get()?.unix_timestamp as u64) < trade.expires_at {
                     Some(trade.expires_at - Clock::get()?.unix_timestamp as u64)
                 } else {
                     None
@@ -4018,9 +4027,7 @@ fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
         let state_byte = trade_state_to_byte(state);
         filters.push(RpcFilterType::Memcmp(Memcmp::new(
             get_trade_state_offset(), // Calculate actual offset to state field
-            MemcmpEncodedBytes::Base64(
-                base64::encode([state_byte])
-            ),
+            MemcmpEncodedBytes::Base58(format!("{}", state_byte)),
         )));
     }
     
@@ -4154,7 +4161,8 @@ fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
     
     for trade in trades {
         // Count by state
-        *state_counts.entry(trade.state.clone()).or_insert(0u64) += 1;
+        let state_key = trade_state_to_byte(&trade.state);
+        *state_counts.entry(state_key).or_insert(0u64) += 1;
         
         // Collect amounts
         amounts.push(trade.amount);
@@ -4211,7 +4219,7 @@ fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
     };
     
     // Build response
-    let trades_by_state = state_counts.into_iter().map(|(state, count)| StateCount { state, count }).collect();
+    let trades_by_state = state_counts.into_iter().map(|(state_byte, count)| StateCount { state: byte_to_trade_state(state_byte), count }).collect();
     let trades_by_currency = currency_stats.into_values().collect();
     
     let arbitration_statistics = ArbitrationStatistics {
@@ -4361,6 +4369,14 @@ fn trade_state_to_byte(state: &TradeState) -> u8 {
         TradeState::DisputeOpened => 5,
         TradeState::DisputeResolved => 6,
         TradeState::Refunded => 7,
+        TradeState::RequestCanceled => 8,
+        TradeState::RequestExpired => 9,
+        TradeState::EscrowCanceled => 10,
+        TradeState::EscrowRefunded => 11,
+        TradeState::EscrowReleased => 12,
+        TradeState::EscrowDisputed => 13,
+        TradeState::SettledForMaker => 14,
+        TradeState::SettledForTaker => 15,
     }
 }
 
@@ -4368,6 +4384,28 @@ fn get_trade_state_offset() -> usize {
     // This would need to be calculated based on the actual Trade struct layout
     // Placeholder value
     200
+}
+
+fn byte_to_trade_state(byte: u8) -> TradeState {
+    match byte {
+        0 => TradeState::RequestCreated,
+        1 => TradeState::RequestAccepted,
+        2 => TradeState::EscrowFunded,
+        3 => TradeState::FiatDeposited,
+        4 => TradeState::Released,
+        5 => TradeState::DisputeOpened,
+        6 => TradeState::DisputeResolved,
+        7 => TradeState::Refunded,
+        8 => TradeState::RequestCanceled,
+        9 => TradeState::RequestExpired,
+        10 => TradeState::EscrowCanceled,
+        11 => TradeState::EscrowRefunded,
+        12 => TradeState::EscrowReleased,
+        13 => TradeState::EscrowDisputed,
+        14 => TradeState::SettledForMaker,
+        15 => TradeState::SettledForTaker,
+        _ => TradeState::RequestCreated, // Default fallback
+    }
 }
 
 // Common pagination and filtering types (shared with offer program)
@@ -4429,7 +4467,7 @@ fn validate_pagination_params(params: &PaginationParams) -> Result<()> {
 
 fn load_program_accounts_filtered<'a>(
     _system_program: AccountInfo<'a>,
-    program_id: &Pubkey,
+    _program_id: &Pubkey,
     _filters: &[RpcFilterType],
     _pagination: &PaginationParams,
 ) -> Result<Vec<(Pubkey, AccountInfo<'a>)>> {

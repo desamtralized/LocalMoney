@@ -659,7 +659,7 @@ pub enum MemcmpEncodedBytes {
 
 fn load_program_accounts_filtered<'a>(
     _system_program: AccountInfo<'a>,
-    program_id: &Pubkey,
+    _program_id: &Pubkey,
     _filters: &[RpcFilterType],
     _pagination: &PaginationParams,
 ) -> Result<Vec<(Pubkey, AccountInfo<'a>)>> {
