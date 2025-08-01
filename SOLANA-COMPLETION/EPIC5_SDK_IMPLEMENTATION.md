@@ -7,7 +7,7 @@
 - Account fetching logic with efficient caching and data management
 - Helper methods for common operations and complex workflows
 - Gas optimization utilities and transaction cost estimation
-- Testing framework with unit tests, integration tests, and mock providers
+- Testing framework with unit tests, integration tests, and real on-chain transacitons with the solana-local-validator, no mocks or stubs.
 
 ## EXAMPLES:
 
@@ -37,7 +37,6 @@ RPC Provider Patterns: https://docs.solana.com/developing/clients/jsonrpc-api
 - **Documentation**: Inline documentation and examples for all public methods and interfaces
 - **Versioning**: Proper semantic versioning with backward compatibility considerations
 - **Bundle Size**: Optimize bundle size for web applications while maintaining full functionality
-- **Mock Support**: Robust mocking capabilities for testing applications that use the SDK
 - **Framework Agnostic**: Design SDK to work with React, Vue, Angular, and vanilla JavaScript applications
 
 ## RELATED PROJECTS:

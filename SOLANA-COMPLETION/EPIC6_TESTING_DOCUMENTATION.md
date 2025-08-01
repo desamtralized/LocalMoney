@@ -8,6 +8,7 @@
 - Migration guides from CosmWasm to Solana with compatibility matrices
 - Performance benchmarking and optimization analysis
 - Security audit preparation with comprehensive test coverage
+- No mock or stubs, just real transactions and queries
 
 ## EXAMPLES:
 

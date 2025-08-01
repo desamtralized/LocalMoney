@@ -7,7 +7,7 @@ use anchor_lang::solana_program;
 use std::collections::HashMap;
 
 
-declare_id!("5Tb71Y6Z4G5We8WqJiQAo34nVmc8ZmFo5J7D3VUC5LGX");
+declare_id!("HjzdQZjxWcs514U2qiqecXuEGeMA2FnX9vAdDZPHUiwQ");
 
 #[program]
 pub mod trade {
