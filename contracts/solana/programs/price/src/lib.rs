@@ -1,6 +1,8 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
 use anchor_lang::prelude::*;
 
-declare_id!("AHDAzufTjFrXHkJPrD85xoKMn9Cj4GRusWDQtZaG37dT");
+declare_id!("GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL");
 
 #[program]
 pub mod price {
@@ -14,10 +16,10 @@ pub mod price {
     }
 
     pub fn update_price(
-        ctx: Context<UpdatePrice>, 
+        ctx: Context<UpdatePrice>,
         fiat_currency: FiatCurrency,
         price_per_token: u64,
-        decimals: u8
+        decimals: u8,
     ) -> Result<()> {
         let price_feed = &mut ctx.accounts.price_feed;
         price_feed.authority = ctx.accounts.authority.key();
@@ -31,16 +33,16 @@ pub mod price {
     }
 
     pub fn get_price(
-        ctx: Context<GetPrice>, 
-        _mint: Pubkey, 
-        fiat_currency: FiatCurrency
+        ctx: Context<GetPrice>,
+        _mint: Pubkey,
+        fiat_currency: FiatCurrency,
     ) -> Result<u64> {
         let price_feed = &ctx.accounts.price_feed;
         require!(
-            price_feed.fiat_currency == fiat_currency, 
+            price_feed.fiat_currency == fiat_currency,
             ErrorCode::InvalidCurrency
         );
-        
+
         // Return price scaled by decimals
         Ok(price_feed.price_per_token)
     }
@@ -56,10 +58,10 @@ pub struct InitializePrices<'info> {
         bump
     )]
     pub price_config: Account<'info, PriceConfig>,
-    
+
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -72,7 +74,7 @@ pub struct UpdatePrice<'info> {
         constraint = price_config.authority == authority.key() @ ErrorCode::Unauthorized
     )]
     pub price_config: Account<'info, PriceConfig>,
-    
+
     #[account(
         init,
         payer = authority,
@@ -81,10 +83,10 @@ pub struct UpdatePrice<'info> {
         bump
     )]
     pub price_feed: Account<'info, PriceFeed>,
-    
+
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -130,12 +132,11 @@ impl PriceFeed {
         1; // bump
 }
 
-
 // Reuse common types from profile program
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
 pub enum FiatCurrency {
     USD,
-    EUR, 
+    EUR,
     GBP,
     CAD,
     AUD,

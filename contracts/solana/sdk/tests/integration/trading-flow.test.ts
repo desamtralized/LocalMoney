@@ -42,21 +42,22 @@ describe('LocalMoney SDK Integration Tests', () => {
 
   // Actual deployed program IDs on local validator
   const programIds = {
-    hub: new PublicKey('ETpJMS4nNW55KpjuJssRBmHpphYnBRPoRh9o6Yq6jy1K'), // Deployed ✅
-    profile: new PublicKey('BMH3GaQKHbUG1X3wSASq6fN6qy8jRFf1WgdfMzaxWXmC'), // Deployed ✅
-    price: new PublicKey('AHDAzufTjFrXHkJPrD85xoKMn9Cj4GRusWDQtZaG37dT'), // Deployed ✅
-    offer: new PublicKey('D89P5L26y2wcLRYc5g3AgHVRpJiSGTWJZnrGGJoAiobj'), // Deployed ✅
-    trade: new PublicKey('HjzdQZjxWcs514U2qiqecXuEGeMA2FnX9vAdDZPHUiwQ') // Deployed ✅
+    hub: new PublicKey('2VqFPzXYsBvCLY6pYfrKxbqatVV4ASpjWEMXQoKNBZE2'), // Deployed ✅
+    profile: new PublicKey('6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC'), // Deployed ✅
+    price: new PublicKey('GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL'), // Deployed ✅
+    offer: new PublicKey('E5L14TfijKrxBPWz9FMGDLTmPuyWBxxdoXd1K2M2TyUJ'), // Deployed ✅
+    trade: new PublicKey('5osZqhJj2SYGDHtUre2wpWiCFoBZQFmQ4x5b4Ln2TQQM') // Deployed ✅
   };
 
   beforeAll(async () => {
     // Connect to local validator
     connection = new Connection('http://localhost:8899', 'confirmed');
     
-    // Create test keypairs
-    payer = Keypair.generate();
-    buyer = Keypair.generate();
-    seller = Keypair.generate();
+    // Create deterministic test keypairs for consistent testing
+    // Use fixed seeds so we get the same keypairs each test run
+    payer = Keypair.fromSeed(new Uint8Array(32).fill(1)); // All 1s
+    buyer = Keypair.fromSeed(new Uint8Array(32).fill(2)); // All 2s
+    seller = Keypair.fromSeed(new Uint8Array(32).fill(3)); // All 3s
 
     // Check if local validator is running by testing connection
     try {
@@ -134,18 +135,36 @@ describe('LocalMoney SDK Integration Tests', () => {
 
   (process.env.INTEGRATION_TESTS === 'true' ? describe : describe.skip)('Offer Management', () => {
     test('should create and retrieve offers', async () => {
+      // Setup required dependencies first
+      console.log('🔧 Setting up offer creation dependencies...');
+      
+      // Create test token mint
+      const tokenMint = await sellerSdk.createTestTokenMint();
+      console.log('✅ Test token mint created:', tokenMint.toString());
+      
+      // Initialize hub if needed
+      try {
+        await sellerSdk.initializeHub();
+        console.log('✅ Hub initialized');
+      } catch (error) {
+        console.log('ℹ️ Hub already initialized or initialization skipped');
+      }
+
       const createOfferParams = {
         offerType: { buy: {} },
         fiatCurrency: { usd: {} },
         fiatAmount: 1000,
         rate: 50000, // $50,000 per token
         paymentMethods: ['bank-transfer'],
-        terms: 'Quick trade, bank transfer only'
+        terms: 'Quick trade, bank transfer only',
+        tokenMint: tokenMint // Include the token mint
       };
 
       // Create offer
+      console.log('🎯 Creating offer...');
       const signature = await sellerSdk.createOffer(createOfferParams as any);
       expect(signature).toBeTruthy();
+      console.log('✅ Offer created with signature:', signature);
 
       // Wait for confirmation
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -155,8 +174,10 @@ describe('LocalMoney SDK Integration Tests', () => {
       const offerId = 1;
       
       // Retrieve offer
+      console.log('🔍 Retrieving offer...');
       const offer = await sellerSdk.getOffer(offerId);
       expect(offer).toBeTruthy();
+      console.log('✅ Offer retrieved successfully');
     });
   });
 

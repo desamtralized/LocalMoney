@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Keypair, TransactionSignature, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Wallet, Program, IdlTypes, IdlAccounts, BN, AnchorError } from '@coral-xyz/anchor';
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createInitializeMintInstruction } from '@solana/spl-token';
 
 // Import generated types
 import { Hub } from './types/hub';
@@ -167,8 +167,12 @@ export class LocalMoneySDK {
   }
 
   getOfferPDA(offerId: number): [PublicKey, number] {
+    // Convert to bytes matching Rust u64 little-endian format
+    const offerIdBuffer = Buffer.alloc(8);
+    offerIdBuffer.writeBigUInt64LE(BigInt(offerId), 0);
+    
     return PublicKey.findProgramAddressSync(
-      [Buffer.from('offer'), Buffer.from(offerId.toString().padStart(8, '0'))],
+      [Buffer.from('offer'), offerIdBuffer],
       this.programIds.offer
     );
   }
@@ -181,26 +185,50 @@ export class LocalMoneySDK {
   }
 
   getTradePDA(tradeId: number): [PublicKey, number] {
+    // Convert to bytes matching Rust u64 little-endian format
+    const tradeIdBuffer = Buffer.alloc(8);
+    tradeIdBuffer.writeBigUInt64LE(BigInt(tradeId), 0);
+    
     return PublicKey.findProgramAddressSync(
-      [Buffer.from('trade'), Buffer.from(tradeId.toString().padStart(8, '0'))],
+      [Buffer.from('trade'), tradeIdBuffer],
       this.programIds.trade
     );
   }
 
   getEscrowPDA(tradeId: number): [PublicKey, number] {
+    // Convert to bytes matching Rust u64 little-endian format
+    const tradeIdBuffer = Buffer.alloc(8);
+    tradeIdBuffer.writeBigUInt64LE(BigInt(tradeId), 0);
+    
     return PublicKey.findProgramAddressSync(
       [
         Buffer.from('trade'), 
         Buffer.from('escrow'), 
-        Buffer.from(tradeId.toString().padStart(8, '0'))
+        tradeIdBuffer
       ],
       this.programIds.trade
     );
   }
 
   getPriceFeedPDA(fiatCurrency: FiatCurrency): [PublicKey, number] {
+    // Convert enum to string representation 
+    let currencyStr: string;
+    if (typeof fiatCurrency === 'object' && fiatCurrency !== null) {
+      // Handle Anchor enum format like { usd: {} }
+      const keys = Object.keys(fiatCurrency);
+      if (keys.length > 0) {
+        currencyStr = keys[0].toUpperCase();
+      } else {
+        currencyStr = 'USD'; // fallback
+      }
+    } else if (typeof fiatCurrency === 'string') {
+      currencyStr = fiatCurrency.toUpperCase();
+    } else {
+      currencyStr = 'USD'; // fallback
+    }
+    
     return PublicKey.findProgramAddressSync(
-      [Buffer.from('price'), Buffer.from(fiatCurrency.toString())],
+      [Buffer.from('price'), Buffer.from(currencyStr)],
       this.programIds.price
     );
   }
@@ -241,10 +269,183 @@ export class LocalMoneySDK {
   }
 
   private handleError(error: any): never {
+    console.error('🔍 Detailed Error Analysis:');
+    console.error('Error type:', typeof error);
+    console.error('Error constructor:', error?.constructor?.name);
+    
     if (error instanceof AnchorError) {
+      console.error('📋 Anchor Error Details:');
+      console.error('  - Error Code:', error.error?.errorCode);
+      console.error('  - Error Message:', error.error?.errorMessage);
+      console.error('  - Program Error Code:', error.error?.errorCode?.code);
+      console.error('  - Program Error Number:', error.error?.errorCode?.number);
+      console.error('  - Origin:', error.error?.origin);
+      console.error('  - Compared Values:', error.error?.comparedValues);
+      console.error('  - Logs:', error.logs);
+      console.error('  - Raw Error:', JSON.stringify(error.error, null, 2));
       throw LocalMoneyError.fromAnchorError(error);
     }
+    
+    // Handle SendTransactionError (common simulation error)
+    if (error?.name === 'SendTransactionError' || error?.message?.includes('Transaction simulation failed')) {
+      console.error('📤 Transaction Simulation Error:');
+      console.error('  - Message:', error.message);
+      console.error('  - Logs:', error.logs || 'No logs available');
+      
+      // Try to extract more details from the error
+      if (error.getLogs) {
+        try {
+          const logs = error.getLogs();
+          console.error('  - Transaction Logs:', logs);
+        } catch (logError) {
+          console.error('  - Could not get logs:', logError instanceof Error ? logError.message : 'Unknown log error');
+        }
+      }
+    }
+    
+    // Handle RPC errors
+    if (error?.code || error?.data) {
+      console.error('🌐 RPC Error Details:');
+      console.error('  - Code:', error.code);
+      console.error('  - Message:', error.message);
+      console.error('  - Data:', error.data);
+    }
+    
+    // General error logging
+    console.error('❌ General Error Info:');
+    console.error('  - Message:', error?.message);
+    console.error('  - Stack:', error?.stack);
+    console.error('  - Full Error Object:', JSON.stringify(error, null, 2));
+    
     throw new LocalMoneyError(error.message || 'Unknown error occurred');
+  }
+
+  // Debug and utility methods
+  /**
+   * Creates a test token mint for local validator testing
+   */
+  async createTestTokenMint(): Promise<PublicKey> {
+    try {
+      const mintKeypair = Keypair.generate();
+      const authority = this.provider.wallet.publicKey;
+      
+      // Get minimum rent for mint account
+      const mintRent = await this.connection.getMinimumBalanceForRentExemption(82); // Mint account size
+      
+      const createMintTx = new Transaction().add(
+        SystemProgram.createAccount({
+          fromPubkey: authority,
+          newAccountPubkey: mintKeypair.publicKey,
+          lamports: mintRent,
+          space: 82,
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        createInitializeMintInstruction(
+          mintKeypair.publicKey,
+          6, // 6 decimals like USDC
+          authority,
+          authority,
+          TOKEN_PROGRAM_ID
+        )
+      );
+      
+      const signature = await this.provider.sendAndConfirm(createMintTx, [mintKeypair]);
+      console.log('🪙 Test token mint creation signature:', signature);
+      
+      return mintKeypair.publicKey;
+    } catch (error) {
+      console.error('❌ Failed to create test token mint:', error);
+      throw error;
+    }
+  }
+  /**
+   * Debug method to inspect account states before transactions
+   */
+  private async debugAccountStates(accounts: { [key: string]: PublicKey }): Promise<void> {
+    console.log('🔍 Account State Debug Information:');
+    
+    for (const [name, pubkey] of Object.entries(accounts)) {
+      try {
+        const accountInfo = await this.connection.getAccountInfo(pubkey);
+        console.log(`  📋 ${name} (${pubkey.toString()}):`);
+        
+        if (accountInfo) {
+          console.log(`    - Exists: ✅`);
+          console.log(`    - Owner: ${accountInfo.owner.toString()}`);
+          console.log(`    - Lamports: ${accountInfo.lamports}`);
+          console.log(`    - Data Length: ${accountInfo.data.length} bytes`);
+          console.log(`    - Executable: ${accountInfo.executable}`);
+          console.log(`    - Rent Epoch: ${accountInfo.rentEpoch}`);
+          
+          // Try to read discriminator if data exists
+          if (accountInfo.data.length >= 8) {
+            const discriminator = accountInfo.data.slice(0, 8);
+            console.log(`    - Discriminator: [${Array.from(discriminator).join(', ')}]`);
+          }
+        } else {
+          console.log(`    - Exists: ❌ (Account not found)`);
+        }
+        
+        // Check if it's a PDA
+        try {
+          const [expectedPDA, bump] = PublicKey.findProgramAddressSync([Buffer.from('test')], pubkey);
+          console.log(`    - Is PDA: Possibly (cannot determine without seeds)`);
+        } catch {
+          console.log(`    - Is PDA: No`);
+        }
+        
+      } catch (error) {
+        console.log(`    - Error checking account: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      console.log('');
+    }
+  }
+
+  /**
+   * Validate PDA derivation matches expected addresses
+   */
+  private async validatePDADerivations(userId: PublicKey, offerId: number): Promise<void> {
+    console.log('🔍 PDA Derivation Validation:');
+    
+    // Profile PDA
+    const [profilePDA, profileBump] = this.getProfilePDA(userId);
+    console.log(`  📋 Profile PDA:`);
+    console.log(`    - Derived: ${profilePDA.toString()}`);
+    console.log(`    - Bump: ${profileBump}`);
+    console.log(`    - Seeds: ['profile', userId]`);
+    
+    // Offer PDA
+    const [offerPDA, offerBump] = this.getOfferPDA(offerId);
+    console.log(`  🎯 Offer PDA:`);
+    console.log(`    - Derived: ${offerPDA.toString()}`);
+    console.log(`    - Bump: ${offerBump}`);
+    console.log(`    - Seeds: ['offer', offerId (u64 LE)]`);
+    console.log(`    - Offer ID bytes: [${Array.from(Buffer.alloc(8)).map((_, i) => {
+      const buf = Buffer.alloc(8);
+      buf.writeBigUInt64LE(BigInt(offerId), 0);
+      return buf[i];
+    }).join(', ')}]`);
+    
+    // Hub Config PDA
+    const [hubConfigPDA, hubBump] = this.getHubConfigPDA();
+    console.log(`  🏢 Hub Config PDA:`);
+    console.log(`    - Derived: ${hubConfigPDA.toString()}`);
+    console.log(`    - Bump: ${hubBump}`);
+    console.log(`    - Seeds: ['hub', 'config']`);
+    
+    // Price Config PDA
+    const [priceConfigPDA, priceBump] = this.getPriceConfigPDA();
+    console.log(`  💰 Price Config PDA:`);
+    console.log(`    - Derived: ${priceConfigPDA.toString()}`);
+    console.log(`    - Bump: ${priceBump}`);
+    console.log(`    - Seeds: ['price', 'config']`);
+    
+    // USD Price Feed PDA
+    const [usdPriceFeedPDA, usdPriceBump] = this.getPriceFeedPDA({ usd: {} } as any);
+    console.log(`  💵 USD Price Feed PDA:`);
+    console.log(`    - Derived: ${usdPriceFeedPDA.toString()}`);
+    console.log(`    - Bump: ${usdPriceBump}`);
+    console.log(`    - Seeds: ['price', 'USD']`);
   }
 
   // Hub methods
@@ -263,10 +464,83 @@ export class LocalMoneySDK {
       const authority = this.provider.wallet.publicKey;
       const [priceConfigPDA] = this.getPriceConfigPDA();
 
+      // Check if price config already exists
+      try {
+        const existingConfig = await this.connection.getAccountInfo(priceConfigPDA);
+        if (existingConfig) {
+          console.log('🔍 Price config already exists, checking authority...');
+          // Try to fetch the account data to verify authority
+          try {
+            const configData = await this.priceProgram.account.priceConfig.fetch(priceConfigPDA);
+            console.log('💡 Existing price config authority:', configData.authority.toString());
+            console.log('💡 Current authority:', authority.toString());
+            if (configData.authority.equals(authority)) {
+              console.log('✅ Price config exists with correct authority');
+              return 'price_config_exists'; // Return sentinel value
+            } else {
+              throw new Error(`Price config exists but with wrong authority. Expected: ${authority.toString()}, Found: ${configData.authority.toString()}`);
+            }
+          } catch (fetchError) {
+            console.log('⚠️ Could not fetch price config data:', fetchError);
+            throw fetchError;
+          }
+        }
+      } catch (accountError) {
+        console.log('🔍 Price config does not exist, proceeding with initialization...');
+      }
+
       const tx = await this.priceProgram.methods
         .initialize()
         .accountsPartial({
           priceConfig: priceConfigPDA,
+          authority: authority,
+          systemProgram: SystemProgram.programId,
+        } as any)
+        .rpc();
+
+      return tx;
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Creates/updates a price feed for a specific fiat currency
+   * @param fiatCurrency - The fiat currency to create price feed for
+   * @param pricePerToken - Price per token in smallest fiat unit (e.g., cents for USD)
+   * @param decimals - Token decimals for scaling
+   * @returns Transaction signature
+   */
+  async updatePriceFeed(
+    fiatCurrency: FiatCurrency, 
+    pricePerToken: number, 
+    decimals: number = 6
+  ): Promise<TransactionSignature> {
+    try {
+      await this.waitForProgramsInitialized();
+      
+      if (!this.priceProgram) {
+        throw new LocalMoneyError('Price program not initialized');
+      }
+
+      const authority = this.provider.wallet.publicKey;
+      const [priceConfigPDA] = this.getPriceConfigPDA();
+      const [priceFeedPDA] = this.getPriceFeedPDA(fiatCurrency);
+
+      // Debug parameter types
+      console.log('🐛 updatePriceFeed parameters:', {
+        fiatCurrency: typeof fiatCurrency,
+        pricePerToken: typeof pricePerToken,
+        decimals: typeof decimals,
+        pricePerTokenValue: pricePerToken,
+        decimalsValue: decimals
+      });
+
+      const tx = await this.priceProgram.methods
+        .updatePrice(fiatCurrency, new BN(pricePerToken), Number(decimals)) // Use BN for u64, regular number for u8
+        .accountsPartial({
+          priceConfig: priceConfigPDA,
+          priceFeed: priceFeedPDA,
           authority: authority,
           systemProgram: SystemProgram.programId,
         } as any)
@@ -293,32 +567,16 @@ export class LocalMoneySDK {
       const authority = this.provider.wallet.publicKey;
       const [hubConfigPDA] = this.getHubConfigPDA();
 
-      // Create initialization parameters with all required fields
+      // Create initialization parameters matching TypeScript interface (camelCase, simplified structure)
       const initParams = {
         profileProgram: this.programIds.profile,
         offerProgram: this.programIds.offer,
         tradeProgram: this.programIds.trade,
         priceProgram: this.programIds.price,
         treasury: authority, // Use authority as treasury for testing
-        localTokenMint: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), // USDC mint
-        jupiterProgram: new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'), // Jupiter program
-        chainFeeCollector: authority,
-        warchestAddress: authority,
-        burnFeePct: 100,    // 1%
-        chainFeePct: 50,    // 0.5%
-        warchestFeePct: 100, // 1%
-        conversionFeePct: 50, // 0.5%
-        maxSlippageBps: 500,  // 5%
-        minConversionAmount: new BN(1000000), // 1 USDC
-        maxConversionRoutes: 3,
-        feeRate: 250,       // 2.5%
-        burnRate: 100,      // 1%
-        warchestRate: 100,  // 1%
-        tradeLimitMin: new BN(100000),    // 0.1 USDC
-        tradeLimitMax: new BN(1000000000), // 1000 USDC
-        tradeExpirationTimer: new BN(86400), // 24 hours
-        tradeDisputeTimer: new BN(259200),   // 72 hours
-        arbitrationFeeRate: 500, // 5%
+        feeRate: 250,        // 2.5%
+        burnRate: 100,       // 1% 
+        warchestRate: 100,   // 1%
       };
 
       const tx = await this.hubProgram.methods
@@ -351,6 +609,14 @@ export class LocalMoneySDK {
       }
 
       const user = this.provider.wallet.publicKey;
+      
+      // Check if profile already exists
+      const existingProfile = await this.getProfile(user);
+      if (existingProfile) {
+        console.log('🔄 Profile already exists, skipping creation');
+        return 'profile_already_exists'; // Return a sentinel value
+      }
+
       const [profilePDA] = this.getProfilePDA(user);
 
       const tx = await this.profileProgram.methods
@@ -410,13 +676,36 @@ export class LocalMoneySDK {
       
       // Generate next offer ID (in real implementation, this would come from the hub)
       const offerId = Math.floor(Math.random() * 1000000); // Placeholder
-      const [offerPDA] = this.getOfferPDA(offerId);
+      const [offerPDA, offerBump] = this.getOfferPDA(offerId);
+      
+      console.log('🔍 Offer PDA Derivation Debug:');
+      console.log('  - Offer ID:', offerId);
+      console.log('  - Offer PDA:', offerPDA.toString());
+      console.log('  - Offer Bump:', offerBump);
+      
+      // Also validate that our PDA derivation matches what Anchor expects
+      const offerIdBuffer = Buffer.alloc(8);
+      offerIdBuffer.writeBigUInt64LE(BigInt(offerId), 0);
+      console.log('  - Offer ID Buffer:', Array.from(offerIdBuffer));
+      console.log('  - Seeds Used: ["offer", offerId_as_u64_le_bytes]');
+
+      // Transform parameters to match IDL structure (snake_case, BN for u64 types)
+      // NOTE: Use BN objects for u64 serialization
+      const idlParams = {
+        offer_id: new BN(offerId), // u64 needs BN for serialization
+        offer_type: params.offerType || { buy: {} },
+        fiat_currency: params.fiatCurrency || { usd: {} },
+        rate: new BN(typeof params.rate === 'number' ? params.rate : 50000), // u64 needs BN
+        min_amount: new BN(typeof params.minAmount === 'number' ? params.minAmount : (params.fiatAmount || 100)), // u64 needs BN
+        max_amount: new BN(typeof params.maxAmount === 'number' ? params.maxAmount : (params.fiatAmount || 1000)), // u64 needs BN
+        description: params.terms || params.description || null,
+      };
 
       // Try to include hub config as a remaining account in case it's needed
       const [hubConfigPDA] = this.getHubConfigPDA();
       
       const tx = await this.offerProgram!.methods
-        .createOffer(params)
+        .createOffer(idlParams)
         .accountsPartial({
           offer: offerPDA,
           userProfile: profilePDA,
@@ -830,19 +1119,125 @@ export class LocalMoneySDK {
       const offerId = Math.floor(Math.random() * 1000000);
       const [offerPDA] = this.getOfferPDA(offerId);
 
-      // Create a basic test offer
+      // Create a basic test offer - IMPORTANT: Use snake_case and regular numbers for u64 fields
       const createOfferParams = {
-        offerId: new BN(offerId),
-        offerType: { buy: {} },
-        fiatCurrency: { usd: {} },
-        rate: new BN(50000),
-        minAmount: new BN(100),
-        maxAmount: new BN(1000),
+        offer_id: offerId,
+        offer_type: { buy: {} },
+        fiat_currency: { usd: {} },
+        rate: 50000,
+        min_amount: 100,
+        max_amount: 1000,
         description: 'Test offer for E2E flow'
       };
 
+      // Check if profile exists first
+      console.log('🔍 Checking profile exists for user:', user.toString());
+      const profile = await this.profileProgram!.account.profile.fetchNullable(profilePDA);
+      console.log('👤 Profile status:', profile ? 'Found' : 'Not found');
+      
+      if (!profile) {
+        throw new LocalMoneyError('Profile not found for user. Create profile first.');
+      }
+
       // Try to include hub config as a remaining account in case it's needed
       const [hubConfigPDA] = this.getHubConfigPDA();
+      
+      console.log('📋 Offer creation accounts:');
+      console.log('  - Offer PDA:', offerPDA.toString());
+      console.log('  - User Profile PDA:', profilePDA.toString());
+      console.log('  - Token Mint:', tokenMint.toString());
+      console.log('  - Owner:', user.toString());
+      console.log('  - Profile Program:', this.programIds.profile.toString());
+      
+      console.log('🎯 Attempting to create offer with ID:', offerId);
+      
+      // Add comprehensive debugging before simulation
+      await this.validatePDADerivations(user, offerId);
+      
+      const debugAccounts = {
+        'Offer PDA': offerPDA,
+        'User Profile PDA': profilePDA,
+        'Token Mint': tokenMint,
+        'Owner': user,
+        'Profile Program': this.programIds.profile,
+        'Hub Config PDA': hubConfigPDA,
+        'System Program': SystemProgram.programId,
+        'Token Program': TOKEN_PROGRAM_ID
+      };
+      
+      await this.debugAccountStates(debugAccounts);
+      
+      // Verify CreateOfferParams structure
+      console.log('📋 CreateOfferParams validation:');
+      console.log('  - offer_id type:', typeof createOfferParams.offer_id, createOfferParams.offer_id);
+      console.log('  - offer_type:', JSON.stringify(createOfferParams.offer_type));
+      console.log('  - fiat_currency:', JSON.stringify(createOfferParams.fiat_currency));
+      console.log('  - rate type:', typeof createOfferParams.rate, createOfferParams.rate);
+      console.log('  - min_amount type:', typeof createOfferParams.min_amount, createOfferParams.min_amount);
+      console.log('  - max_amount type:', typeof createOfferParams.max_amount, createOfferParams.max_amount);
+      console.log('  - description:', createOfferParams.description);
+      
+      // First simulate to get better error details
+      console.log('🔬 Starting transaction simulation...');
+      try {
+        const simulation = await this.offerProgram!.methods
+          .createOffer(createOfferParams)
+          .accountsPartial({
+            offer: offerPDA,
+            userProfile: profilePDA,
+            tokenMint: tokenMint,
+            owner: user,
+            profileProgram: this.programIds.profile,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          } as any)
+          .remainingAccounts([
+            { pubkey: hubConfigPDA, isSigner: false, isWritable: false }
+          ])
+          .simulate();
+        console.log('✅ Simulation successful');
+        console.log('📊 Simulation result:', simulation);
+      } catch (simError) {
+        console.error('❌ Simulation failed - analyzing error...');
+        
+        // Enhanced simulation error analysis
+        if (simError && typeof simError === 'object') {
+          console.error('🔍 Simulation Error Deep Analysis:');
+          console.error('  - Error Type:', simError.constructor?.name);
+          console.error('  - Has message:', 'message' in simError);
+          console.error('  - Has logs:', 'logs' in simError);
+          console.error('  - Has code:', 'code' in simError);
+          
+          // Check for specific error properties
+          if ('simulationResponse' in simError) {
+            console.error('  - Simulation Response:', JSON.stringify(simError.simulationResponse, null, 2));
+          }
+          
+          if ('transactionMessage' in simError) {
+            console.error('  - Transaction Message:', simError.transactionMessage);
+          }
+          
+          // Try to extract program logs
+          if ('logs' in simError && Array.isArray(simError.logs)) {
+            console.error('🪵 Program Logs:');
+            simError.logs.forEach((log, index) => {
+              console.error(`  ${index}: ${log}`);
+            });
+          }
+          
+          // Check for Anchor-specific error details
+          if ('error' in simError) {
+            console.error('🔗 Anchor Error Details:', JSON.stringify(simError.error, null, 2));
+          }
+          
+          // Log the complete error object structure
+          console.error('📋 Complete Error Object Keys:', Object.keys(simError));
+          console.error('📋 Complete Error Object:', JSON.stringify(simError, null, 2));
+        }
+        
+        // Don't re-throw here, let the handleError method handle it with better logging
+        this.handleError(simError);
+      }
       
       const tx = await this.offerProgram!.methods
         .createOffer(createOfferParams)
@@ -862,6 +1257,13 @@ export class LocalMoneySDK {
 
       return { offerId, signature: tx };
     } catch (error) {
+      console.error('❌ Offer creation failed with error:', error);
+      if (error instanceof Error) {
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+      }
+      // Log error details in more depth
+      console.error('Full error object:', JSON.stringify(error, null, 2));
       this.handleError(error);
     }
   }
@@ -883,7 +1285,13 @@ export class LocalMoneySDK {
   }> {
     try {
       const signatures: TransactionSignature[] = [];
-      const tokenMint = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'); // USDC mint
+      
+      // Create a test token mint for local testing instead of using USDC
+      console.log('🪙 Creating test token mint for local validator...');
+      const testTokenMint = await this.createTestTokenMint();
+      console.log('✅ Test token mint created:', testTokenMint.toString());
+      
+      const tokenMint = testTokenMint;
       
       // 0. Initialize hub if needed
       try {
@@ -925,6 +1333,22 @@ export class LocalMoneySDK {
           throw error;
         } 
       }
+
+      // 0.2. Initialize USD price feed
+      try {
+        console.log('💵 Creating USD price feed...');
+        const usdPriceFeedSig = await this.updatePriceFeed({ usd: {} } as any, Number(100000), Number(6)); // $1.00 = 100000 cents
+        signatures.push(usdPriceFeedSig);
+        console.log('✅ USD price feed created successfully');
+      } catch (error) {
+        // Price feed might already exist
+        if (error instanceof Error && (error.message.includes('already in use') || error.message.includes('already initialized'))) {
+          console.log('ℹ️ USD price feed already exists, continuing...');
+        } else {
+          console.warn('⚠️ USD price feed creation failed:', error);
+          throw error;
+        } 
+      }
       
       // 1. Create test offer if not provided
       let offerId = params.offerId;
@@ -940,10 +1364,13 @@ export class LocalMoneySDK {
       console.log('🤝 Creating trade request...');
       const tradeId = Math.floor(Math.random() * 1000000);
       const createTradeParams: CreateTradeParams = {
-        tradeId: new BN(tradeId),
-        offerId: new BN(offerId),
-        amount: new BN(params.amount),
-        buyerContact: params.buyerContact,
+        trade_id: tradeId,
+        offer_id: offerId,
+        amount: params.amount,
+        locked_price: 50000, // Same as offer rate for simplicity
+        expiry_duration: 86400, // 24 hours in seconds
+        arbitrator: PublicKey.default, // No arbitrator for now
+        buyer_contact: params.buyerContact,
       } as any;
 
       const createTradeSig = await this.createTrade(createTradeParams);

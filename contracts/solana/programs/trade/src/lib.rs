@@ -1,25 +1,23 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{
-    Mint, TokenAccount, TokenInterface, TransferChecked, transfer_checked
-};
-use anchor_spl::associated_token::AssociatedToken;
 use anchor_lang::solana_program;
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token_interface::{
+    transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
+};
 use std::collections::HashMap;
 
-
-declare_id!("HjzdQZjxWcs514U2qiqecXuEGeMA2FnX9vAdDZPHUiwQ");
+declare_id!("5osZqhJj2SYGDHtUre2wpWiCFoBZQFmQ4x5b4Ln2TQQM");
 
 #[program]
 pub mod trade {
     use super::*;
 
-    pub fn create_trade(
-        ctx: Context<CreateTrade>,
-        params: CreateTradeParams
-    ) -> Result<()> {
+    pub fn create_trade(ctx: Context<CreateTrade>, params: CreateTradeParams) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
         let clock = Clock::get()?;
-        
+
         // COMPREHENSIVE VALIDATION: Validate trade amount with USD conversion
         validate_trade_amount_with_usd_conversion(
             params.amount,
@@ -29,34 +27,37 @@ pub mod trade {
             &ctx.accounts.hub_config,
             &ctx.accounts.price_program.to_account_info(),
         )?;
-        
+
         // SECURITY: Validate account security
-        validate_account_security(&ctx.accounts.buyer.key(), &Trade {
-            id: params.trade_id,
-            offer_id: params.offer_id,
-            buyer: ctx.accounts.buyer.key(),
-            seller: ctx.accounts.offer.owner,
-            arbitrator: params.arbitrator,
-            token_mint: ctx.accounts.token_mint.key(),
-            amount: params.amount,
-            fiat_currency: ctx.accounts.offer.fiat_currency.clone(),
-            locked_price: params.locked_price,
-            state: TradeState::RequestCreated,
-            created_at: clock.unix_timestamp as u64,
-            expires_at: clock.unix_timestamp as u64 + params.expiry_duration,
-            dispute_window_at: None,
-            state_history: vec![],
-            buyer_contact: Some(params.buyer_contact.clone()),
-            seller_contact: None,
-            bump: ctx.bumps.trade,
-        })?;
-        
+        validate_account_security(
+            &ctx.accounts.buyer.key(),
+            &Trade {
+                id: params.trade_id,
+                offer_id: params.offer_id,
+                buyer: ctx.accounts.buyer.key(),
+                seller: ctx.accounts.offer.owner,
+                arbitrator: params.arbitrator,
+                token_mint: ctx.accounts.token_mint.key(),
+                amount: params.amount,
+                fiat_currency: ctx.accounts.offer.fiat_currency.clone(),
+                locked_price: params.locked_price,
+                state: TradeState::RequestCreated,
+                created_at: clock.unix_timestamp as u64,
+                expires_at: clock.unix_timestamp as u64 + params.expiry_duration,
+                dispute_window_at: None,
+                state_history: vec![],
+                buyer_contact: Some(params.buyer_contact.clone()),
+                seller_contact: None,
+                bump: ctx.bumps.trade,
+            },
+        )?;
+
         // AUTHORIZATION: Ensure buyer is not the offer owner
         require!(
             ctx.accounts.buyer.key() != ctx.accounts.offer.owner,
             ErrorCode::SelfTradeNotAllowed
         );
-        
+
         trade.id = params.trade_id;
         trade.offer_id = params.offer_id;
         trade.buyer = ctx.accounts.buyer.key();
@@ -97,10 +98,7 @@ pub mod trade {
         Ok(())
     }
 
-    pub fn accept_request(
-        ctx: Context<AcceptRequest>,
-        seller_contact: String,
-    ) -> Result<()> {
+    pub fn accept_request(ctx: Context<AcceptRequest>, seller_contact: String) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
         let clock = Clock::get()?;
 
@@ -125,10 +123,7 @@ pub mod trade {
             !seller_contact.trim().is_empty(),
             ErrorCode::InvalidParameter
         );
-        require!(
-            seller_contact.len() <= 200,
-            ErrorCode::InvalidParameter
-        );
+        require!(seller_contact.len() <= 200, ErrorCode::InvalidParameter);
 
         trade.seller_contact = Some(seller_contact);
         trade.state = TradeState::RequestAccepted;
@@ -176,7 +171,7 @@ pub mod trade {
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        
+
         transfer_checked(cpi_ctx, trade.amount, ctx.accounts.token_mint.decimals)?;
 
         trade.state = TradeState::EscrowFunded;
@@ -212,7 +207,8 @@ pub mod trade {
         // CONFIGURABLE TIMER: Set dispute window based on hub config
         let hub_config = &ctx.accounts.hub_config;
         trade.state = TradeState::FiatDeposited;
-        trade.dispute_window_at = Some(clock.unix_timestamp as u64 + hub_config.trade_dispute_timer);
+        trade.dispute_window_at =
+            Some(clock.unix_timestamp as u64 + hub_config.trade_dispute_timer);
         trade.state_history.push(TradeStateItem {
             actor: ctx.accounts.buyer.key(),
             state: TradeState::FiatDeposited,
@@ -257,21 +253,17 @@ pub mod trade {
             Some(&ctx.accounts.offer),
             FeeCalculationMethod::Dynamic,
         )?);
-        
+
         // Validate calculated fees
         fee_info.validate()?;
-        
+
         let net_amount = trade_amount
             .checked_sub(fee_info.total_fees())
             .ok_or(ErrorCode::ArithmeticError)?;
 
         // SIGNER SEEDS: Prepare trade authority seeds
         let trade_id_bytes = trade_id.to_le_bytes();
-        let trade_seeds = &[
-            b"trade".as_ref(),
-            trade_id_bytes.as_ref(),
-            &[trade_bump],
-        ];
+        let trade_seeds = &[b"trade".as_ref(), trade_id_bytes.as_ref(), &[trade_bump]];
         let signer_seeds = &[&trade_seeds[..]];
 
         // TRANSFER NET AMOUNT: Send net amount to buyer
@@ -283,15 +275,11 @@ pub mod trade {
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        
+
         transfer_checked(cpi_ctx, net_amount, token_decimals)?;
 
         // MULTI-DESTINATION FEE DISTRIBUTION: Execute comprehensive fee distribution
-        execute_multi_destination_fee_distribution(
-            &ctx,
-            &fee_info,
-            signer_seeds,
-        )?;
+        execute_multi_destination_fee_distribution(&ctx, &fee_info, signer_seeds)?;
 
         // UPDATE TRADE STATE: Mark as released
         let trade = &mut ctx.accounts.trade;
@@ -304,7 +292,7 @@ pub mod trade {
 
         // PROFILE UPDATES: Update both buyer and seller profiles
         let cpi_program = ctx.accounts.profile_program.to_account_info();
-        
+
         // Update buyer profile
         let cpi_accounts = profile::cpi::accounts::UpdateTradeStats {
             profile: ctx.accounts.buyer_profile.to_account_info(),
@@ -321,7 +309,6 @@ pub mod trade {
 
         Ok(())
     }
-
 
     pub fn cancel_request(ctx: Context<CancelRequest>) -> Result<()> {
         let trade = &mut ctx.accounts.trade;
@@ -352,7 +339,7 @@ pub mod trade {
         fiat_currency: FiatCurrency,
     ) -> Result<()> {
         let clock = Clock::get()?;
-        
+
         // Validate admin authority
         require!(
             ctx.accounts.hub_config.authority == ctx.accounts.authority.key(),
@@ -408,8 +395,12 @@ pub mod trade {
         // Remove arbitrator from pool
         let arbitrator_pool = &mut ctx.accounts.arbitrator_pool;
         let arbitrator_pubkey = ctx.accounts.arbitrator.key();
-        
-        if let Some(pos) = arbitrator_pool.arbitrators.iter().position(|&x| x == arbitrator_pubkey) {
+
+        if let Some(pos) = arbitrator_pool
+            .arbitrators
+            .iter()
+            .position(|&x| x == arbitrator_pubkey)
+        {
             arbitrator_pool.arbitrators.remove(pos);
         }
 
@@ -421,10 +412,7 @@ pub mod trade {
     }
 
     // Simplified Arbitrator Assignment Functions (VRF removed due to dependency conflicts)
-    pub fn assign_arbitrator(
-        ctx: Context<AssignArbitrator>,
-        trade_id: u64,
-    ) -> Result<()> {
+    pub fn assign_arbitrator(ctx: Context<AssignArbitrator>, trade_id: u64) -> Result<()> {
         // Validate trade exists and is in correct state
         let trade = &mut ctx.accounts.trade;
         require!(
@@ -446,17 +434,13 @@ pub mod trade {
         let random_index = pseudo_random % 100; // 0-99 range
 
         // Select arbitrator using CosmWasm algorithm
-        let selected_arbitrator = select_arbitrator_from_pool(
-            arbitrator_pool,
-            random_index,
-        )?;
+        let selected_arbitrator = select_arbitrator_from_pool(arbitrator_pool, random_index)?;
 
         // Update trade with selected arbitrator
         trade.arbitrator = selected_arbitrator;
 
         Ok(())
     }
-
 
     // Dispute Initiation and Resolution Functions
     pub fn initiate_dispute(
@@ -481,10 +465,11 @@ pub mod trade {
         );
 
         // CRITICAL: Respect dispute timing window
-        let dispute_window_at = trade.dispute_window_at
+        let dispute_window_at = trade
+            .dispute_window_at
             .ok_or(ErrorCode::DisputeWindowNotOpen)?;
         let current_time = clock.unix_timestamp as u64;
-        
+
         require!(
             current_time >= dispute_window_at,
             ErrorCode::PrematureDisputeRequest
@@ -502,7 +487,7 @@ pub mod trade {
 
         // Update profile stats via CPI
         let cpi_program = ctx.accounts.profile_program.to_account_info();
-        
+
         // Update both buyer and seller profiles for dispute initiation
         let cpi_accounts = profile::cpi::accounts::UpdateTradeStats {
             profile: ctx.accounts.buyer_profile.to_account_info(),
@@ -521,16 +506,13 @@ pub mod trade {
 
     /// ENHANCED SETTLE DISPUTE: Enhanced arbitration with multi-destination fee distribution
     /// Matches CosmWasm pattern for complex fee distribution and LOCAL token burn
-    pub fn settle_dispute(
-        ctx: Context<SettleDispute>,
-        winner: Pubkey,
-    ) -> Result<()> {
+    pub fn settle_dispute(ctx: Context<SettleDispute>, winner: Pubkey) -> Result<()> {
         let clock = Clock::get()?;
 
         // COMPREHENSIVE VALIDATION: State and authorization checks
         {
             let trade = &ctx.accounts.trade;
-            
+
             // SECURITY: Only arbitrator can settle
             require!(
                 trade.arbitrator == ctx.accounts.arbitrator.key(),
@@ -555,7 +537,8 @@ pub mod trade {
                 ErrorCode::InvalidTreasuryAddress
             );
             require!(
-                ctx.accounts.chain_fee_collector.key() == ctx.accounts.hub_config.chain_fee_collector,
+                ctx.accounts.chain_fee_collector.key()
+                    == ctx.accounts.hub_config.chain_fee_collector,
                 ErrorCode::InvalidChainFeeCollector
             );
             require!(
@@ -599,11 +582,7 @@ pub mod trade {
 
         // SIGNER SEEDS: Prepare for CPI calls
         let trade_id_bytes = trade_id.to_le_bytes();
-        let trade_seeds = &[
-            b"trade".as_ref(),
-            trade_id_bytes.as_ref(),
-            &[trade_bump],
-        ];
+        let trade_seeds = &[b"trade".as_ref(), trade_id_bytes.as_ref(), &[trade_bump]];
         let signer_seeds = &[&trade_seeds[..]];
 
         // Execute transfers
@@ -644,7 +623,7 @@ pub mod trade {
         } else {
             TradeState::SettledForTaker
         };
-        
+
         let trade = &mut ctx.accounts.trade;
         trade.state = new_state.clone();
         trade.state_history.push(TradeStateItem {
@@ -659,7 +638,7 @@ pub mod trade {
 
         // PROFILE UPDATES: Update both profiles via CPI
         let cpi_program = ctx.accounts.profile_program.to_account_info();
-        
+
         // Update buyer profile
         let cpi_accounts = profile::cpi::accounts::UpdateTradeStats {
             profile: ctx.accounts.buyer_profile.to_account_info(),
@@ -677,7 +656,6 @@ pub mod trade {
         Ok(())
     }
 
-
     /// Automatic refund mechanism for expired trades
     pub fn automatic_refund(ctx: Context<AutomaticRefund>) -> Result<()> {
         let clock = Clock::get()?;
@@ -688,15 +666,15 @@ pub mod trade {
         let trade_amount;
         let trade_bump;
         let trade_account_info = ctx.accounts.trade.to_account_info();
-        
+
         // Scope for validation with mutable borrow
         {
             let trade = &mut ctx.accounts.trade;
-            
+
             // COMPREHENSIVE VALIDATION: Execute automatic refund validation
             execute_automatic_refund(trade, current_timestamp, &ctx.accounts.caller.key())?;
 
-            // ADVANCED STATE VALIDATION: Validate state transition to refunded  
+            // ADVANCED STATE VALIDATION: Validate state transition to refunded
             validate_state_transition(
                 &trade.state,
                 &TradeState::EscrowRefunded,
@@ -713,11 +691,7 @@ pub mod trade {
 
         // Prepare signer seeds for trade authority
         let trade_id_bytes = trade_id.to_le_bytes();
-        let trade_seeds = &[
-            b"trade".as_ref(),
-            trade_id_bytes.as_ref(),
-            &[trade_bump],
-        ];
+        let trade_seeds = &[b"trade".as_ref(), trade_id_bytes.as_ref(), &[trade_bump]];
         let signer_seeds = &[&trade_seeds[..]];
 
         // Transfer funds back to seller
@@ -729,7 +703,7 @@ pub mod trade {
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        
+
         transfer_checked(cpi_ctx, trade_amount, ctx.accounts.token_mint.decimals)?;
 
         // Update trade state with new mutable borrow
@@ -951,7 +925,7 @@ pub struct ReleaseEscrow<'info> {
 
     /// CHECK: Treasury wallet - validated against hub_config
     pub treasury: UncheckedAccount<'info>,
-    /// CHECK: Chain fee collector - validated against hub_config  
+    /// CHECK: Chain fee collector - validated against hub_config
     pub chain_fee_collector: UncheckedAccount<'info>,
     /// CHECK: Warchest address - validated against hub_config
     pub warchest: UncheckedAccount<'info>,
@@ -1002,7 +976,7 @@ pub struct RegisterArbitrator<'info> {
             FiatCurrency::Aud => b"AUD",
             FiatCurrency::Jpy => b"JPY",
             FiatCurrency::Brl => b"BRL",
-            FiatCurrency::Mxn => b"MXN", 
+            FiatCurrency::Mxn => b"MXN",
             FiatCurrency::Ars => b"ARS",
             FiatCurrency::Clp => b"CLP",
             FiatCurrency::Cop => b"COP",
@@ -1294,7 +1268,7 @@ pub struct SettleDispute<'info> {
     pub winner: UncheckedAccount<'info>,
     /// CHECK: Treasury wallet - validated against hub_config
     pub treasury: UncheckedAccount<'info>,
-    /// CHECK: Chain fee collector - validated against hub_config  
+    /// CHECK: Chain fee collector - validated against hub_config
     pub chain_fee_collector: UncheckedAccount<'info>,
     /// CHECK: Warchest address - validated against hub_config
     pub warchest: UncheckedAccount<'info>,
@@ -1341,7 +1315,7 @@ pub struct AutomaticRefund<'info> {
 
     /// CHECK: Seller wallet - validated in function logic
     pub seller: UncheckedAccount<'info>,
-    
+
     /// CHECK: Anyone can trigger automatic refund for expired trades
     pub caller: Signer<'info>,
 
@@ -1365,16 +1339,16 @@ pub struct RegisterConversionRoute<'info> {
         bump
     )]
     pub conversion_route: Account<'info, TokenConversionRoute>,
-    
+
     #[account(
         seeds = [b"hub".as_ref(), b"config".as_ref()],
         bump
     )]
     pub hub_config: Account<'info, hub::HubConfig>,
-    
+
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -1392,7 +1366,7 @@ pub struct InitializeConversion<'info> {
         bump
     )]
     pub conversion_state: Account<'info, TokenConversionState>,
-    
+
     #[account(
         seeds = [
             b"conversion_route".as_ref(),
@@ -1402,16 +1376,16 @@ pub struct InitializeConversion<'info> {
         bump = conversion_route.bump
     )]
     pub conversion_route: Account<'info, TokenConversionRoute>,
-    
+
     #[account(
         seeds = [b"hub".as_ref(), b"config".as_ref()],
         bump
     )]
     pub hub_config: Account<'info, hub::HubConfig>,
-    
+
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     pub system_program: Program<'info, System>,
 }
 
@@ -1426,7 +1400,7 @@ pub struct ExecuteConversionStep<'info> {
         bump = conversion_state.bump
     )]
     pub conversion_state: Account<'info, TokenConversionState>,
-    
+
     #[account(
         mut,
         seeds = [
@@ -1437,13 +1411,13 @@ pub struct ExecuteConversionStep<'info> {
         bump = conversion_route.bump
     )]
     pub conversion_route: Account<'info, TokenConversionRoute>,
-    
+
     #[account(
         seeds = [b"trade".as_ref(), conversion_state.trade_id.to_le_bytes().as_ref()],
         bump
     )]
     pub trade: Account<'info, Trade>,
-    
+
     #[account(
         mut,
         seeds = [b"trade".as_ref(), b"escrow".as_ref(), conversion_state.trade_id.to_le_bytes().as_ref()],
@@ -1453,7 +1427,7 @@ pub struct ExecuteConversionStep<'info> {
         token::token_program = token_program
     )]
     pub escrow_token_account: InterfaceAccount<'info, TokenAccount>,
-    
+
     #[account(
         mut,
         associated_token::mint = target_token_mint,
@@ -1461,16 +1435,16 @@ pub struct ExecuteConversionStep<'info> {
         associated_token::token_program = token_program,
     )]
     pub trade_target_token_account: InterfaceAccount<'info, TokenAccount>,
-    
+
     pub source_token_mint: InterfaceAccount<'info, Mint>,
     pub target_token_mint: InterfaceAccount<'info, Mint>,
-    
+
     /// CHECK: Jupiter program for DEX operations
     pub jupiter_program: UncheckedAccount<'info>,
-    
+
     /// CHECK: Pool address for current conversion step
     pub pool_address: UncheckedAccount<'info>,
-    
+
     pub authority: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }
@@ -1542,75 +1516,75 @@ pub struct CreateTradeParams {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct FeeInfo {
     // MULTI-DESTINATION FEES: Core fee components
-    pub burn_amount: u64,             // Amount to burn as LOCAL tokens
-    pub chain_amount: u64,            // Amount for chain fee sharing
-    pub warchest_amount: u64,         // Amount for warchest/treasury
-    
+    pub burn_amount: u64,     // Amount to burn as LOCAL tokens
+    pub chain_amount: u64,    // Amount for chain fee sharing
+    pub warchest_amount: u64, // Amount for warchest/treasury
+
     // TOKEN CONVERSION FEES: Additional fees for non-LOCAL tokens
-    pub conversion_fee: u64,          // Fee for DEX conversion operations
-    pub slippage_reserve: u64,        // Reserve for slippage protection
-    
+    pub conversion_fee: u64,   // Fee for DEX conversion operations
+    pub slippage_reserve: u64, // Reserve for slippage protection
+
     // METADATA: Fee calculation context
-    pub original_amount: u64,         // Original trade amount before fees
-    pub requires_conversion: bool,    // Whether token needs to be converted
+    pub original_amount: u64,      // Original trade amount before fees
+    pub requires_conversion: bool, // Whether token needs to be converted
     pub fee_calculation_method: FeeCalculationMethod, // How fees were calculated
 }
 
 impl FeeInfo {
     /// Total fees across all destinations
     pub fn total_fees(&self) -> u64 {
-        self.burn_amount 
+        self.burn_amount
             .saturating_add(self.chain_amount)
             .saturating_add(self.warchest_amount)
             .saturating_add(self.conversion_fee)
             .saturating_add(self.slippage_reserve)
     }
-    
+
     /// Protocol fees only (excluding conversion fees)
     pub fn protocol_fees(&self) -> u64 {
-        self.burn_amount 
+        self.burn_amount
             .saturating_add(self.chain_amount)
             .saturating_add(self.warchest_amount)
     }
-    
+
     /// Net amount after all fees
     pub fn net_amount(&self) -> u64 {
         self.original_amount.saturating_sub(self.total_fees())
     }
-    
+
     /// Validate fee amounts don't exceed original amount
     pub fn validate(&self) -> Result<()> {
         require!(
             self.total_fees() <= self.original_amount,
             ErrorCode::ExcessiveFees
         );
-        
+
         // Individual fee validation (max 10% each component)
         let max_individual_fee = self.original_amount / 10;
-        
+
         require!(
             self.burn_amount <= max_individual_fee,
             ErrorCode::ExcessiveBurnFee
         );
-        
+
         require!(
             self.chain_amount <= max_individual_fee,
             ErrorCode::ExcessiveChainFee
         );
-        
+
         require!(
             self.warchest_amount <= max_individual_fee,
             ErrorCode::ExcessiveWarchestFee
         );
-        
+
         require!(
             self.conversion_fee <= max_individual_fee,
             ErrorCode::ExcessiveConversionFee
         );
-        
+
         Ok(())
     }
-    
+
     /// Create new FeeInfo with validation
     pub fn new(
         original_amount: u64,
@@ -1632,7 +1606,7 @@ impl FeeInfo {
             requires_conversion,
             fee_calculation_method,
         };
-        
+
         fee_info.validate()?;
         Ok(fee_info)
     }
@@ -1642,39 +1616,39 @@ impl FeeInfo {
 /// Includes complex fee distribution matching CosmWasm patterns
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct ArbitrationSettlementFees {
-    pub winner_amount: u64,           // Amount distributed to dispute winner
-    pub arbitrator_fee: u64,          // Fee paid to arbitrator
-    pub protocol_fee: u64,            // Protocol fees (burn + chain + warchest)
-    
+    pub winner_amount: u64,  // Amount distributed to dispute winner
+    pub arbitrator_fee: u64, // Fee paid to arbitrator
+    pub protocol_fee: u64,   // Protocol fees (burn + chain + warchest)
+
     // ADVANCED ARBITRATION: Additional fee components
-    pub conversion_fee: u64,          // Fee for token conversions during settlement
-    pub gas_compensation: u64,        // Compensation for transaction costs
-    pub penalty_fee: u64,             // Penalty fee for frivolous disputes
+    pub conversion_fee: u64,   // Fee for token conversions during settlement
+    pub gas_compensation: u64, // Compensation for transaction costs
+    pub penalty_fee: u64,      // Penalty fee for frivolous disputes
 }
 
 impl ArbitrationSettlementFees {
     pub fn total_distributed(&self) -> u64 {
-        self.winner_amount 
+        self.winner_amount
             .saturating_add(self.arbitrator_fee)
             .saturating_add(self.protocol_fee)
             .saturating_add(self.conversion_fee)
             .saturating_add(self.gas_compensation)
             .saturating_add(self.penalty_fee)
     }
-    
+
     /// Validate arbitration fees
     pub fn validate(&self, original_amount: u64) -> Result<()> {
         require!(
             self.total_distributed() <= original_amount,
             ErrorCode::ExcessiveArbitrationFees
         );
-        
+
         // Arbitrator fee should not exceed 10% of trade amount
         require!(
             self.arbitrator_fee <= original_amount / 10,
             ErrorCode::ExcessiveArbitratorFee
         );
-        
+
         Ok(())
     }
 }
@@ -1697,40 +1671,40 @@ pub enum FeeCalculationMethod {
 /// TOKEN CONVERSION: Information about token conversion requirements
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct ConversionInfo {
-    pub source_mint: Pubkey,          // Source token mint
-    pub requires_conversion: bool,     // Whether conversion is needed
+    pub source_mint: Pubkey,                   // Source token mint
+    pub requires_conversion: bool,             // Whether conversion is needed
     pub conversion_route: Vec<ConversionStep>, // DEX route for conversion
-    pub estimated_slippage: u16,      // Estimated slippage in basis points
-    pub min_output_amount: u64,       // Minimum expected output amount
+    pub estimated_slippage: u16,               // Estimated slippage in basis points
+    pub min_output_amount: u64,                // Minimum expected output amount
 }
 
 /// CONVERSION STEP: Individual step in token conversion route
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub struct ConversionStep {
-    pub dex_program: Pubkey,          // DEX program to use (e.g., Jupiter)
-    pub input_mint: Pubkey,           // Input token mint
-    pub output_mint: Pubkey,          // Output token mint
-    pub pool_address: Pubkey,         // Liquidity pool address
-    pub estimated_fee: u64,           // Estimated DEX fee
-    pub max_slippage_bps: u16,        // Maximum allowed slippage
+    pub dex_program: Pubkey,   // DEX program to use (e.g., Jupiter)
+    pub input_mint: Pubkey,    // Input token mint
+    pub output_mint: Pubkey,   // Output token mint
+    pub pool_address: Pubkey,  // Liquidity pool address
+    pub estimated_fee: u64,    // Estimated DEX fee
+    pub max_slippage_bps: u16, // Maximum allowed slippage
 }
 
 /// TOKEN CONVERSION ROUTE SYSTEM: Comprehensive routing for non-LOCAL tokens
 /// Matches CosmWasm pattern for DENOM_CONVERSION_ROUTE storage
 #[account]
 pub struct TokenConversionRoute {
-    pub source_mint: Pubkey,          // Source token that needs conversion
-    pub target_mint: Pubkey,          // Target token (usually LOCAL)
+    pub source_mint: Pubkey,              // Source token that needs conversion
+    pub target_mint: Pubkey,              // Target token (usually LOCAL)
     pub route_steps: Vec<ConversionStep>, // Sequential DEX operations
-    pub total_estimated_fee: u64,     // Sum of all step fees
-    pub max_total_slippage_bps: u16,  // Maximum total slippage allowed
-    pub route_priority: u8,           // Priority ranking (0 = highest)
-    pub is_active: bool,              // Whether route is currently active
-    pub created_at: i64,              // Route creation timestamp
-    pub last_updated: i64,            // Last update timestamp
-    pub success_count: u64,           // Number of successful conversions
-    pub failure_count: u64,           // Number of failed conversions
-    pub authority: Pubkey,            // Authority that can update route
+    pub total_estimated_fee: u64,         // Sum of all step fees
+    pub max_total_slippage_bps: u16,      // Maximum total slippage allowed
+    pub route_priority: u8,               // Priority ranking (0 = highest)
+    pub is_active: bool,                  // Whether route is currently active
+    pub created_at: i64,                  // Route creation timestamp
+    pub last_updated: i64,                // Last update timestamp
+    pub success_count: u64,               // Number of successful conversions
+    pub failure_count: u64,               // Number of failed conversions
+    pub authority: Pubkey,                // Authority that can update route
     pub bump: u8,
 }
 
@@ -1748,8 +1722,8 @@ impl TokenConversionRoute {
         8 +                           // success_count
         8 +                           // failure_count
         32 +                          // authority
-        1;                            // bump
-    
+        1; // bump
+
     /// Validate conversion route configuration
     pub fn validate(&self) -> Result<()> {
         // Ensure route has at least one step
@@ -1757,17 +1731,17 @@ impl TokenConversionRoute {
             !self.route_steps.is_empty(),
             ErrorCode::InvalidConversionRoute
         );
-        
+
         // Ensure route doesn't exceed maximum complexity
         require!(
             self.route_steps.len() <= 5,
             ErrorCode::ConversionRouteTooComplex
         );
-        
+
         // Validate step connectivity
         for i in 0..self.route_steps.len() {
             let step = &self.route_steps[i];
-            
+
             // First step input should match source_mint
             if i == 0 {
                 require!(
@@ -1775,7 +1749,7 @@ impl TokenConversionRoute {
                     ErrorCode::InvalidConversionRoute
                 );
             }
-            
+
             // Last step output should match target_mint
             if i == self.route_steps.len() - 1 {
                 require!(
@@ -1783,7 +1757,7 @@ impl TokenConversionRoute {
                     ErrorCode::InvalidConversionRoute
                 );
             }
-            
+
             // Sequential steps must connect
             if i > 0 {
                 require!(
@@ -1791,42 +1765,44 @@ impl TokenConversionRoute {
                     ErrorCode::InvalidConversionRoute
                 );
             }
-            
+
             // Validate slippage limits
             require!(
                 step.max_slippage_bps <= 1000, // Max 10% slippage per step
                 ErrorCode::SlippageExceeded
             );
         }
-        
+
         // Validate total slippage
         require!(
             self.max_total_slippage_bps <= 2000, // Max 20% total slippage
             ErrorCode::SlippageExceeded
         );
-        
+
         Ok(())
     }
-    
+
     /// Calculate route efficiency score
     pub fn efficiency_score(&self) -> u32 {
         if self.success_count + self.failure_count == 0 {
             return 5000; // Default score for new routes
         }
-        
+
         let success_rate = (self.success_count * 10000) / (self.success_count + self.failure_count);
         let complexity_penalty = (self.route_steps.len() as u64) * 500; // Penalty for complexity
         let slippage_penalty = (self.max_total_slippage_bps as u64) * 2; // Penalty for high slippage
-        
-        success_rate.saturating_sub(complexity_penalty).saturating_sub(slippage_penalty) as u32
+
+        success_rate
+            .saturating_sub(complexity_penalty)
+            .saturating_sub(slippage_penalty) as u32
     }
-    
+
     /// Update route statistics
     pub fn record_success(&mut self) {
         self.success_count = self.success_count.saturating_add(1);
         self.last_updated = Clock::get().unwrap().unix_timestamp;
     }
-    
+
     pub fn record_failure(&mut self) {
         self.failure_count = self.failure_count.saturating_add(1);
         self.last_updated = Clock::get().unwrap().unix_timestamp;
@@ -1837,18 +1813,18 @@ impl TokenConversionRoute {
 /// Matches CosmWasm DENOM_CONVERSION_STEP pattern
 #[account]
 pub struct TokenConversionState {
-    pub trade_id: u64,                // Associated trade ID
-    pub source_mint: Pubkey,          // Source token being converted
-    pub target_mint: Pubkey,          // Target token (LOCAL)
-    pub conversion_amount: u64,       // Amount being converted
-    pub current_step: u8,             // Current step in route
-    pub route_address: Pubkey,        // Address of conversion route being used
-    pub step_start_balance: u64,      // Balance before current step
-    pub total_fees_paid: u64,         // Total fees paid so far
-    pub slippage_experienced: u16,    // Actual slippage experienced (bps)
+    pub trade_id: u64,                       // Associated trade ID
+    pub source_mint: Pubkey,                 // Source token being converted
+    pub target_mint: Pubkey,                 // Target token (LOCAL)
+    pub conversion_amount: u64,              // Amount being converted
+    pub current_step: u8,                    // Current step in route
+    pub route_address: Pubkey,               // Address of conversion route being used
+    pub step_start_balance: u64,             // Balance before current step
+    pub total_fees_paid: u64,                // Total fees paid so far
+    pub slippage_experienced: u16,           // Actual slippage experienced (bps)
     pub conversion_status: ConversionStatus, // Current status
-    pub started_at: i64,              // Conversion start time
-    pub authority: Pubkey,            // Trade account authority
+    pub started_at: i64,                     // Conversion start time
+    pub authority: Pubkey,                   // Trade account authority
     pub bump: u8,
 }
 
@@ -1866,17 +1842,17 @@ impl TokenConversionState {
         1 +                           // conversion_status
         8 +                           // started_at
         32 +                          // authority
-        1;                            // bump
+        1; // bump
 }
 
 /// CONVERSION STATUS: Track conversion progress
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
 pub enum ConversionStatus {
-    Pending,                          // Conversion not started
-    InProgress,                       // Conversion in progress
-    Completed,                        // Conversion completed successfully
-    Failed,                          // Conversion failed
-    PartiallyCompleted,              // Some steps completed, others failed
+    Pending,            // Conversion not started
+    InProgress,         // Conversion in progress
+    Completed,          // Conversion completed successfully
+    Failed,             // Conversion failed
+    PartiallyCompleted, // Some steps completed, others failed
 }
 
 /// TOKEN CONVERSION FUNCTIONS: Core conversion logic
@@ -1892,7 +1868,7 @@ pub fn register_token_conversion_route(
 ) -> Result<()> {
     let conversion_route = &mut ctx.accounts.conversion_route;
     let clock = Clock::get()?;
-    
+
     // Initialize route
     conversion_route.source_mint = source_mint;
     conversion_route.target_mint = target_mint;
@@ -1906,16 +1882,17 @@ pub fn register_token_conversion_route(
     conversion_route.failure_count = 0;
     conversion_route.authority = ctx.accounts.authority.key();
     conversion_route.bump = ctx.bumps.conversion_route;
-    
+
     // Calculate total estimated fee
-    conversion_route.total_estimated_fee = conversion_route.route_steps
+    conversion_route.total_estimated_fee = conversion_route
+        .route_steps
         .iter()
         .map(|step| step.estimated_fee)
         .sum();
-    
+
     // Validate route configuration
     conversion_route.validate()?;
-    
+
     Ok(())
 }
 
@@ -1928,8 +1905,8 @@ pub fn get_optimal_conversion_route<'a>(
     routes
         .iter()
         .filter(|route| {
-            route.source_mint == *source_mint 
-                && route.target_mint == *target_mint 
+            route.source_mint == *source_mint
+                && route.target_mint == *target_mint
                 && route.is_active
         })
         .max_by_key(|route| route.efficiency_score())
@@ -1944,13 +1921,13 @@ pub fn initialize_token_conversion(
     let conversion_state = &mut ctx.accounts.conversion_state;
     let conversion_route = &ctx.accounts.conversion_route;
     let clock = Clock::get()?;
-    
+
     // Validate conversion amount
     require!(
         conversion_amount >= ctx.accounts.hub_config.min_conversion_amount,
         ErrorCode::InsufficientConversionAmount
     );
-    
+
     // Initialize conversion state
     conversion_state.trade_id = trade_id;
     conversion_state.source_mint = conversion_route.source_mint;
@@ -1965,12 +1942,12 @@ pub fn initialize_token_conversion(
     conversion_state.started_at = clock.unix_timestamp;
     conversion_state.authority = ctx.accounts.authority.key();
     conversion_state.bump = ctx.bumps.conversion_state;
-    
+
     Ok(())
 }
 
 // Use common types from profile program
-pub use profile::{TradeState, FiatCurrency};
+pub use profile::{FiatCurrency, TradeState};
 
 // Constants
 const _DISPUTE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 24 hours
@@ -1979,8 +1956,8 @@ const _DISPUTE_WINDOW_SECONDS: u64 = 24 * 60 * 60; // 24 hours
 #[account]
 pub struct ArbitratorPool {
     pub fiat_currency: FiatCurrency,
-    pub arbitrators: Vec<Pubkey>,           // Max 32 arbitrators per currency
-    pub authority: Pubkey,                  // Hub admin authority
+    pub arbitrators: Vec<Pubkey>, // Max 32 arbitrators per currency
+    pub authority: Pubkey,        // Hub admin authority
     pub bump: u8,
 }
 
@@ -1989,7 +1966,7 @@ impl ArbitratorPool {
         1 +                                 // fiat_currency
         4 + (32 * 32) +                    // arbitrators vec (max 32)
         32 +                                // authority
-        1;                                  // bump
+        1; // bump
 }
 
 #[account]
@@ -1998,7 +1975,7 @@ pub struct ArbitratorInfo {
     pub fiat_currency: FiatCurrency,
     pub total_cases: u64,
     pub resolved_cases: u64,
-    pub reputation_score: u16,              // Basis points (0-10000)
+    pub reputation_score: u16, // Basis points (0-10000)
     pub registration_date: i64,
     pub is_active: bool,
     pub bump: u8,
@@ -2013,7 +1990,7 @@ impl ArbitratorInfo {
         2 +                                 // reputation_score
         8 +                                 // registration_date
         1 +                                 // is_active
-        1;                                  // bump
+        1; // bump
 }
 
 // COMPREHENSIVE VALIDATION FUNCTIONS
@@ -2035,23 +2012,20 @@ pub fn validate_trade_amount_with_usd_conversion(
         fiat_currency,
         price_program,
     )?;
-    
+
     // Validate against hub limits
     require!(
         usd_equivalent >= hub_config.trade_limit_min,
         ErrorCode::TradeBelowMinimum
     );
-    
+
     require!(
         usd_equivalent <= hub_config.trade_limit_max,
         ErrorCode::TradeAboveMaximum
     );
 
     // Additional overflow protection
-    require!(
-        trade_amount > 0,
-        ErrorCode::InvalidTradeAmount
-    );
+    require!(trade_amount > 0, ErrorCode::InvalidTradeAmount);
 
     // Ensure locked price is reasonable (not zero, not excessively high)
     require!(
@@ -2072,24 +2046,24 @@ pub fn convert_to_usd_equivalent(
 ) -> Result<u64> {
     // Query USD price for the fiat currency
     let usd_rate = get_fiat_to_usd_rate(fiat_currency, price_program)?;
-    
+
     // Calculate USD equivalent: (trade_amount * locked_price_in_fiat * usd_rate) / (10^token_decimals * 10^6)
     let amount_in_fiat = (trade_amount as u128)
         .checked_mul(locked_price_in_fiat as u128)
         .ok_or(ErrorCode::ArithmeticError)?;
-    
+
     let amount_in_usd = amount_in_fiat
         .checked_mul(usd_rate as u128)
         .ok_or(ErrorCode::ArithmeticError)?;
-    
+
     let divisor = (10u128.pow(token_decimals as u32))
         .checked_mul(1_000_000u128) // 6 decimals for fiat precision
         .ok_or(ErrorCode::ArithmeticError)?;
-    
+
     let usd_equivalent = amount_in_usd
         .checked_div(divisor)
         .ok_or(ErrorCode::ArithmeticError)?;
-    
+
     Ok(usd_equivalent as u64)
 }
 
@@ -2102,50 +2076,51 @@ pub fn validate_state_transition(
     current_timestamp: u64,
 ) -> Result<()> {
     use TradeState::*;
-    
+
     // Define valid state transitions matrix
     let valid_transition = match (current_state, target_state) {
         // Initial state transitions
         (RequestCreated, RequestAccepted) => trade.seller == *actor,
         (RequestCreated, RequestCanceled) => trade.buyer == *actor || trade.seller == *actor,
-        
+
         // Funding transitions
         (RequestAccepted, EscrowFunded) => trade.seller == *actor,
         (RequestAccepted, RequestCanceled) => trade.buyer == *actor || trade.seller == *actor,
-        
+
         // Deposit and release transitions
         (EscrowFunded, FiatDeposited) => trade.buyer == *actor,
         (EscrowFunded, RequestCanceled) => trade.buyer == *actor,
         (FiatDeposited, EscrowReleased) => trade.seller == *actor,
-        
+
         // Dispute transitions
         (FiatDeposited, EscrowDisputed) => {
             // Check if dispute window is open
             if let Some(dispute_window_at) = trade.dispute_window_at {
-                current_timestamp >= dispute_window_at && (trade.buyer == *actor || trade.seller == *actor)
+                current_timestamp >= dispute_window_at
+                    && (trade.buyer == *actor || trade.seller == *actor)
             } else {
                 false
             }
-        },
-        
+        }
+
         // Settlement transitions (only arbitrator can settle)
         (EscrowDisputed, SettledForMaker) => trade.arbitrator == *actor,
         (EscrowDisputed, SettledForTaker) => trade.arbitrator == *actor,
-        
+
         // Expiration handling
         (RequestCreated, RequestExpired) => current_timestamp > trade.expires_at,
         (RequestAccepted, RequestExpired) => current_timestamp > trade.expires_at,
         (EscrowFunded, EscrowRefunded) => current_timestamp > trade.expires_at,
-        
+
         // Invalid transitions
         _ => false,
     };
-    
+
     require!(valid_transition, ErrorCode::InvalidStateTransition);
-    
+
     // Additional time-based validations
     validate_timing_constraints(current_state, target_state, trade, current_timestamp)?;
-    
+
     Ok(())
 }
 
@@ -2157,7 +2132,7 @@ pub fn validate_timing_constraints(
     current_timestamp: u64,
 ) -> Result<()> {
     use TradeState::*;
-    
+
     match (current_state, target_state) {
         // Ensure trade hasn't expired for active transitions
         (RequestCreated | RequestAccepted, EscrowFunded | FiatDeposited) => {
@@ -2165,8 +2140,8 @@ pub fn validate_timing_constraints(
                 current_timestamp <= trade.expires_at,
                 ErrorCode::TradeExpired
             );
-        },
-        
+        }
+
         // Validate dispute timing
         (FiatDeposited, EscrowDisputed) => {
             if let Some(dispute_window) = trade.dispute_window_at {
@@ -2177,19 +2152,19 @@ pub fn validate_timing_constraints(
             } else {
                 return Err(ErrorCode::DisputeWindowNotOpen.into());
             }
-        },
-        
+        }
+
         // Ensure refunds only happen after expiration
         (EscrowFunded, EscrowRefunded) => {
             require!(
                 current_timestamp > trade.expires_at,
                 ErrorCode::RefundNotAllowed
             );
-        },
-        
-        _ => {},
+        }
+
+        _ => {}
     }
-    
+
     Ok(())
 }
 
@@ -2211,35 +2186,29 @@ pub fn validate_comprehensive_authorization(
             false
         }
     };
-    
+
     require!(is_authorized, ErrorCode::Unauthorized);
-    
+
     // Additional security checks
     validate_account_security(actor, trade)?;
-    
+
     Ok(())
 }
 
 /// Validates account security and prevents common attack vectors
 pub fn validate_account_security(actor: &Pubkey, trade: &Trade) -> Result<()> {
     // Prevent zero address attacks
-    require!(
-        *actor != Pubkey::default(),
-        ErrorCode::InvalidAccount
-    );
-    
+    require!(*actor != Pubkey::default(), ErrorCode::InvalidAccount);
+
     // Ensure buyer and seller are different
-    require!(
-        trade.buyer != trade.seller,
-        ErrorCode::SelfTradeNotAllowed
-    );
-    
+    require!(trade.buyer != trade.seller, ErrorCode::SelfTradeNotAllowed);
+
     // Ensure arbitrator is different from both parties
     require!(
         trade.arbitrator != trade.buyer && trade.arbitrator != trade.seller,
         ErrorCode::InvalidArbitratorAssignment
     );
-    
+
     Ok(())
 }
 
@@ -2254,16 +2223,13 @@ pub fn validate_cpi_call_security(
         program_id == expected_program,
         ErrorCode::UnauthorizedCpiCall
     );
-    
+
     // Validate instruction data isn't empty (prevents certain attack vectors)
-    require!(
-        !instruction_data.is_empty(),
-        ErrorCode::InvalidCpiData
-    );
-    
+    require!(!instruction_data.is_empty(), ErrorCode::InvalidCpiData);
+
     // Additional CPI security validations could go here
     // Such as checking specific instruction discriminators
-    
+
     Ok(())
 }
 
@@ -2271,27 +2237,24 @@ pub fn validate_cpi_call_security(
 pub fn validate_fee_calculation(amount: u64, fee_info: &FeeInfo) -> Result<()> {
     // Ensure no overflow in fee calculations
     let total_fees = fee_info.total_fees();
-    require!(
-        total_fees <= amount,
-        ErrorCode::ExcessiveFees
-    );
-    
+    require!(total_fees <= amount, ErrorCode::ExcessiveFees);
+
     // Ensure individual fee components are reasonable
     require!(
-        fee_info.burn_amount <= amount / 10,  // Max 10% burn
+        fee_info.burn_amount <= amount / 10, // Max 10% burn
         ErrorCode::ExcessiveBurnFee
     );
-    
+
     require!(
-        fee_info.chain_amount <= amount / 10, // Max 10% chain fee  
+        fee_info.chain_amount <= amount / 10, // Max 10% chain fee
         ErrorCode::ExcessiveChainFee
     );
-    
+
     require!(
         fee_info.warchest_amount <= amount / 10, // Max 10% warchest fee
         ErrorCode::ExcessiveWarchestFee
     );
-    
+
     Ok(())
 }
 
@@ -2306,22 +2269,22 @@ pub fn execute_automatic_refund(
         current_timestamp > trade.expires_at,
         ErrorCode::RefundNotAllowed
     );
-    
+
     require!(
         trade.state == TradeState::EscrowFunded,
         ErrorCode::InvalidTradeState
     );
-    
+
     // Anyone can trigger an automatic refund for expired funded trades
     // This is a public service that helps prevent locked funds
-    
+
     // Additional validation: ensure trade has been expired for minimum duration
     let minimum_expiry_buffer = 3600; // 1 hour buffer
     require!(
         current_timestamp > trade.expires_at + minimum_expiry_buffer,
         ErrorCode::RefundTooEarly
     );
-    
+
     Ok(())
 }
 
@@ -2348,7 +2311,7 @@ pub fn get_fiat_to_usd_rate(
         FiatCurrency::Thb => 28_000,    // ~0.028 USD per THB
         FiatCurrency::Ves => 30,        // ~0.00003 USD per VES
     };
-    
+
     Ok(rate)
 }
 
@@ -2394,20 +2357,21 @@ pub fn calculate_arbitration_settlement_fees(
     // Calculate arbitration fee (e.g., 2% as basis points)
     // Assuming hub_config has arbitration_fee_rate field - using fee_rate as approximation
     let arbitration_fee_basis_points = hub_config.fee_rate; // e.g., 200 = 2%
-    let arbitrator_fee = (trade_amount as u128 * arbitration_fee_basis_points as u128 / 10000) as u64;
-    
+    let arbitrator_fee =
+        (trade_amount as u128 * arbitration_fee_basis_points as u128 / 10000) as u64;
+
     // Start with full trade amount minus arbitrator fee
     let mut winner_amount = trade_amount - arbitrator_fee;
-    
+
     // Protocol fees only deducted if buyer is the maker (matching CosmWasm logic)
     let protocol_fee = if trade.buyer == offer.owner {
         // Buyer is maker - deduct protocol fees
         // Calculate total protocol fees similar to existing calculate_fees function
         let fee_info = calculate_fees(trade_amount)?;
         let total_protocol_fees = fee_info.total_fees();
-        
+
         winner_amount = winner_amount - total_protocol_fees;
-        
+
         total_protocol_fees
     } else {
         // Buyer is taker - no additional protocol fees
@@ -2426,8 +2390,8 @@ pub fn calculate_arbitration_settlement_fees(
 
 // CosmWasm-compatible arbitrator selection algorithm
 pub fn select_arbitrator_from_pool(
-    arbitrator_pool: &ArbitratorPool, 
-    random_index: usize
+    arbitrator_pool: &ArbitratorPool,
+    random_index: usize,
 ) -> Result<Pubkey> {
     require!(
         !arbitrator_pool.arbitrators.is_empty(),
@@ -2435,18 +2399,19 @@ pub fn select_arbitrator_from_pool(
     );
 
     // Take up to 10 arbitrators from pool (gas efficiency like CosmWasm)
-    let available_arbitrators: Vec<Pubkey> = arbitrator_pool.arbitrators
+    let available_arbitrators: Vec<Pubkey> = arbitrator_pool
+        .arbitrators
         .iter()
         .take(10)
         .cloned()
         .collect();
-    
+
     let arbitrator_count = available_arbitrators.len();
-    
+
     // Secure mapping: RandomValue * (MaxMappedRange + 1) / (MaxRandomRange + 1)
     // Matches CosmWasm algorithm exactly
     let selected_index = random_index * arbitrator_count / (99 + 1);
-    
+
     Ok(available_arbitrators[selected_index])
 }
 
@@ -2462,27 +2427,27 @@ pub fn calculate_dynamic_fees(
 ) -> Result<FeeInfo> {
     // Determine if token conversion is required
     let requires_conversion = *token_mint != hub_config.local_token_mint;
-    
+
     // Calculate base fees using the specified method
-    let (burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve) = 
+    let (burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve) =
         match fee_calculation_method {
             FeeCalculationMethod::Percentage => {
                 calculate_percentage_fees(amount, hub_config, requires_conversion)?
-            },
+            }
             FeeCalculationMethod::Dynamic => {
                 calculate_adaptive_fees(amount, hub_config, trade, offer, requires_conversion)?
-            },
+            }
             FeeCalculationMethod::Tiered => {
                 calculate_tiered_fees(amount, hub_config, requires_conversion)?
-            },
+            }
             FeeCalculationMethod::MakerTaker => {
                 calculate_maker_taker_fees(amount, hub_config, trade, offer, requires_conversion)?
-            },
+            }
             FeeCalculationMethod::TokenSpecific => {
                 calculate_token_specific_fees(amount, token_mint, hub_config, requires_conversion)?
-            },
+            }
         };
-    
+
     // Create and validate fee info
     FeeInfo::new(
         amount,
@@ -2506,7 +2471,7 @@ fn calculate_percentage_fees(
     let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 / 10000) as u64;
     let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 / 10000) as u64;
     let warchest_amount = (amount as u128 * hub_config.warchest_fee_pct as u128 / 10000) as u64;
-    
+
     // Additional fees for token conversion
     let (conversion_fee, slippage_reserve) = if requires_conversion {
         let conv_fee = (amount as u128 * hub_config.conversion_fee_pct as u128 / 10000) as u64;
@@ -2515,8 +2480,14 @@ fn calculate_percentage_fees(
     } else {
         (0, 0)
     };
-    
-    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+
+    Ok((
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+    ))
 }
 
 /// DYNAMIC FEES: Adaptive fees based on trade and market conditions
@@ -2528,40 +2499,52 @@ fn calculate_adaptive_fees(
     requires_conversion: bool,
 ) -> Result<(u64, u64, u64, u64, u64)> {
     // Start with base percentage fees
-    let (mut burn_amount, mut chain_amount, mut warchest_amount, conversion_fee, slippage_reserve) = 
+    let (mut burn_amount, mut chain_amount, mut warchest_amount, conversion_fee, slippage_reserve) =
         calculate_percentage_fees(amount, hub_config, requires_conversion)?;
-    
+
     // Dynamic adjustments based on trade parameters
     if let Some(trade_data) = trade {
         // Time-based fee adjustment (lower fees for longer-duration trades)
         let current_time = Clock::get()?.unix_timestamp as u64;
         let trade_age = current_time.saturating_sub(trade_data.created_at);
         let age_factor = if trade_age > 86400 { 90 } else { 100 }; // 10% discount for trades older than 1 day
-        
+
         burn_amount = burn_amount * age_factor / 100;
         chain_amount = chain_amount * age_factor / 100;
         warchest_amount = warchest_amount * age_factor / 100;
-        
+
         // Volume-based adjustments (lower fees for larger amounts)
-        let volume_factor = if amount > 1_000_000_000 { 90 } else if amount > 100_000_000 { 95 } else { 100 };
-        
+        let volume_factor = if amount > 1_000_000_000 {
+            90
+        } else if amount > 100_000_000 {
+            95
+        } else {
+            100
+        };
+
         burn_amount = burn_amount * volume_factor / 100;
         chain_amount = chain_amount * volume_factor / 100;
         warchest_amount = warchest_amount * volume_factor / 100;
     }
-    
+
     // Offer-type specific adjustments
     if let Some(_offer_data) = offer {
         // Adjust fees based on offer characteristics
         // Market makers (frequent traders) get slight fee reductions
         let maker_factor = 95; // 5% discount for offer creators
-        
+
         burn_amount = burn_amount * maker_factor / 100;
         chain_amount = chain_amount * maker_factor / 100;
         warchest_amount = warchest_amount * maker_factor / 100;
     }
-    
-    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+
+    Ok((
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+    ))
 }
 
 /// TIERED FEES: Amount-based tiered fee structure
@@ -2591,11 +2574,11 @@ fn calculate_tiered_fees(
             hub_config.warchest_fee_pct * 80 / 100,
         ),
     };
-    
+
     let burn_amount = (amount as u128 * burn_bps as u128 / 10000) as u64;
     let chain_amount = (amount as u128 * chain_bps as u128 / 10000) as u64;
     let warchest_amount = (amount as u128 * warchest_bps as u128 / 10000) as u64;
-    
+
     // Conversion fees with tiered discounts
     let (conversion_fee, slippage_reserve) = if requires_conversion {
         let conv_bps = match amount {
@@ -2603,15 +2586,21 @@ fn calculate_tiered_fees(
             1_000_000_001..=10_000_000_000 => hub_config.conversion_fee_pct * 90 / 100,
             _ => hub_config.conversion_fee_pct * 80 / 100,
         };
-        
+
         let conv_fee = (amount as u128 * conv_bps as u128 / 10000) as u64;
         let slippage = (amount as u128 * hub_config.max_slippage_bps as u128 / 10000) as u64;
         (conv_fee, slippage)
     } else {
         (0, 0)
     };
-    
-    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+
+    Ok((
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+    ))
 }
 
 /// MAKER-TAKER FEES: Differentiated fees based on market role
@@ -2629,24 +2618,36 @@ fn calculate_maker_taker_fees(
     } else {
         false // Default to taker fees
     };
-    
+
     // Apply maker/taker fee structure
     let fee_multiplier = if is_maker { 90 } else { 100 }; // 10% discount for makers
-    
-    let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
-    let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
-    let warchest_amount = (amount as u128 * hub_config.warchest_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
-    
+
+    let burn_amount = (amount as u128 * hub_config.burn_fee_pct as u128 * fee_multiplier as u128
+        / 1_000_000) as u64;
+    let chain_amount = (amount as u128 * hub_config.chain_fee_pct as u128 * fee_multiplier as u128
+        / 1_000_000) as u64;
+    let warchest_amount =
+        (amount as u128 * hub_config.warchest_fee_pct as u128 * fee_multiplier as u128 / 1_000_000)
+            as u64;
+
     // Conversion fees
     let (conversion_fee, slippage_reserve) = if requires_conversion {
-        let conv_fee = (amount as u128 * hub_config.conversion_fee_pct as u128 * fee_multiplier as u128 / 1_000_000) as u64;
+        let conv_fee =
+            (amount as u128 * hub_config.conversion_fee_pct as u128 * fee_multiplier as u128
+                / 1_000_000) as u64;
         let slippage = (amount as u128 * hub_config.max_slippage_bps as u128 / 10000) as u64;
         (conv_fee, slippage)
     } else {
         (0, 0)
     };
-    
-    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+
+    Ok((
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+    ))
 }
 
 /// TOKEN-SPECIFIC FEES: Custom fees based on token characteristics
@@ -2657,9 +2658,14 @@ fn calculate_token_specific_fees(
     requires_conversion: bool,
 ) -> Result<(u64, u64, u64, u64, u64)> {
     // Start with base fees
-    let (mut burn_amount, mut chain_amount, mut warchest_amount, mut conversion_fee, mut slippage_reserve) = 
-        calculate_percentage_fees(amount, hub_config, requires_conversion)?;
-    
+    let (
+        mut burn_amount,
+        mut chain_amount,
+        mut warchest_amount,
+        mut conversion_fee,
+        mut slippage_reserve,
+    ) = calculate_percentage_fees(amount, hub_config, requires_conversion)?;
+
     // LOCAL token gets special treatment
     if *token_mint == hub_config.local_token_mint {
         // Lower fees for native LOCAL token trades
@@ -2675,8 +2681,14 @@ fn calculate_token_specific_fees(
         conversion_fee = conversion_fee * 120 / 100; // 20% higher conversion fees
         slippage_reserve = slippage_reserve * 130 / 100; // 30% higher slippage protection
     }
-    
-    Ok((burn_amount, chain_amount, warchest_amount, conversion_fee, slippage_reserve))
+
+    Ok((
+        burn_amount,
+        chain_amount,
+        warchest_amount,
+        conversion_fee,
+        slippage_reserve,
+    ))
 }
 
 /// LEGACY COMPATIBILITY: Simple fee calculation for backward compatibility
@@ -2693,11 +2705,11 @@ pub fn calculate_fees(amount: u64) -> Result<FeeInfo> {
         jupiter_program: Pubkey::default(),
         chain_fee_collector: Pubkey::default(),
         warchest_address: Pubkey::default(),
-        burn_fee_pct: 50,  // 0.5%
-        chain_fee_pct: 50, // 0.5%
-        warchest_fee_pct: 50, // 0.5%
+        burn_fee_pct: 50,       // 0.5%
+        chain_fee_pct: 50,      // 0.5%
+        warchest_fee_pct: 50,   // 0.5%
         conversion_fee_pct: 25, // 0.25%
-        max_slippage_bps: 100, // 1%
+        max_slippage_bps: 100,  // 1%
         min_conversion_amount: 1000,
         max_conversion_routes: 3,
         fee_rate: 150, // Legacy field
@@ -2710,7 +2722,7 @@ pub fn calculate_fees(amount: u64) -> Result<FeeInfo> {
         arbitration_fee_rate: 200,
         bump: 0,
     };
-    
+
     calculate_dynamic_fees(
         amount,
         &Pubkey::default(), // Default token (treated as non-LOCAL)
@@ -2725,13 +2737,10 @@ pub fn calculate_fees(amount: u64) -> Result<FeeInfo> {
 /// Matches CosmWasm pattern for LOCAL token burning and token conversion
 
 /// Execute LOCAL token burn with automatic conversion for non-LOCAL tokens
-pub fn execute_local_token_burn(
-    ctx: Context<ExecuteTokenBurn>,
-    burn_amount: u64,
-) -> Result<()> {
+pub fn execute_local_token_burn(ctx: Context<ExecuteTokenBurn>, burn_amount: u64) -> Result<()> {
     let hub_config = &ctx.accounts.hub_config;
     let token_mint = &ctx.accounts.token_mint;
-    
+
     // Check if token is LOCAL or needs conversion
     if token_mint.key() == hub_config.local_token_mint {
         // Direct burn for LOCAL tokens
@@ -2740,99 +2749,81 @@ pub fn execute_local_token_burn(
         // Convert to LOCAL then burn
         convert_and_burn_tokens(ctx, burn_amount)?;
     }
-    
+
     Ok(())
 }
 
 /// Direct burn of LOCAL tokens using SPL token program
-fn burn_local_tokens(
-    ctx: Context<ExecuteTokenBurn>,
-    burn_amount: u64,
-) -> Result<()> {
+fn burn_local_tokens(ctx: Context<ExecuteTokenBurn>, burn_amount: u64) -> Result<()> {
     use anchor_spl::token_interface::Burn;
-    
+
     // Validate burn amount
     require!(burn_amount > 0, ErrorCode::InvalidParameter);
-    
+
     // Create burn instruction
     let cpi_accounts = Burn {
         mint: ctx.accounts.token_mint.to_account_info(),
         from: ctx.accounts.source_token_account.to_account_info(),
         authority: ctx.accounts.authority.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-    
+
     // Execute burn using anchor helper
     anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
-    
+
     // Update burn statistics
     // Note: burn_statistics update would require mutable context
     // This functionality can be added when the calling function has mutable access
-    
+
     Ok(())
 }
 
 /// Convert non-LOCAL token to LOCAL and burn the result
-fn convert_and_burn_tokens(
-    ctx: Context<ExecuteTokenBurn>,
-    burn_amount: u64,
-) -> Result<()> {
+fn convert_and_burn_tokens(ctx: Context<ExecuteTokenBurn>, burn_amount: u64) -> Result<()> {
     let hub_config = &ctx.accounts.hub_config;
-    
+
     // Validate minimum conversion amount
     require!(
         burn_amount >= hub_config.min_conversion_amount,
         ErrorCode::InsufficientConversionAmount
     );
-    
+
     // Step 1: Convert non-LOCAL token to LOCAL via DEX
-    let converted_amount = execute_token_conversion_for_burn(
-        &ctx,
-        burn_amount,
-    )?;
-    
+    let converted_amount = execute_token_conversion_for_burn(&ctx, burn_amount)?;
+
     // Step 2: Burn the converted LOCAL tokens
     burn_converted_local_tokens(&ctx, converted_amount)?;
-    
+
     Ok(())
 }
 
 /// Execute token conversion through DEX protocols
-fn execute_token_conversion_for_burn(
-    ctx: &Context<ExecuteTokenBurn>,
-    amount: u64,
-) -> Result<u64> {
+fn execute_token_conversion_for_burn(ctx: &Context<ExecuteTokenBurn>, amount: u64) -> Result<u64> {
     let hub_config = &ctx.accounts.hub_config;
     let source_mint = &ctx.accounts.token_mint;
     let target_mint = &hub_config.local_token_mint;
-    
+
     // Get conversion route (in production, this would query stored routes)
-    let conversion_route = get_conversion_route_for_burn(
-        &source_mint.key(),
-        target_mint,
-        ctx,
-    )?;
-    
+    let conversion_route = get_conversion_route_for_burn(&source_mint.key(), target_mint, ctx)?;
+
     // Execute conversion through Jupiter or other DEX
     let converted_amount = match conversion_route.route_steps.len() {
         1 => execute_single_step_conversion(ctx, amount, &conversion_route.route_steps[0])?,
         2..=5 => execute_multi_step_conversion(ctx, amount, &conversion_route.route_steps)?,
         _ => return Err(ErrorCode::ConversionRouteTooComplex.into()),
     };
-    
+
     // Validate slippage
-    let expected_min_output = calculate_min_output_with_slippage(
-        amount,
-        hub_config.max_slippage_bps,
-    )?;
-    
+    let expected_min_output =
+        calculate_min_output_with_slippage(amount, hub_config.max_slippage_bps)?;
+
     require!(
         converted_amount >= expected_min_output,
         ErrorCode::SlippageExceeded
     );
-    
+
     Ok(converted_amount)
 }
 
@@ -2843,26 +2834,20 @@ fn execute_single_step_conversion(
     conversion_step: &ConversionStep,
 ) -> Result<u64> {
     // Query initial balance of target token
-    let initial_balance = get_token_account_balance(
-        &ctx.accounts.temp_local_token_account.to_account_info(),
-    )?;
-    
+    let initial_balance =
+        get_token_account_balance(&ctx.accounts.temp_local_token_account.to_account_info())?;
+
     // Execute swap through Jupiter CPI
-    execute_jupiter_swap_cpi(
-        ctx,
-        amount,
-        conversion_step,
-    )?;
-    
+    execute_jupiter_swap_cpi(ctx, amount, conversion_step)?;
+
     // Query final balance to determine converted amount
-    let final_balance = get_token_account_balance(
-        &ctx.accounts.temp_local_token_account.to_account_info(),
-    )?;
-    
+    let final_balance =
+        get_token_account_balance(&ctx.accounts.temp_local_token_account.to_account_info())?;
+
     let converted_amount = final_balance.saturating_sub(initial_balance);
-    
+
     require!(converted_amount > 0, ErrorCode::TokenConversionFailed);
-    
+
     Ok(converted_amount)
 }
 
@@ -2873,32 +2858,23 @@ fn execute_multi_step_conversion(
     conversion_steps: &[ConversionStep],
 ) -> Result<u64> {
     let mut current_amount = initial_amount;
-    
+
     for (step_index, step) in conversion_steps.iter().enumerate() {
         // For multi-step conversions, we need intermediate token accounts
         // This would require more complex account management in production
         current_amount = execute_single_step_conversion(ctx, current_amount, step)?;
-        
+
         // Validate intermediate amounts
-        require!(
-            current_amount > 0,
-            ErrorCode::TokenConversionFailed
-        );
-        
+        require!(current_amount > 0, ErrorCode::TokenConversionFailed);
+
         // Apply step-by-step slippage checks
         if step_index > 0 {
-            let expected_min = calculate_step_min_output(
-                current_amount,
-                step.max_slippage_bps,
-            )?;
-            
-            require!(
-                current_amount >= expected_min,
-                ErrorCode::SlippageExceeded
-            );
+            let expected_min = calculate_step_min_output(current_amount, step.max_slippage_bps)?;
+
+            require!(current_amount >= expected_min, ErrorCode::SlippageExceeded);
         }
     }
-    
+
     Ok(current_amount)
 }
 
@@ -2910,16 +2886,16 @@ fn execute_jupiter_swap_cpi(
 ) -> Result<()> {
     // This is a simplified Jupiter CPI call
     // In production, this would use the full Jupiter CPI interface
-    
+
     let jupiter_program = &ctx.accounts.jupiter_program;
     let _pool_address = &conversion_step.pool_address;
-    
+
     // Validate Jupiter program
     require!(
         jupiter_program.key() == ctx.accounts.hub_config.jupiter_program,
         ErrorCode::InvalidDexProgram
     );
-    
+
     // Create Jupiter swap instruction data
     let swap_instruction_data = create_jupiter_swap_instruction(
         amount,
@@ -2927,7 +2903,7 @@ fn execute_jupiter_swap_cpi(
         &conversion_step.input_mint,
         &conversion_step.output_mint,
     )?;
-    
+
     // Execute CPI call to Jupiter
     let cpi_accounts = vec![
         ctx.accounts.source_token_account.to_account_info(),
@@ -2936,48 +2912,48 @@ fn execute_jupiter_swap_cpi(
         ctx.accounts.token_mint.to_account_info(),
         jupiter_program.to_account_info(),
     ];
-    
+
     // In production, this would be a proper CPI call using Jupiter's interface
     solana_program::program::invoke(
         &solana_program::instruction::Instruction {
             program_id: jupiter_program.key(),
-            accounts: cpi_accounts.iter().map(|acc| solana_program::instruction::AccountMeta {
-                pubkey: acc.key(),
-                is_signer: acc.is_signer,
-                is_writable: acc.is_writable,
-            }).collect(),
+            accounts: cpi_accounts
+                .iter()
+                .map(|acc| solana_program::instruction::AccountMeta {
+                    pubkey: acc.key(),
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                })
+                .collect(),
             data: swap_instruction_data,
         },
         &cpi_accounts,
     )?;
-    
+
     Ok(())
 }
 
 /// Burn converted LOCAL tokens
-fn burn_converted_local_tokens(
-    ctx: &Context<ExecuteTokenBurn>,
-    amount: u64,
-) -> Result<()> {
+fn burn_converted_local_tokens(ctx: &Context<ExecuteTokenBurn>, amount: u64) -> Result<()> {
     use anchor_spl::token_interface::Burn;
-    
+
     // Create burn instruction for converted LOCAL tokens
     let cpi_accounts = Burn {
         mint: ctx.accounts.local_token_mint.to_account_info(),
         from: ctx.accounts.temp_local_token_account.to_account_info(),
         authority: ctx.accounts.authority.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-    
+
     // Execute burn
     anchor_spl::token_interface::burn(cpi_ctx, amount)?;
-    
+
     // Update conversion burn statistics
     // Note: burn_statistics update would require mutable context
     // This functionality can be added when the calling function has mutable access
-    
+
     Ok(())
 }
 
@@ -2996,10 +2972,10 @@ fn get_conversion_route_for_burn(
         input_mint: *source_mint,
         output_mint: *target_mint,
         pool_address: Pubkey::default(), // Would be actual pool address
-        estimated_fee: 1000, // 0.1% estimated fee
-        max_slippage_bps: 100, // 1% max slippage
+        estimated_fee: 1000,             // 0.1% estimated fee
+        max_slippage_bps: 100,           // 1% max slippage
     };
-    
+
     Ok(TokenConversionRoute {
         source_mint: *source_mint,
         target_mint: *target_mint,
@@ -3018,38 +2994,33 @@ fn get_conversion_route_for_burn(
 }
 
 /// Calculate minimum output amount considering slippage
-fn calculate_min_output_with_slippage(
-    input_amount: u64,
-    max_slippage_bps: u16,
-) -> Result<u64> {
+fn calculate_min_output_with_slippage(input_amount: u64, max_slippage_bps: u16) -> Result<u64> {
     let slippage_factor = 10000u64.saturating_sub(max_slippage_bps as u64);
     let min_output = (input_amount as u128 * slippage_factor as u128 / 10000u128) as u64;
     Ok(min_output)
 }
 
 /// Calculate minimum output for individual step
-fn calculate_step_min_output(
-    input_amount: u64,
-    step_slippage_bps: u16,
-) -> Result<u64> {
+fn calculate_step_min_output(input_amount: u64, step_slippage_bps: u16) -> Result<u64> {
     calculate_min_output_with_slippage(input_amount, step_slippage_bps)
 }
 
 /// Get token account balance
 fn get_token_account_balance(account_info: &AccountInfo) -> Result<u64> {
     let account_data = account_info.try_borrow_data()?;
-    
+
     // SPL Token account balance is at offset 64 (8 bytes)
     if account_data.len() < 72 {
         return Err(ErrorCode::InvalidAccount.into());
     }
-    
+
     let balance_bytes = &account_data[64..72];
     let balance = u64::from_le_bytes(
-        balance_bytes.try_into()
-            .map_err(|_| ErrorCode::InvalidAccount)?
+        balance_bytes
+            .try_into()
+            .map_err(|_| ErrorCode::InvalidAccount)?,
     );
-    
+
     Ok(balance)
 }
 
@@ -3063,35 +3034,35 @@ fn create_jupiter_swap_instruction(
     // This is a simplified instruction format
     // In production, this would use Jupiter's actual instruction format
     let mut instruction_data = Vec::new();
-    
+
     // Add swap discriminator (8 bytes)
     instruction_data.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    
+
     // Add amount (8 bytes)
     instruction_data.extend_from_slice(&amount.to_le_bytes());
-    
+
     // Add slippage (2 bytes)
     instruction_data.extend_from_slice(&slippage_bps.to_le_bytes());
-    
+
     // Add input mint (32 bytes)
     instruction_data.extend_from_slice(input_mint.as_ref());
-    
+
     // Add output mint (32 bytes)
     instruction_data.extend_from_slice(output_mint.as_ref());
-    
+
     Ok(instruction_data)
 }
 
 /// BURN STATISTICS: Track burn operations for analytics
 #[account]
 pub struct BurnStatistics {
-    pub total_burned: u64,                    // Total LOCAL tokens burned directly
-    pub total_converted_burned: u64,          // Total LOCAL tokens burned after conversion
-    pub burn_count: u64,                      // Number of direct burns
-    pub conversion_burn_count: u64,           // Number of conversion burns
-    pub last_burn_timestamp: i64,             // Last direct burn timestamp
-    pub last_conversion_burn_timestamp: i64,  // Last conversion burn timestamp
-    pub authority: Pubkey,                    // Statistics authority
+    pub total_burned: u64,                   // Total LOCAL tokens burned directly
+    pub total_converted_burned: u64,         // Total LOCAL tokens burned after conversion
+    pub burn_count: u64,                     // Number of direct burns
+    pub conversion_burn_count: u64,          // Number of conversion burns
+    pub last_burn_timestamp: i64,            // Last direct burn timestamp
+    pub last_conversion_burn_timestamp: i64, // Last conversion burn timestamp
+    pub authority: Pubkey,                   // Statistics authority
     pub bump: u8,
 }
 
@@ -3104,7 +3075,7 @@ impl BurnStatistics {
         8 +                                   // last_burn_timestamp
         8 +                                   // last_conversion_burn_timestamp
         32 +                                  // authority
-        1;                                    // bump
+        1; // bump
 }
 
 /// ACCOUNT CONTEXT: Token burn operations
@@ -3117,7 +3088,7 @@ pub struct ExecuteTokenBurn<'info> {
         associated_token::token_program = token_program,
     )]
     pub source_token_account: InterfaceAccount<'info, TokenAccount>,
-    
+
     #[account(
         init_if_needed,
         payer = authority,
@@ -3126,10 +3097,10 @@ pub struct ExecuteTokenBurn<'info> {
         associated_token::token_program = token_program,
     )]
     pub temp_local_token_account: InterfaceAccount<'info, TokenAccount>,
-    
+
     #[account(mut)]
     pub token_mint: InterfaceAccount<'info, Mint>,
-    
+
     #[account(
         mut,
         seeds = [b"mint".as_ref(), b"local".as_ref()],
@@ -3137,26 +3108,26 @@ pub struct ExecuteTokenBurn<'info> {
         mint::token_program = token_program
     )]
     pub local_token_mint: InterfaceAccount<'info, Mint>,
-    
+
     #[account(
         seeds = [b"hub".as_ref(), b"config".as_ref()],
         bump
     )]
     pub hub_config: Account<'info, hub::HubConfig>,
-    
+
     #[account(
         mut,
         seeds = [b"burn_statistics".as_ref()],
         bump
     )]
     pub burn_statistics: Option<Account<'info, BurnStatistics>>,
-    
+
     /// CHECK: Jupiter program for DEX operations
     pub jupiter_program: UncheckedAccount<'info>,
-    
+
     #[account(mut)]
     pub authority: Signer<'info>,
-    
+
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -3173,27 +3144,27 @@ fn execute_multi_destination_fee_distribution(
 ) -> Result<()> {
     let _hub_config = &ctx.accounts.hub_config;
     let _token_mint = &ctx.accounts.token_mint;
-    
+
     // BURN FEE DISTRIBUTION: Handle LOCAL token burn or conversion + burn
     if fee_info.burn_amount > 0 {
         execute_burn_fee_distribution(ctx, fee_info.burn_amount, signer_seeds)?;
     }
-    
+
     // CHAIN FEE DISTRIBUTION: Transfer to chain fee collector
     if fee_info.chain_amount > 0 {
         execute_chain_fee_distribution(ctx, fee_info.chain_amount, signer_seeds)?;
     }
-    
+
     // WARCHEST FEE DISTRIBUTION: Transfer to warchest address
     if fee_info.warchest_amount > 0 {
         execute_warchest_fee_distribution(ctx, fee_info.warchest_amount, signer_seeds)?;
     }
-    
+
     // CONVERSION FEE HANDLING: Handle conversion fees if applicable
     if fee_info.conversion_fee > 0 {
         execute_conversion_fee_distribution(ctx, fee_info.conversion_fee, signer_seeds)?;
     }
-    
+
     Ok(())
 }
 
@@ -3205,27 +3176,31 @@ fn execute_multi_destination_fee_distribution_for_dispute(
 ) -> Result<()> {
     let _hub_config = &ctx.accounts.hub_config;
     let _token_mint = &ctx.accounts.token_mint;
-    
+
     // BURN FEE DISTRIBUTION: Handle LOCAL token burn or conversion + burn
     if fee_info.burn_amount > 0 {
         execute_burn_fee_distribution_for_dispute(ctx, fee_info.burn_amount, signer_seeds)?;
     }
-    
+
     // CHAIN FEE DISTRIBUTION: Transfer to chain fee collector
     if fee_info.chain_amount > 0 {
         execute_chain_fee_distribution_for_dispute(ctx, fee_info.chain_amount, signer_seeds)?;
     }
-    
+
     // WARCHEST FEE DISTRIBUTION: Transfer to warchest address
     if fee_info.warchest_amount > 0 {
         execute_warchest_fee_distribution_for_dispute(ctx, fee_info.warchest_amount, signer_seeds)?;
     }
-    
+
     // CONVERSION FEE HANDLING: Handle conversion fees if applicable
     if fee_info.conversion_fee > 0 {
-        execute_conversion_fee_distribution_for_dispute(ctx, fee_info.conversion_fee, signer_seeds)?;
+        execute_conversion_fee_distribution_for_dispute(
+            ctx,
+            fee_info.conversion_fee,
+            signer_seeds,
+        )?;
     }
-    
+
     Ok(())
 }
 
@@ -3237,11 +3212,11 @@ fn execute_burn_fee_distribution_for_dispute(
 ) -> Result<()> {
     let hub_config = &ctx.accounts.hub_config;
     let token_mint = &ctx.accounts.token_mint;
-    
+
     if token_mint.key() == hub_config.local_token_mint {
         // Direct burn for LOCAL tokens
         use anchor_spl::token_interface::Burn;
-        
+
         let cpi_accounts = Burn {
             mint: ctx.accounts.token_mint.to_account_info(),
             from: ctx.accounts.escrow_token_account.to_account_info(),
@@ -3249,7 +3224,7 @@ fn execute_burn_fee_distribution_for_dispute(
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        
+
         anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
     } else {
         // Transfer to burn reserve account for later conversion + burn
@@ -3261,10 +3236,10 @@ fn execute_burn_fee_distribution_for_dispute(
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-        
+
         transfer_checked(cpi_ctx, burn_amount, token_mint.decimals)?;
     }
-    
+
     Ok(())
 }
 
@@ -3282,9 +3257,9 @@ fn execute_chain_fee_distribution_for_dispute(
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, chain_amount, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3302,9 +3277,9 @@ fn execute_warchest_fee_distribution_for_dispute(
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, warchest_amount, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3323,9 +3298,9 @@ fn execute_conversion_fee_distribution_for_dispute(
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, conversion_fee, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3337,7 +3312,7 @@ fn execute_burn_fee_distribution(
 ) -> Result<()> {
     let hub_config = &ctx.accounts.hub_config;
     let token_mint = &ctx.accounts.token_mint;
-    
+
     if token_mint.key() == hub_config.local_token_mint {
         // Direct burn for LOCAL tokens
         execute_direct_local_burn(ctx, burn_amount, signer_seeds)?;
@@ -3345,7 +3320,7 @@ fn execute_burn_fee_distribution(
         // Convert to LOCAL and burn (requires conversion infrastructure)
         execute_convert_and_burn(ctx, burn_amount, signer_seeds)?;
     }
-    
+
     Ok(())
 }
 
@@ -3356,19 +3331,19 @@ fn execute_direct_local_burn(
     signer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
     use anchor_spl::token_interface::Burn;
-    
+
     // Burn LOCAL tokens directly from escrow
     let cpi_accounts = Burn {
         mint: ctx.accounts.token_mint.to_account_info(),
         from: ctx.accounts.escrow_token_account.to_account_info(),
         authority: ctx.accounts.trade.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     anchor_spl::token_interface::burn(cpi_ctx, burn_amount)?;
-    
+
     Ok(())
 }
 
@@ -3382,7 +3357,7 @@ fn execute_convert_and_burn(
     // 1. Transfer non-LOCAL tokens to conversion account
     // 2. Execute Jupiter swap to LOCAL
     // 3. Burn the resulting LOCAL tokens
-    
+
     // For now, transfer to burn reserve account (to be converted later)
     let cpi_accounts = TransferChecked {
         from: ctx.accounts.escrow_token_account.to_account_info(),
@@ -3390,12 +3365,12 @@ fn execute_convert_and_burn(
         authority: ctx.accounts.trade.to_account_info(),
         mint: ctx.accounts.token_mint.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, burn_amount, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3411,12 +3386,12 @@ fn execute_chain_fee_distribution(
         authority: ctx.accounts.trade.to_account_info(),
         mint: ctx.accounts.token_mint.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, chain_amount, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3432,12 +3407,12 @@ fn execute_warchest_fee_distribution(
         authority: ctx.accounts.trade.to_account_info(),
         mint: ctx.accounts.token_mint.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, warchest_amount, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
@@ -3454,241 +3429,203 @@ fn execute_conversion_fee_distribution(
         authority: ctx.accounts.trade.to_account_info(),
         mint: ctx.accounts.token_mint.to_account_info(),
     };
-    
+
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-    
+
     transfer_checked(cpi_ctx, conversion_fee, ctx.accounts.token_mint.decimals)?;
-    
+
     Ok(())
 }
 
-    // ==================== QUERY INSTRUCTIONS ====================
-    
-    /// Get paginated trades with comprehensive filtering
-    pub fn get_trades(
-        ctx: Context<GetTrades>,
-        params: GetTradesParams,
-    ) -> Result<TradesResponse> {
-        validate_pagination_params(&params.pagination)?;
-        
-        let program_id = ctx.program_id;
-        let filters = build_trade_filters(&params.filter)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &params.pagination,
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        let total_count = estimate_total_trades(ctx.accounts.system_program.to_account_info(), program_id)?;
-        
-        let next_cursor = get_next_cursor_trade(&trades);
-        let has_more = trades.len() >= params.pagination.limit as usize;
-        
-        Ok(TradesResponse {
-            trades,
-            pagination: PaginationResponse {
-                next_cursor,
-                has_more,
-                total_estimate: Some(total_count),
+/// Get trades by specific participant (buyer or seller)
+pub fn get_trades_by_participant(
+    ctx: Context<GetTradesByParticipant>,
+    params: GetTradesByParticipantParams,
+) -> Result<TradesResponse> {
+    validate_pagination_params(&params.pagination)?;
+
+    let program_id = ctx.program_id;
+    let participant_filter = TradeFilter {
+        participant: Some(params.participant),
+        role: params.participant_role,
+        ..Default::default()
+    };
+    let filters = build_trade_filters(&participant_filter)?;
+
+    let accounts = load_program_accounts_filtered(
+        ctx.accounts.system_program.to_account_info(),
+        program_id,
+        &filters,
+        &params.pagination,
+    )?;
+
+    let trades = deserialize_trade_accounts(accounts)?;
+
+    let next_cursor = get_next_cursor_trade(&trades);
+    let has_more = trades.len() >= params.pagination.limit as usize;
+
+    Ok(TradesResponse {
+        trades,
+        pagination: PaginationResponse {
+            next_cursor,
+            has_more,
+            total_estimate: None,
+        },
+    })
+}
+
+/// Get single trade by ID
+pub fn get_trade(ctx: Context<GetTrade>, _trade_id: u64) -> Result<TradeResponse> {
+    let trade = &ctx.accounts.trade;
+
+    Ok(TradeResponse {
+        trade: (**trade).clone(),
+        metadata: TradeMetadata {
+            age_seconds: Clock::get()?.unix_timestamp as u64 - trade.created_at,
+            is_expired: Clock::get()?.unix_timestamp as u64 > trade.expires_at,
+            time_to_expiry: if (Clock::get()?.unix_timestamp as u64) < trade.expires_at {
+                Some(trade.expires_at - Clock::get()?.unix_timestamp as u64)
+            } else {
+                None
             },
-        })
-    }
-    
-    /// Get trades by specific participant (buyer or seller)
-    pub fn get_trades_by_participant(
-        ctx: Context<GetTradesByParticipant>,
-        params: GetTradesByParticipantParams,
-    ) -> Result<TradesResponse> {
-        validate_pagination_params(&params.pagination)?;
-        
-        let program_id = ctx.program_id;
-        let participant_filter = TradeFilter {
-            participant: Some(params.participant),
-            role: params.participant_role,
-            ..Default::default()
-        };
-        let filters = build_trade_filters(&participant_filter)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &params.pagination,
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        
-        let next_cursor = get_next_cursor_trade(&trades);
-        let has_more = trades.len() >= params.pagination.limit as usize;
-        
-        Ok(TradesResponse {
-            trades,
-            pagination: PaginationResponse {
-                next_cursor,
-                has_more,
-                total_estimate: None,
-            },
-        })
-    }
-    
-    /// Get single trade by ID
-    pub fn get_trade(
-        ctx: Context<GetTrade>,
-        _trade_id: u64,
-    ) -> Result<TradeResponse> {
-        let trade = &ctx.accounts.trade;
-        
-        Ok(TradeResponse {
-            trade: (**trade).clone(),
-            metadata: TradeMetadata {
-                age_seconds: Clock::get()?.unix_timestamp as u64 - trade.created_at,
-                is_expired: Clock::get()?.unix_timestamp as u64 > trade.expires_at,
-                time_to_expiry: if (Clock::get()?.unix_timestamp as u64) < trade.expires_at {
-                    Some(trade.expires_at - Clock::get()?.unix_timestamp as u64)
-                } else {
-                    None
-                },
-                state_duration_seconds: calculate_state_duration(trade)?,
-            },
-        })
-    }
-    
-    /// Get trade history with date range and status filters
-    pub fn get_trade_history(
-        ctx: Context<GetTradeHistory>,
-        params: GetTradeHistoryParams,
-    ) -> Result<TradeHistoryResponse> {
-        validate_pagination_params(&params.pagination)?;
-        validate_date_range_params(&params.date_range)?;
-        
-        let program_id = ctx.program_id;
-        let history_filter = TradeFilter {
-            created_after: params.date_range.start_date,
-            created_before: params.date_range.end_date,
-            state: params.state_filter,
-            ..Default::default()
-        };
-        let filters = build_trade_filters(&history_filter)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &params.pagination,
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        let history_items = convert_trades_to_history(&trades, &params.date_range)?;
-        
-        Ok(TradeHistoryResponse {
-            history: history_items,
-            pagination: PaginationResponse {
-                next_cursor: get_next_cursor_trade(&trades),
-                has_more: trades.len() >= params.pagination.limit as usize,
-                total_estimate: None,
-            },
-            summary: calculate_history_summary(&trades)?,
-        })
-    }
-    
-    /// Get trade statistics and analytics
-    pub fn get_trade_stats(
-        ctx: Context<GetTradeStats>,
-        params: GetTradeStatsParams,
-    ) -> Result<TradeStatsResponse> {
-        let program_id = ctx.program_id;
-        let filters = build_trade_filters(&params.filter)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &PaginationParams {
-                limit: 1000, // Reasonable limit for stats calculation
-                cursor: None,
-                direction: PaginationDirection::Forward,
-            },
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        let stats = calculate_trade_statistics(&trades)?;
-        
-        Ok(stats)
-    }
-    
-    /// Search trades with complex filtering and analytics
-    pub fn search_trades(
-        ctx: Context<SearchTrades>,
-        params: SearchTradesParams,
-    ) -> Result<TradesResponse> {
-        validate_pagination_params(&params.pagination)?;
-        validate_search_trade_params(&params)?;
-        
-        let program_id = ctx.program_id;
-        let filters = build_search_trade_filters(&params)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &params.pagination,
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        let filtered_trades = apply_advanced_trade_filters(trades, &params)?;
-        
-        let next_cursor = get_next_cursor_trade(&filtered_trades);
-        let has_more = filtered_trades.len() >= params.pagination.limit as usize;
-        
-        Ok(TradesResponse {
-            trades: filtered_trades,
-            pagination: PaginationResponse {
-                next_cursor,
-                has_more,
-                total_estimate: None,
-            },
-        })
-    }
-    
-    /// Get arbitration cases and dispute analytics
-    pub fn get_arbitration_cases(
-        ctx: Context<GetArbitrationCases>,
-        params: GetArbitrationCasesParams,
-    ) -> Result<ArbitrationCasesResponse> {
-        validate_pagination_params(&params.pagination)?;
-        
-        let program_id = ctx.program_id;
-        let arbitration_filter = TradeFilter {
-            state: Some(TradeState::DisputeOpened),
-            arbitrator: params.arbitrator,
-            ..Default::default()
-        };
-        let filters = build_trade_filters(&arbitration_filter)?;
-        
-        let accounts = load_program_accounts_filtered(
-            ctx.accounts.system_program.to_account_info(),
-            program_id,
-            &filters,
-            &params.pagination,
-        )?;
-        
-        let trades = deserialize_trade_accounts(accounts)?;
-        let cases = convert_trades_to_arbitration_cases(&trades)?;
-        
-        Ok(ArbitrationCasesResponse {
-            cases,
-            pagination: PaginationResponse {
-                next_cursor: get_next_cursor_trade(&trades),
-                has_more: trades.len() >= params.pagination.limit as usize,
-                total_estimate: None,
-            },
-            arbitration_stats: calculate_arbitration_statistics(&trades)?,
-        })
-    }
+            state_duration_seconds: calculate_state_duration(trade)?,
+        },
+    })
+}
+
+/// Get trade history with date range and status filters
+pub fn get_trade_history(
+    ctx: Context<GetTradeHistory>,
+    params: GetTradeHistoryParams,
+) -> Result<TradeHistoryResponse> {
+    validate_pagination_params(&params.pagination)?;
+    validate_date_range_params(&params.date_range)?;
+
+    let program_id = ctx.program_id;
+    let history_filter = TradeFilter {
+        created_after: params.date_range.start_date,
+        created_before: params.date_range.end_date,
+        state: params.state_filter,
+        ..Default::default()
+    };
+    let filters = build_trade_filters(&history_filter)?;
+
+    let accounts = load_program_accounts_filtered(
+        ctx.accounts.system_program.to_account_info(),
+        program_id,
+        &filters,
+        &params.pagination,
+    )?;
+
+    let trades = deserialize_trade_accounts(accounts)?;
+    let history_items = convert_trades_to_history(&trades, &params.date_range)?;
+
+    Ok(TradeHistoryResponse {
+        history: history_items,
+        pagination: PaginationResponse {
+            next_cursor: get_next_cursor_trade(&trades),
+            has_more: trades.len() >= params.pagination.limit as usize,
+            total_estimate: None,
+        },
+        summary: calculate_history_summary(&trades)?,
+    })
+}
+
+/// Get trade statistics and analytics
+pub fn get_trade_stats(
+    ctx: Context<GetTradeStats>,
+    params: GetTradeStatsParams,
+) -> Result<TradeStatsResponse> {
+    let program_id = ctx.program_id;
+    let filters = build_trade_filters(&params.filter)?;
+
+    let accounts = load_program_accounts_filtered(
+        ctx.accounts.system_program.to_account_info(),
+        program_id,
+        &filters,
+        &PaginationParams {
+            limit: 1000, // Reasonable limit for stats calculation
+            cursor: None,
+            direction: PaginationDirection::Forward,
+        },
+    )?;
+
+    let trades = deserialize_trade_accounts(accounts)?;
+    let stats = calculate_trade_statistics(&trades)?;
+
+    Ok(stats)
+}
+
+/// Search trades with complex filtering and analytics
+pub fn search_trades(
+    ctx: Context<SearchTrades>,
+    params: SearchTradesParams,
+) -> Result<TradesResponse> {
+    validate_pagination_params(&params.pagination)?;
+    validate_search_trade_params(&params)?;
+
+    let program_id = ctx.program_id;
+    let filters = build_search_trade_filters(&params)?;
+
+    let accounts = load_program_accounts_filtered(
+        ctx.accounts.system_program.to_account_info(),
+        program_id,
+        &filters,
+        &params.pagination,
+    )?;
+
+    let trades = deserialize_trade_accounts(accounts)?;
+    let filtered_trades = apply_advanced_trade_filters(trades, &params)?;
+
+    let next_cursor = get_next_cursor_trade(&filtered_trades);
+    let has_more = filtered_trades.len() >= params.pagination.limit as usize;
+
+    Ok(TradesResponse {
+        trades: filtered_trades,
+        pagination: PaginationResponse {
+            next_cursor,
+            has_more,
+            total_estimate: None,
+        },
+    })
+}
+
+/// Get arbitration cases and dispute analytics
+pub fn get_arbitration_cases(
+    ctx: Context<GetArbitrationCases>,
+    params: GetArbitrationCasesParams,
+) -> Result<ArbitrationCasesResponse> {
+    validate_pagination_params(&params.pagination)?;
+
+    let program_id = ctx.program_id;
+    let arbitration_filter = TradeFilter {
+        state: Some(TradeState::DisputeOpened),
+        arbitrator: params.arbitrator,
+        ..Default::default()
+    };
+    let filters = build_trade_filters(&arbitration_filter)?;
+
+    let accounts = load_program_accounts_filtered(
+        ctx.accounts.system_program.to_account_info(),
+        program_id,
+        &filters,
+        &params.pagination,
+    )?;
+
+    let trades = deserialize_trade_accounts(accounts)?;
+    let cases = convert_trades_to_arbitration_cases(&trades)?;
+
+    Ok(ArbitrationCasesResponse {
+        cases,
+        pagination: PaginationResponse {
+            next_cursor: get_next_cursor_trade(&trades),
+            has_more: trades.len() >= params.pagination.limit as usize,
+            total_estimate: None,
+        },
+        arbitration_stats: calculate_arbitration_statistics(&trades)?,
+    })
+}
 
 // ==================== QUERY ACCOUNT CONTEXTS ====================
 
@@ -3981,31 +3918,33 @@ fn validate_search_trade_params(params: &SearchTradesParams) -> Result<()> {
             require!(min <= max, ErrorCode::InvalidParameter);
         }
     }
-    
+
     // Validate date range in filter
-    if let (Some(after), Some(before)) = (params.filter.created_after, params.filter.created_before) {
+    if let (Some(after), Some(before)) = (params.filter.created_after, params.filter.created_before)
+    {
         require!(after <= before, ErrorCode::InvalidParameter);
     }
-    
+
     // Validate expiry date range
-    if let (Some(after), Some(before)) = (params.filter.expires_after, params.filter.expires_before) {
+    if let (Some(after), Some(before)) = (params.filter.expires_after, params.filter.expires_before)
+    {
         require!(after <= before, ErrorCode::InvalidParameter);
     }
-    
+
     Ok(())
 }
 
 fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
     let mut filters = Vec::new();
-    
+
     // Add discriminator filter for Trade accounts
     filters.push(RpcFilterType::Memcmp(Memcmp::new(
         0, // offset 0 for discriminator
         MemcmpEncodedBytes::Base64(
-            "TradeDiscriminator".to_string() // Placeholder - replace with actual discriminator
+            "TradeDiscriminator".to_string(), // Placeholder - replace with actual discriminator
         ),
     )));
-    
+
     // Filter by buyer if specified
     if let Some(buyer) = filter.buyer {
         filters.push(RpcFilterType::Memcmp(Memcmp::new(
@@ -4013,7 +3952,7 @@ fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
             MemcmpEncodedBytes::Base58(buyer.to_string()),
         )));
     }
-    
+
     // Filter by seller if specified
     if let Some(seller) = filter.seller {
         filters.push(RpcFilterType::Memcmp(Memcmp::new(
@@ -4021,7 +3960,7 @@ fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
             MemcmpEncodedBytes::Base58(seller.to_string()),
         )));
     }
-    
+
     // Filter by state if specified
     if let Some(state) = &filter.state {
         let state_byte = trade_state_to_byte(state);
@@ -4030,7 +3969,7 @@ fn build_trade_filters(filter: &TradeFilter) -> Result<Vec<RpcFilterType>> {
             MemcmpEncodedBytes::Base58(format!("{}", state_byte)),
         )));
     }
-    
+
     Ok(filters)
 }
 
@@ -4040,27 +3979,24 @@ fn build_search_trade_filters(params: &SearchTradesParams) -> Result<Vec<RpcFilt
 
 fn deserialize_trade_accounts(accounts: Vec<(Pubkey, AccountInfo)>) -> Result<Vec<Trade>> {
     let mut trades = Vec::new();
-    
+
     for (_, account_info) in accounts {
         // Skip discriminator (8 bytes) and deserialize
         let data = &account_info.data.borrow()[8..];
         let trade: Trade = AnchorDeserialize::deserialize(&mut &data[..])?;
         trades.push(trade);
     }
-    
+
     Ok(trades)
 }
 
-fn estimate_total_trades(_system_program: AccountInfo, _program_id: &Pubkey) -> Result<u64> {
-    // Placeholder implementation
-    Ok(0)
-}
+
 
 fn get_next_cursor_trade(trades: &[Trade]) -> Option<String> {
     if trades.is_empty() {
         return None;
     }
-    
+
     let last_trade = trades.last().unwrap();
     Some(format!("{}_{}", last_trade.id, last_trade.created_at))
 }
@@ -4074,17 +4010,22 @@ fn calculate_state_duration(trade: &Trade) -> Result<u64> {
     }
 }
 
-fn convert_trades_to_history(trades: &[Trade], _date_range: &DateRangeParams) -> Result<Vec<TradeHistoryItem>> {
+fn convert_trades_to_history(
+    trades: &[Trade],
+    _date_range: &DateRangeParams,
+) -> Result<Vec<TradeHistoryItem>> {
     let mut history_items = Vec::new();
-    
+
     for trade in trades {
-        let completed_at = trade.state_history
+        let completed_at = trade
+            .state_history
             .iter()
             .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
             .map(|item| item.timestamp);
-        
-        let duration_seconds = completed_at.map(|completed| completed.saturating_sub(trade.created_at));
-        
+
+        let duration_seconds =
+            completed_at.map(|completed| completed.saturating_sub(trade.created_at));
+
         history_items.push(TradeHistoryItem {
             trade_id: trade.id,
             buyer: trade.buyer,
@@ -4097,7 +4038,7 @@ fn convert_trades_to_history(trades: &[Trade], _date_range: &DateRangeParams) ->
             duration_seconds,
         });
     }
-    
+
     Ok(history_items)
 }
 
@@ -4107,14 +4048,15 @@ fn calculate_history_summary(trades: &[Trade]) -> Result<TradeHistorySummary> {
     let mut completed_trades = 0u64;
     let mut disputed_trades = 0u64;
     let mut total_completion_time = 0u64;
-    
+
     for trade in trades {
         total_volume += trade.amount;
-        
+
         if matches!(trade.state, TradeState::Released | TradeState::Refunded) {
             completed_trades += 1;
-            
-            if let Some(completion_time) = trade.state_history
+
+            if let Some(completion_time) = trade
+                .state_history
                 .iter()
                 .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
                 .map(|item| item.timestamp.saturating_sub(trade.created_at))
@@ -4122,24 +4064,27 @@ fn calculate_history_summary(trades: &[Trade]) -> Result<TradeHistorySummary> {
                 total_completion_time += completion_time;
             }
         }
-        
-        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+
+        if matches!(
+            trade.state,
+            TradeState::DisputeOpened | TradeState::DisputeResolved
+        ) {
             disputed_trades += 1;
         }
     }
-    
+
     let average_completion_time = if completed_trades > 0 {
         total_completion_time / completed_trades
     } else {
         0
     };
-    
+
     let success_rate = if total_trades > 0 {
         (completed_trades * 10000) / total_trades // Basis points
     } else {
         0
     };
-    
+
     Ok(TradeHistorySummary {
         total_trades,
         total_volume,
@@ -4158,36 +4103,43 @@ fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
     let mut completion_times = Vec::new();
     let mut dispute_count = 0u64;
     let mut resolved_disputes = 0u64;
-    
+
     for trade in trades {
         // Count by state
         let state_key = trade_state_to_byte(&trade.state);
         *state_counts.entry(state_key).or_insert(0u64) += 1;
-        
+
         // Collect amounts
         amounts.push(trade.amount);
-        
+
         // Track currency stats
-        let currency_stat = currency_stats.entry(trade.fiat_currency.clone()).or_insert(CurrencyTradeStats {
-            currency: trade.fiat_currency.clone(),
-            trade_count: 0,
-            total_volume: 0,
-            average_amount: 0,
-            average_locked_price: 0,
-        });
+        let currency_stat =
+            currency_stats
+                .entry(trade.fiat_currency.clone())
+                .or_insert(CurrencyTradeStats {
+                    currency: trade.fiat_currency.clone(),
+                    trade_count: 0,
+                    total_volume: 0,
+                    average_amount: 0,
+                    average_locked_price: 0,
+                });
         currency_stat.trade_count += 1;
         currency_stat.total_volume += trade.amount;
-        
+
         // Track dispute statistics
-        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+        if matches!(
+            trade.state,
+            TradeState::DisputeOpened | TradeState::DisputeResolved
+        ) {
             dispute_count += 1;
             if matches!(trade.state, TradeState::DisputeResolved) {
                 resolved_disputes += 1;
             }
         }
-        
+
         // Track completion times
-        if let Some(completion_time) = trade.state_history
+        if let Some(completion_time) = trade
+            .state_history
             .iter()
             .find(|item| matches!(item.state, TradeState::Released | TradeState::Refunded))
             .map(|item| item.timestamp.saturating_sub(trade.created_at))
@@ -4195,43 +4147,63 @@ fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
             completion_times.push(completion_time);
         }
     }
-    
+
     // Calculate volume statistics
     amounts.sort_unstable();
     let total_volume: u64 = amounts.iter().sum();
     let volume_statistics = VolumeStatistics {
         total_volume,
-        average_trade_size: if total_trades > 0 { total_volume / total_trades } else { 0 },
+        average_trade_size: if total_trades > 0 {
+            total_volume / total_trades
+        } else {
+            0
+        },
         largest_trade: amounts.last().copied().unwrap_or(0),
         smallest_trade: amounts.first().copied().unwrap_or(0),
-        median_trade_size: if amounts.is_empty() { 0 } else { amounts[amounts.len() / 2] },
+        median_trade_size: if amounts.is_empty() {
+            0
+        } else {
+            amounts[amounts.len() / 2]
+        },
     };
-    
+
     // Calculate time statistics
     completion_times.sort_unstable();
     let time_statistics = TimeStatistics {
-        average_completion_time: if completion_times.is_empty() { 0 } else { 
-            completion_times.iter().sum::<u64>() / completion_times.len() as u64 
+        average_completion_time: if completion_times.is_empty() {
+            0
+        } else {
+            completion_times.iter().sum::<u64>() / completion_times.len() as u64
         },
         fastest_completion: completion_times.first().copied().unwrap_or(0),
         slowest_completion: completion_times.last().copied().unwrap_or(0),
         average_response_time: 0, // Placeholder - would need more detailed tracking
     };
-    
+
     // Build response
-    let trades_by_state = state_counts.into_iter().map(|(state_byte, count)| StateCount { state: byte_to_trade_state(state_byte), count }).collect();
+    let trades_by_state = state_counts
+        .into_iter()
+        .map(|(state_byte, count)| StateCount {
+            state: byte_to_trade_state(state_byte),
+            count,
+        })
+        .collect();
     let trades_by_currency = currency_stats.into_values().collect();
-    
+
     let arbitration_statistics = ArbitrationStatistics {
         total_disputes: dispute_count,
         resolved_disputes,
         pending_disputes: dispute_count.saturating_sub(resolved_disputes),
-        dispute_rate: if total_trades > 0 { (dispute_count * 10000) / total_trades } else { 0 },
+        dispute_rate: if total_trades > 0 {
+            (dispute_count * 10000) / total_trades
+        } else {
+            0
+        },
         average_resolution_time: 0, // Placeholder
-        buyer_wins: 0, // Placeholder
-        seller_wins: 0, // Placeholder
+        buyer_wins: 0,              // Placeholder
+        seller_wins: 0,             // Placeholder
     };
-    
+
     Ok(TradeStatsResponse {
         total_trades,
         trades_by_state,
@@ -4242,9 +4214,12 @@ fn calculate_trade_statistics(trades: &[Trade]) -> Result<TradeStatsResponse> {
     })
 }
 
-fn apply_advanced_trade_filters(trades: Vec<Trade>, params: &SearchTradesParams) -> Result<Vec<Trade>> {
+fn apply_advanced_trade_filters(
+    trades: Vec<Trade>,
+    params: &SearchTradesParams,
+) -> Result<Vec<Trade>> {
     let mut filtered = trades;
-    
+
     // Apply amount range filter
     if let Some(amount_range) = &params.amount_range {
         if let Some(min_amount) = amount_range.min_amount {
@@ -4254,7 +4229,7 @@ fn apply_advanced_trade_filters(trades: Vec<Trade>, params: &SearchTradesParams)
             filtered.retain(|trade| trade.amount <= max_amount);
         }
     }
-    
+
     // Apply expiry filter
     if let Some(include_expired) = params.include_expired {
         let current_time = Clock::get().unwrap().unix_timestamp as u64;
@@ -4262,7 +4237,7 @@ fn apply_advanced_trade_filters(trades: Vec<Trade>, params: &SearchTradesParams)
             filtered.retain(|trade| trade.expires_at > current_time);
         }
     }
-    
+
     // Apply sorting
     if let Some(sort_by) = &params.sort_by {
         match sort_by {
@@ -4279,31 +4254,37 @@ fn apply_advanced_trade_filters(trades: Vec<Trade>, params: &SearchTradesParams)
                 filtered.sort_by(|a, b| a.locked_price.cmp(&b.locked_price));
             }
             TradeSortBy::State => {
-                filtered.sort_by(|a, b| trade_state_to_byte(&a.state).cmp(&trade_state_to_byte(&b.state)));
+                filtered.sort_by(|a, b| {
+                    trade_state_to_byte(&a.state).cmp(&trade_state_to_byte(&b.state))
+                });
             }
         }
     }
-    
+
     Ok(filtered)
 }
 
 fn convert_trades_to_arbitration_cases(trades: &[Trade]) -> Result<Vec<ArbitrationCase>> {
     let mut cases = Vec::new();
-    
+
     for trade in trades {
-        if matches!(trade.state, TradeState::DisputeOpened | TradeState::DisputeResolved) {
+        if matches!(
+            trade.state,
+            TradeState::DisputeOpened | TradeState::DisputeResolved
+        ) {
             let case_status = match trade.state {
                 TradeState::DisputeOpened => ArbitrationStatus::Pending,
                 TradeState::DisputeResolved => ArbitrationStatus::Resolved,
                 _ => ArbitrationStatus::Pending,
             };
-            
-            let dispute_opened_at = trade.state_history
+
+            let dispute_opened_at = trade
+                .state_history
                 .iter()
                 .find(|item| matches!(item.state, TradeState::DisputeOpened))
                 .map(|item| item.timestamp)
                 .unwrap_or(trade.created_at);
-            
+
             cases.push(ArbitrationCase {
                 trade_id: trade.id,
                 buyer: trade.buyer,
@@ -4318,7 +4299,7 @@ fn convert_trades_to_arbitration_cases(trades: &[Trade]) -> Result<Vec<Arbitrati
             });
         }
     }
-    
+
     Ok(cases)
 }
 
@@ -4326,7 +4307,7 @@ fn calculate_arbitration_statistics(trades: &[Trade]) -> Result<ArbitrationStati
     let mut total_disputes = 0u64;
     let mut resolved_disputes = 0u64;
     let mut pending_disputes = 0u64;
-    
+
     for trade in trades {
         match trade.state {
             TradeState::DisputeOpened => {
@@ -4340,21 +4321,21 @@ fn calculate_arbitration_statistics(trades: &[Trade]) -> Result<ArbitrationStati
             _ => {}
         }
     }
-    
+
     let dispute_rate = if trades.len() > 0 {
         (total_disputes * 10000) / trades.len() as u64
     } else {
         0
     };
-    
+
     Ok(ArbitrationStatistics {
         total_disputes,
         resolved_disputes,
         pending_disputes,
         dispute_rate,
         average_resolution_time: 0, // Placeholder
-        buyer_wins: 0, // Placeholder
-        seller_wins: 0, // Placeholder
+        buyer_wins: 0,              // Placeholder
+        seller_wins: 0,             // Placeholder
     })
 }
 
@@ -4456,12 +4437,12 @@ pub enum MemcmpEncodedBytes {
 fn validate_pagination_params(params: &PaginationParams) -> Result<()> {
     const MAX_LIMIT: u32 = 100;
     const MIN_LIMIT: u32 = 1;
-    
+
     require!(
         params.limit >= MIN_LIMIT && params.limit <= MAX_LIMIT,
         ErrorCode::InvalidParameter
     );
-    
+
     Ok(())
 }
 
@@ -4533,7 +4514,7 @@ pub enum ErrorCode {
     RefundTooEarly,
     #[msg("Invalid parameter")]
     InvalidParameter,
-    
+
     // ADVANCED FEE MANAGEMENT: New error codes for enhanced fee system
     #[msg("Excessive conversion fee")]
     ExcessiveConversionFee,
