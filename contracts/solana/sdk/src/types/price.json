@@ -1,0 +1,1228 @@
+{
+  "address": "GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL",
+  "metadata": {
+    "name": "price",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_oracle_source",
+      "discriminator": [
+        189,
+        213,
+        129,
+        129,
+        226,
+        87,
+        34,
+        23
+      ],
+      "accounts": [
+        {
+          "name": "price_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "price_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "source_type",
+          "type": {
+            "defined": {
+              "name": "OracleType"
+            }
+          }
+        },
+        {
+          "name": "address",
+          "type": "pubkey"
+        },
+        {
+          "name": "weight",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "calculate_twap",
+      "discriminator": [
+        20,
+        80,
+        81,
+        119,
+        12,
+        212,
+        164,
+        114
+      ],
+      "accounts": [
+        {
+          "name": "price_feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_mint"
+        }
+      ],
+      "args": [
+        {
+          "name": "_fiat_currency",
+          "type": {
+            "defined": {
+              "name": "FiatCurrency"
+            }
+          }
+        },
+        {
+          "name": "_window_seconds",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "get_price",
+      "discriminator": [
+        238,
+        38,
+        193,
+        106,
+        228,
+        32,
+        210,
+        33
+      ],
+      "accounts": [
+        {
+          "name": "price_feed",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "fiat_currency"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "fiat_currency",
+          "type": {
+            "defined": {
+              "name": "FiatCurrency"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "price_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_enhanced",
+      "discriminator": [
+        209,
+        204,
+        38,
+        126,
+        114,
+        74,
+        62,
+        249
+      ],
+      "accounts": [
+        {
+          "name": "price_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_price_age_seconds",
+          "type": "u64"
+        },
+        {
+          "name": "max_deviation_bps",
+          "type": "u16"
+        },
+        {
+          "name": "min_required_sources",
+          "type": "u8"
+        },
+        {
+          "name": "twap_window_seconds",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "toggle_price_circuit_breaker",
+      "discriminator": [
+        23,
+        217,
+        97,
+        3,
+        239,
+        31,
+        137,
+        197
+      ],
+      "accounts": [
+        {
+          "name": "price_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "price_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "pause",
+          "type": "bool"
+        },
+        {
+          "name": "reason",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "auto_resume_seconds",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "update_price",
+      "discriminator": [
+        61,
+        34,
+        117,
+        155,
+        75,
+        34,
+        123,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "price_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "price_feed",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  105,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "fiat_currency"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fiat_currency",
+          "type": {
+            "defined": {
+              "name": "FiatCurrency"
+            }
+          }
+        },
+        {
+          "name": "price_per_token",
+          "type": "u64"
+        },
+        {
+          "name": "decimals",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "EnhancedPriceConfig",
+      "discriminator": [
+        109,
+        119,
+        128,
+        189,
+        236,
+        165,
+        253,
+        29
+      ]
+    },
+    {
+      "name": "PriceConfig",
+      "discriminator": [
+        182,
+        159,
+        212,
+        53,
+        192,
+        28,
+        71,
+        108
+      ]
+    },
+    {
+      "name": "PriceFeed",
+      "discriminator": [
+        189,
+        103,
+        252,
+        23,
+        152,
+        35,
+        243,
+        156
+      ]
+    },
+    {
+      "name": "PriceFeedAggregate",
+      "discriminator": [
+        126,
+        179,
+        3,
+        255,
+        232,
+        140,
+        181,
+        111
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "OracleSourceUpdatedEvent",
+      "discriminator": [
+        39,
+        176,
+        12,
+        84,
+        215,
+        199,
+        45,
+        50
+      ]
+    },
+    {
+      "name": "PriceAnomalyEvent",
+      "discriminator": [
+        144,
+        127,
+        61,
+        12,
+        8,
+        236,
+        207,
+        245
+      ]
+    },
+    {
+      "name": "PriceCircuitBreakerEvent",
+      "discriminator": [
+        49,
+        58,
+        193,
+        62,
+        237,
+        47,
+        1,
+        67
+      ]
+    },
+    {
+      "name": "PriceUpdateEvent",
+      "discriminator": [
+        176,
+        152,
+        211,
+        252,
+        92,
+        105,
+        194,
+        103
+      ]
+    },
+    {
+      "name": "TwapCalculatedEvent",
+      "discriminator": [
+        69,
+        240,
+        79,
+        218,
+        122,
+        107,
+        24,
+        215
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized access"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidCurrency",
+      "msg": "Invalid currency for this price feed"
+    },
+    {
+      "code": 6002,
+      "name": "PriceUpdatesPaused",
+      "msg": "Price updates are currently paused"
+    },
+    {
+      "code": 6003,
+      "name": "InsufficientPriceSources",
+      "msg": "Insufficient price sources available"
+    },
+    {
+      "code": 6004,
+      "name": "ExcessivePriceDeviation",
+      "msg": "Excessive price deviation between sources"
+    },
+    {
+      "code": 6005,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow in calculation"
+    },
+    {
+      "code": 6006,
+      "name": "ArithmeticUnderflow",
+      "msg": "Arithmetic underflow"
+    },
+    {
+      "code": 6007,
+      "name": "DivisionByZero",
+      "msg": "Division by zero"
+    },
+    {
+      "code": 6008,
+      "name": "StalePrice",
+      "msg": "Price data is stale"
+    },
+    {
+      "code": 6009,
+      "name": "TooManyPriceAnomalies",
+      "msg": "Too many price anomalies detected"
+    },
+    {
+      "code": 6010,
+      "name": "InsufficientPriceHistory",
+      "msg": "Insufficient price history for TWAP"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidOracleData",
+      "msg": "Oracle data is invalid"
+    },
+    {
+      "code": 6012,
+      "name": "PricesPaused",
+      "msg": "Prices are currently paused"
+    },
+    {
+      "code": 6013,
+      "name": "OracleFailures",
+      "msg": "Too many oracle failures"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidOracleConfig",
+      "msg": "Invalid oracle configuration"
+    },
+    {
+      "code": 6015,
+      "name": "MaxOracleSourcesReached",
+      "msg": "Maximum oracle sources reached"
+    },
+    {
+      "code": 6016,
+      "name": "StringTooLong",
+      "msg": "String exceeds maximum length"
+    },
+    {
+      "code": 6017,
+      "name": "CollectionFull",
+      "msg": "Collection is full"
+    },
+    {
+      "code": 6018,
+      "name": "RateLimitExceeded",
+      "msg": "Rate limit exceeded"
+    },
+    {
+      "code": 6019,
+      "name": "PageFull",
+      "msg": "Page is full"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidPageNumber",
+      "msg": "Invalid page number"
+    }
+  ],
+  "types": [
+    {
+      "name": "BoundedPriceHistory",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "prices",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "PricePoint"
+                  }
+                },
+                24
+              ]
+            }
+          },
+          {
+            "name": "head",
+            "type": "u8"
+          },
+          {
+            "name": "count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EnhancedPriceConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle_sources",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "OracleSource"
+                }
+              }
+            }
+          },
+          {
+            "name": "max_price_age_seconds",
+            "type": "u64"
+          },
+          {
+            "name": "max_deviation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "min_required_sources",
+            "type": "u8"
+          },
+          {
+            "name": "twap_window_seconds",
+            "type": "u64"
+          },
+          {
+            "name": "emergency_fallback_price",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "price_pause",
+            "type": "bool"
+          },
+          {
+            "name": "pause_reason",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pause_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "auto_resume_after",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FiatCurrency",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Usd"
+          },
+          {
+            "name": "Eur"
+          },
+          {
+            "name": "Gbp"
+          },
+          {
+            "name": "Cad"
+          },
+          {
+            "name": "Aud"
+          },
+          {
+            "name": "Jpy"
+          },
+          {
+            "name": "Brl"
+          },
+          {
+            "name": "Mxn"
+          },
+          {
+            "name": "Ars"
+          },
+          {
+            "name": "Clp"
+          },
+          {
+            "name": "Cop"
+          },
+          {
+            "name": "Ngn"
+          },
+          {
+            "name": "Thb"
+          },
+          {
+            "name": "Ves"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleSource",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "source_type",
+            "type": {
+              "defined": {
+                "name": "OracleType"
+              }
+            }
+          },
+          {
+            "name": "address",
+            "type": "pubkey"
+          },
+          {
+            "name": "weight",
+            "type": "u16"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "last_update",
+            "type": "i64"
+          },
+          {
+            "name": "last_price",
+            "type": "u64"
+          },
+          {
+            "name": "failure_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleSourceUpdatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "source_type",
+            "type": {
+              "defined": {
+                "name": "OracleType"
+              }
+            }
+          },
+          {
+            "name": "address",
+            "type": "pubkey"
+          },
+          {
+            "name": "weight",
+            "type": "u16"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "action",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Pyth"
+          },
+          {
+            "name": "Switchboard"
+          },
+          {
+            "name": "Internal"
+          },
+          {
+            "name": "Chainlink"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceAnomalyEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "fiat_currency",
+            "type": {
+              "defined": {
+                "name": "FiatCurrency"
+              }
+            }
+          },
+          {
+            "name": "old_price",
+            "type": "u64"
+          },
+          {
+            "name": "new_price",
+            "type": "u64"
+          },
+          {
+            "name": "change_bps",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceCircuitBreakerEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "action",
+            "type": "string"
+          },
+          {
+            "name": "reason",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "auto_resume_after",
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceFeed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fiat_currency",
+            "type": {
+              "defined": {
+                "name": "FiatCurrency"
+              }
+            }
+          },
+          {
+            "name": "price_per_token",
+            "type": "u64"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "last_updated",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceFeedAggregate",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "fiat_currency",
+            "type": {
+              "defined": {
+                "name": "FiatCurrency"
+              }
+            }
+          },
+          {
+            "name": "price_history",
+            "type": {
+              "defined": {
+                "name": "BoundedPriceHistory"
+              }
+            }
+          },
+          {
+            "name": "current_price",
+            "type": "u64"
+          },
+          {
+            "name": "current_confidence",
+            "type": "u64"
+          },
+          {
+            "name": "last_update",
+            "type": "i64"
+          },
+          {
+            "name": "total_updates",
+            "type": "u64"
+          },
+          {
+            "name": "anomaly_count",
+            "type": "u32"
+          },
+          {
+            "name": "consecutive_failures",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PricePoint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "price",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "source_count",
+            "type": "u8"
+          },
+          {
+            "name": "confidence",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PriceUpdateEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "fiat_currency",
+            "type": {
+              "defined": {
+                "name": "FiatCurrency"
+              }
+            }
+          },
+          {
+            "name": "price",
+            "type": "u64"
+          },
+          {
+            "name": "confidence",
+            "type": "u64"
+          },
+          {
+            "name": "sources_used",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TwapCalculatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "fiat_currency",
+            "type": {
+              "defined": {
+                "name": "FiatCurrency"
+              }
+            }
+          },
+          {
+            "name": "twap_price",
+            "type": "u64"
+          },
+          {
+            "name": "window_seconds",
+            "type": "u64"
+          },
+          {
+            "name": "data_points",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

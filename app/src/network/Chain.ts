@@ -9,6 +9,8 @@ import {
 import { NEUTRON_CONFIG, NEUTRON_HUB_INFO } from './cosmos/config/neutron'
 import { DEV_CONFIG, DEV_HUB_INFO } from './cosmos/config/dev'
 import { TERRA_CONFIG, TERRA_HUB_INFO } from './cosmos/config/terra'
+import { MANTRA_CONFIG, MANTRA_HUB_INFO } from './cosmos/config/mantra'
+import { COSMOSHUB_CONFIG, COSMOSHUB_HUB_INFO } from './cosmos/config/cosmoshub'
 import type {
   Addr,
   Arbitrator,
@@ -67,6 +69,8 @@ export interface Chain {
 
   updateFiatPrice(fiat: FiatCurrency, denom: Denom): Promise<DenomFiatPrice>
 
+  fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number>
+
   acceptTradeRequest(tradeId: number, makerContact: string): Promise<void>
 
   cancelTradeRequest(tradeId: number): Promise<void>
@@ -93,6 +97,8 @@ export enum ChainClient {
   dev = 'DEV',
   terra = 'TERRA',
   neutron = 'NEUTRON',
+  mantra = 'MANTRA',
+  cosmoshub = 'COSMOSHUB',
 }
 
 // Centralized place to instantiate chain client and inject dependencies if needed
@@ -110,5 +116,9 @@ export function chainFactory(client: ChainClient): Chain {
       return new CosmosChain(DEV_CONFIG, DEV_HUB_INFO)
     case ChainClient.terra:
       return new CosmosChain(TERRA_CONFIG, TERRA_HUB_INFO)
+    case ChainClient.mantra:
+      return new CosmosChain(MANTRA_CONFIG, MANTRA_HUB_INFO)
+    case ChainClient.cosmoshub:
+      return new CosmosChain(COSMOSHUB_CONFIG, COSMOSHUB_HUB_INFO)
   }
 }

@@ -1,6 +1,12 @@
-#![allow(unexpected_cfgs)]
-#![allow(deprecated)]
+#![deny(arithmetic_overflow)]
+#![deny(unused_must_use)]
+#![deny(clippy::arithmetic_side_effects)]
+#![forbid(unsafe_code)]
 use anchor_lang::prelude::*;
+use localmoney_shared::{
+    calculate_rent_with_margin, BoundedString, OfferState, RentError, RentValidation, SafeMath,
+    TradeState, ProfileCreatedEvent, ProfileUpdatedEvent,
+};
 
 declare_id!("6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC");
 
@@ -9,11 +15,14 @@ pub mod profile {
     use super::*;
 
     pub fn create_profile(ctx: Context<CreateProfile>, username: String) -> Result<()> {
+        // Validate rent exemption before creation
+        ctx.accounts.validate_rent_exemption()?;
+
         let profile = &mut ctx.accounts.profile;
         let clock = Clock::get()?;
 
         profile.owner = ctx.accounts.user.key();
-        profile.username = username;
+        profile.username = username.clone();
         profile.created_at = clock.unix_timestamp as u64;
         profile.requested_trades_count = 0;
         profile.active_trades_count = 0;
@@ -24,6 +33,14 @@ pub mod profile {
         profile.active_offers_count = 0;
         profile.bump = ctx.bumps.profile;
 
+        // Emit profile creation event
+        emit!(ProfileCreatedEvent {
+            user: ctx.accounts.user.key(),
+            username: username,
+            timestamp: clock.unix_timestamp,
+            user_index: ctx.accounts.user.key(),
+        });
+
         Ok(())
     }
 
@@ -33,8 +50,21 @@ pub mod profile {
         encryption_key: String,
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
-        profile.contact = Some(contact);
-        profile.encryption_key = Some(encryption_key);
+        let clock = Clock::get()?;
+        
+        profile.contact = BoundedString::from_option(Some(contact.clone()))?;
+        profile.encryption_key = BoundedString::from_option(Some(encryption_key.clone()))?;
+        
+        // Emit profile updated event
+        emit!(ProfileUpdatedEvent {
+            user: ctx.accounts.user.key(),
+            field: "contact_info".to_string(),
+            old_value: "hidden".to_string(), // Don't expose sensitive contact info
+            new_value: "updated".to_string(),
+            timestamp: clock.unix_timestamp,
+            user_index: ctx.accounts.user.key(),
+        });
+        
         Ok(())
     }
 
@@ -44,11 +74,19 @@ pub mod profile {
     ) -> Result<()> {
         let profile = &mut ctx.accounts.profile;
 
+        // Enforce that the profile owner authorizes this update
+        require!(
+            profile.owner == ctx.accounts.user.key(),
+            ErrorCode::Unauthorized
+        );
+
         match offer_state {
-            OfferState::Active => profile.active_offers_count += 1,
+            OfferState::Active => {
+                profile.active_offers_count = profile.active_offers_count.safe_add(1)?
+            }
             OfferState::Paused | OfferState::Archive => {
                 if profile.active_offers_count > 0 {
-                    profile.active_offers_count -= 1;
+                    profile.active_offers_count = profile.active_offers_count.safe_sub(1)?;
                 }
             }
         }
@@ -63,16 +101,33 @@ pub mod profile {
         let profile = &mut ctx.accounts.profile;
         let clock = Clock::get()?;
 
+        // Access control: actor must be buyer, seller, or arbitrator
+        let actor = ctx.accounts.actor.key();
+        let buyer = ctx.accounts.buyer.key();
+        let seller = ctx.accounts.seller.key();
+        let arbitrator = ctx.accounts.arbitrator.key();
+
+        require!(
+            actor == buyer || actor == seller || actor == arbitrator,
+            ErrorCode::Unauthorized
+        );
+
+        // Ensure the profile being updated belongs to either buyer or seller
+        require!(
+            profile.owner == buyer || profile.owner == seller,
+            ErrorCode::Unauthorized
+        );
+
         match trade_state {
             TradeState::RequestCreated => {
-                profile.requested_trades_count += 1;
-                profile.active_trades_count += 1;
+                profile.requested_trades_count = profile.requested_trades_count.safe_add(1)?;
+                profile.active_trades_count = profile.active_trades_count.safe_add(1)?;
             }
             TradeState::EscrowReleased => {
                 if profile.active_trades_count > 0 {
-                    profile.active_trades_count -= 1;
+                    profile.active_trades_count = profile.active_trades_count.safe_sub(1)?;
                 }
-                profile.released_trades_count += 1;
+                profile.released_trades_count = profile.released_trades_count.safe_add(1)?;
                 profile.last_trade = clock.unix_timestamp as u64;
             }
             TradeState::RequestCanceled
@@ -81,7 +136,7 @@ pub mod profile {
             | TradeState::SettledForMaker
             | TradeState::SettledForTaker => {
                 if profile.active_trades_count > 0 {
-                    profile.active_trades_count -= 1;
+                    profile.active_trades_count = profile.active_trades_count.safe_sub(1)?;
                 }
             }
             _ => {} // No change for other states
@@ -109,6 +164,21 @@ pub struct CreateProfile<'info> {
     pub system_program: Program<'info, System>,
 }
 
+impl<'info> RentValidation for CreateProfile<'info> {
+    fn validate_rent_exemption(&self) -> Result<()> {
+        // Calculate required rent with 10% margin (1000 basis points)
+        let required_rent = calculate_rent_with_margin(Profile::SPACE, 1000)?;
+
+        // Ensure payer has sufficient balance
+        require!(
+            self.user.lamports() >= required_rent,
+            RentError::InsufficientFunds
+        );
+
+        Ok(())
+    }
+}
+
 #[derive(Accounts)]
 pub struct UpdateContact<'info> {
     #[account(
@@ -130,6 +200,9 @@ pub struct UpdateActiveOffers<'info> {
         bump = profile.bump
     )]
     pub profile: Account<'info, Profile>,
+
+    // Require the profile owner to authorize offer count changes
+    pub user: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -140,6 +213,16 @@ pub struct UpdateTradeStats<'info> {
         bump = profile.bump
     )]
     pub profile: Account<'info, Profile>,
+
+    // Actor must be a participant in the trade flow (buyer, seller, or arbitrator)
+    pub actor: Signer<'info>,
+
+    /// CHECK: Buyer pubkey participating in the trade
+    pub buyer: UncheckedAccount<'info>,
+    /// CHECK: Seller pubkey participating in the trade
+    pub seller: UncheckedAccount<'info>,
+    /// CHECK: Arbitrator pubkey (if applicable in this transition)
+    pub arbitrator: UncheckedAccount<'info>,
 }
 
 #[account]
@@ -152,8 +235,8 @@ pub struct Profile {
     pub active_trades_count: u8,
     pub released_trades_count: u64,
     pub last_trade: u64,
-    pub contact: Option<String>,
-    pub encryption_key: Option<String>,
+    pub contact: Option<BoundedString>,
+    pub encryption_key: Option<BoundedString>,
     pub active_offers_count: u8,
     pub bump: u8,
 }
@@ -167,66 +250,32 @@ impl Profile {
         1 + // active_trades_count
         8 + // released_trades_count
         8 + // last_trade
-        1 + 4 + 200 + // contact (Option<String> with max 200 chars)
-        1 + 4 + 100 + // encryption_key (Option<String> with max 100 chars)
+        BoundedString::option_space() + // contact
+        BoundedString::option_space() + // encryption_key
         1 + // active_offers_count
         1; // bump
 }
 
-// Common types used across programs
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, Debug)]
-pub enum TradeState {
-    RequestCreated,
-    RequestCanceled,
-    RequestExpired,
-    RequestAccepted,
-    EscrowFunded,
-    EscrowCanceled,
-    EscrowRefunded,
-    FiatDeposited,
-    EscrowReleased,
-    EscrowDisputed,
-    DisputeOpened,
-    DisputeResolved,
-    Released,
-    SettledForMaker,
-    SettledForTaker,
-    Refunded,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, Debug)]
-pub enum OfferState {
-    Active,
-    Paused,
-    Archive,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, Debug)]
-pub enum OfferType {
-    Buy,
-    Sell,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum FiatCurrency {
-    Usd,
-    Eur,
-    Gbp,
-    Cad,
-    Aud,
-    Jpy,
-    Brl,
-    Mxn,
-    Ars,
-    Clp,
-    Cop,
-    Ngn,
-    Thb,
-    Ves,
-}
+// Common types are now imported from localmoney_shared
 
 #[error_code]
 pub enum ErrorCode {
     #[msg("Unauthorized access")]
     Unauthorized,
+    #[msg("Arithmetic overflow")]
+    ArithmeticOverflow,
+    #[msg("Arithmetic underflow")]
+    ArithmeticUnderflow,
+    #[msg("Division by zero")]
+    DivisionByZero,
+    #[msg("String exceeds maximum length")]
+    StringTooLong,
+    #[msg("Collection is full")]
+    CollectionFull,
+    #[msg("Rate limit exceeded")]
+    RateLimitExceeded,
+    #[msg("Page is full")]
+    PageFull,
+    #[msg("Invalid page number")]
+    InvalidPageNumber,
 }

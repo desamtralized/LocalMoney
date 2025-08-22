@@ -21,11 +21,25 @@ const offerTypeLabels: OfferTypeLabel = { [OfferType.buy]: t('label.sell'), [Off
 const marginRate = computed(() => convertOfferRateToMarginRate(props.offerResponse.offer.rate))
 const offerPrice = computed(() => {
   const offer = props.offerResponse.offer
-  const denomFiatPrice = client.fiatPrices.get(offer.fiat_currency)?.get(denomToValue(offer.denom))
-  const fiatPrice = calculateFiatPriceByRate(denomFiatPrice, props.offerResponse.offer.rate) / 100
+  const baseFiatPrice = client.getFiatPrice(offer.fiat_currency, offer.denom)
+  
+  // If no price is available (0), show price unavailable
+  if (baseFiatPrice === 0) {
+    return `${props.offerResponse.offer.fiat_currency} -`
+  }
+  
+  const fiatPrice = calculateFiatPriceByRate(baseFiatPrice * 100, props.offerResponse.offer.rate) / 100
   return `${props.offerResponse.offer.fiat_currency} ${formatAmount(fiatPrice, false)}`
 })
 const tradeCountIcon = computed(() => props.offerResponse.profile.released_trades_count > 0)
+
+// Fetch exchange rate for non-USD currencies
+onBeforeMount(async () => {
+  const offer = props.offerResponse.offer
+  if (offer.fiat_currency !== 'USD') {
+    await client.fetchFiatToUsdRate(offer.fiat_currency)
+  }
+})
 </script>
 
 <template>
@@ -102,13 +116,13 @@ const tradeCountIcon = computed(() => props.offerResponse.profile.released_trade
       gap: 6px;
       margin-top: 8px;
 
-      @include responsive(mobile) {
-        margin-top: 0;
-      }
-
       background-color: $border;
       padding: 4px 8px;
       border-radius: 8px;
+
+      @include responsive(mobile) {
+        margin-top: 0;
+      }
 
       svg {
         width: 16px;

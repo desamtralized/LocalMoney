@@ -45,10 +45,19 @@ function getTaker(): string {
 }
 
 async function acceptTradeRequest(id: number) {
-  const takerPubKey = props.tradeInfo.trade.seller_encryption_key
-  const decryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
-  const ownerContact = await encryptData(takerPubKey, decryptedContact)
-  await client.acceptTradeRequest(id, ownerContact)
+  try {
+    const takerPubKey = props.tradeInfo.trade.seller_encryption_key
+    if (!takerPubKey) {
+      throw new Error('Seller does not have an encryption key')
+    }
+    
+    const decryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
+    const ownerContact = await encryptData(takerPubKey, decryptedContact)
+    await client.acceptTradeRequest(id, ownerContact)
+  } catch (e) {
+    console.error('Failed to accept trade request:', e)
+    throw new Error('Failed to accept trade request. Please check your encryption keys and try again.')
+  }
 }
 
 async function cancelTradeRequest(id: number) {
@@ -56,10 +65,19 @@ async function cancelTradeRequest(id: number) {
 }
 
 async function fundEscrow(tradeInfo: TradeInfo) {
-  const buyerPubKey = props.tradeInfo.trade.buyer_encryption_key!
-  const decryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
-  const ownerContact = await encryptData(buyerPubKey, decryptedContact)
-  await client.fundEscrow(tradeInfo, ownerContact)
+  try {
+    const buyerPubKey = props.tradeInfo.trade.buyer_encryption_key
+    if (!buyerPubKey) {
+      throw new Error('Buyer does not have an encryption key')
+    }
+    
+    const decryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
+    const ownerContact = await encryptData(buyerPubKey, decryptedContact)
+    await client.fundEscrow(tradeInfo, ownerContact)
+  } catch (e) {
+    console.error('Failed to fund escrow:', e)
+    throw new Error('Failed to fund escrow. Please check your encryption keys and try again.')
+  }
 }
 
 async function setFiatDeposited(id: number) {
@@ -75,19 +93,48 @@ async function refundEscrow(id: number) {
 }
 
 async function openDispute(id: number) {
-  let buyerContact = ''
-  let sellerContact = ''
-  const userDecryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
-  if (isBuyer.value) {
-    const sellerDecryptedContact = await decryptData(secrets.value.privateKey, props.tradeInfo.trade.seller_contact!)
-    buyerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, userDecryptedContact)
-    sellerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, sellerDecryptedContact)
-  } else {
-    const buyerDecryptedContact = await decryptData(secrets.value.privateKey, props.tradeInfo.trade.buyer_contact!)
-    sellerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, userDecryptedContact)
-    buyerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, buyerDecryptedContact)
+  try {
+    let buyerContact = ''
+    let sellerContact = ''
+    
+    // Decrypt user's own contact
+    const userDecryptedContact = await decryptData(secrets.value.privateKey, profile.value.contact!)
+    
+    if (isBuyer.value) {
+      // Decrypt seller's contact
+      const sellerDecryptedContact = await decryptData(secrets.value.privateKey, props.tradeInfo.trade.seller_contact!)
+      
+      // Encrypt both contacts for arbitrator
+      if (props.tradeInfo.trade.arbitrator_encryption_key) {
+        buyerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, userDecryptedContact)
+        sellerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, sellerDecryptedContact)
+      } else {
+        // Fallback to plaintext if no arbitrator encryption key
+        console.warn('No arbitrator encryption key, using plaintext contacts')
+        buyerContact = userDecryptedContact
+        sellerContact = sellerDecryptedContact
+      }
+    } else {
+      // Decrypt buyer's contact
+      const buyerDecryptedContact = await decryptData(secrets.value.privateKey, props.tradeInfo.trade.buyer_contact!)
+      
+      // Encrypt both contacts for arbitrator
+      if (props.tradeInfo.trade.arbitrator_encryption_key) {
+        sellerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, userDecryptedContact)
+        buyerContact = await encryptData(props.tradeInfo.trade.arbitrator_encryption_key, buyerDecryptedContact)
+      } else {
+        // Fallback to plaintext if no arbitrator encryption key
+        console.warn('No arbitrator encryption key, using plaintext contacts')
+        sellerContact = userDecryptedContact
+        buyerContact = buyerDecryptedContact
+      }
+    }
+    
+    await client.openDispute(id, buyerContact, sellerContact)
+  } catch (e) {
+    console.error('Failed to open dispute:', e)
+    throw new Error('Failed to open dispute. Please check your encryption keys and try again.')
   }
-  await client.openDispute(id, buyerContact, sellerContact)
 }
 
 async function settleDispute(winner: string) {

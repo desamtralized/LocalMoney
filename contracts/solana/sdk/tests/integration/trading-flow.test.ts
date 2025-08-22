@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { Wallet } from '@coral-xyz/anchor';
-import { LocalMoneySDK, LocalMoneyConfig } from '../../src/index';
+import { LocalMoneySDK, LocalMoneyConfig, CreateOfferInput } from '../../src/index';
 
 // Wallet implementation for integration tests
 class TestWallet implements Wallet {
@@ -45,7 +45,7 @@ describe('LocalMoney SDK Integration Tests', () => {
     hub: new PublicKey('2VqFPzXYsBvCLY6pYfrKxbqatVV4ASpjWEMXQoKNBZE2'), // Deployed ✅
     profile: new PublicKey('6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC'), // Deployed ✅
     price: new PublicKey('GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL'), // Deployed ✅
-    offer: new PublicKey('E5L14TfijKrxBPWz9FMGDLTmPuyWBxxdoXd1K2M2TyUJ'), // Deployed ✅
+    offer: new PublicKey('48rVnWh2DrKFUF1YS7A9cPNs6CZsTtQwodEGfT8xV2JB'), // Deployed ✅
     trade: new PublicKey('5osZqhJj2SYGDHtUre2wpWiCFoBZQFmQ4x5b4Ln2TQQM') // Deployed ✅
   };
 
@@ -150,28 +150,27 @@ describe('LocalMoney SDK Integration Tests', () => {
         console.log('ℹ️ Hub already initialized or initialization skipped');
       }
 
-      const createOfferParams = {
+      const createOfferParams: CreateOfferInput = {
         offerType: { buy: {} },
         fiatCurrency: { usd: {} },
         fiatAmount: 1000,
-        rate: 50000, // $50,000 per token
-        paymentMethods: ['bank-transfer'],
+        rate: 50_000,
         terms: 'Quick trade, bank transfer only',
-        tokenMint: tokenMint // Include the token mint
+        tokenMint: tokenMint
       };
 
       // Create offer
       console.log('🎯 Creating offer...');
-      const signature = await sellerSdk.createOffer(createOfferParams as any);
-      expect(signature).toBeTruthy();
-      console.log('✅ Offer created with signature:', signature);
+      const offerResult = await sellerSdk.createOffer(createOfferParams);
+      expect(offerResult.signature).toBeTruthy();
+      expect(offerResult.offerId).toBeTruthy();
+      console.log('✅ Offer created with signature:', offerResult.signature);
+      console.log('✅ Offer ID:', offerResult.offerId);
 
       // Wait for confirmation
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // This would need to be implemented to get offer ID from transaction logs
-      // For now, using placeholder
-      const offerId = 1;
+      const offerId = offerResult.offerId;
       
       // Retrieve offer
       console.log('🔍 Retrieving offer...');

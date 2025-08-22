@@ -28,13 +28,13 @@ export const mockWallet = new MockWallet(Keypair.generate());
 // Mock connection for unit tests
 export const mockConnection = new Connection('http://localhost:8899', 'confirmed');
 
-// Mock program IDs for testing
+// Mock program IDs for testing - Updated with deployed program IDs
 export const mockProgramIds = {
-  hub: new PublicKey('Gr8Kfgo4KvghW2c1rSUNtTLGhJkNkfcvgP9hm4hmRLTB'),
-  profile: new PublicKey('2rVGr7xLg8KMfNZQ5EjAcL5vtpRX9KvZKP3hQ6f8W2c4'),
-  price: new PublicKey('3sVGr7xLg8KMfNZQ5EjAcL5vtpRX9KvZKP3hQ6f8W2c5'),
-  offer: new PublicKey('4tVGr7xLg8KMfNZQ5EjAcL5vtpRX9KvZKP3hQ6f8W2c6'),
-  trade: new PublicKey('5uVGr7xLg8KMfNZQ5EjAcL5vtpRX9KvZKP3hQ6f8W2c7')
+  hub: new PublicKey('2VqFPzXYsBvCLY6pYfrKxbqatVV4ASpjWEMXQoKNBZE2'),
+  profile: new PublicKey('6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC'),
+  price: new PublicKey('GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL'),
+  offer: new PublicKey('DYJ8EBmhRJdKRg3wgapwX4ssTHRMwQd263hebwcsautj'), // NEW: Updated offer program ID
+  trade: new PublicKey('5osZqhJj2SYGDHtUre2wpWiCFoBZQFmQ4x5b4Ln2TQQM')
 };
 
 // Global test timeout

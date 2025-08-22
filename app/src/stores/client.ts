@@ -35,14 +35,15 @@ export const useClientStore = defineStore({
   id: 'client',
   state: () => {
     return {
-      chainClient: <ChainClient>ChainClient.kujiraTestnet, // TODO call setClient in the App.vue setup function to properly init a chain adapter
-      client: chainFactory(ChainClient.kujiraTestnet),
+      chainClient: ChainClient.cosmoshub,
+      client: chainFactory(ChainClient.cosmoshub),
       applicationConnected: useLocalStorage('walletAlreadyConnected', false),
       userWallet: <UserWallet>{ isConnected: false, address: 'undefined' },
       secrets: useLocalStorage('secrets', new Map<string, Secrets>()),
       profile: <Profile>{},
       localBalance: <Coin>{},
       fiatPrices: new Map<String, Map<String, number>>(),
+      fiatExchangeRates: new Map<String, number>(), // Store fiat to USD exchange rates
       offers: <ListResult<OfferResponse>>ListResult.loading(),
       makerOffers: <ListResult<OfferResponse>>ListResult.loading(),
       myOffers: <ListResult<OfferResponse>>ListResult.loading(),
@@ -131,6 +132,15 @@ export const useClientStore = defineStore({
       try {
         let offers = await this.client.fetchMakerOffers(maker)
         offers = offers.filter(({ offer }) => offer.state === OfferState.active)
+        
+        // Fetch exchange rates for all unique fiat currencies
+        const uniqueFiatCurrencies = new Set(offers.map(({ offer }) => offer.fiat_currency))
+        for (const fiat of uniqueFiatCurrencies) {
+          if (fiat !== 'USD' && !this.fiatExchangeRates.has(fiat)) {
+            await this.fetchFiatToUsdRate(fiat)
+          }
+        }
+        
         for (const { offer } of offers) {
           await this.updateFiatPrice(offer.fiat_currency, offer.denom)
         }
@@ -143,6 +153,12 @@ export const useClientStore = defineStore({
       this.offers = ListResult.loading()
       try {
         const offers = await this.client.fetchOffers(offersArgs, LIMIT_ITEMS_PER_PAGE)
+        
+        // Fetch exchange rate for the fiat currency if not USD
+        if (offersArgs.fiatCurrency && offersArgs.fiatCurrency !== 'USD' && !this.fiatExchangeRates.has(offersArgs.fiatCurrency)) {
+          await this.fetchFiatToUsdRate(offersArgs.fiatCurrency)
+        }
+        
         this.offers = ListResult.success(offers, LIMIT_ITEMS_PER_PAGE)
       } catch (e) {
         this.offers = ListResult.error(e as ChainError)
@@ -193,10 +209,13 @@ export const useClientStore = defineStore({
         // Encrypt contact to save on the profile when an offer is created
         const owner_encryption_key = this.getSecrets().publicKey
         const owner_contact = await encryptData(owner_encryption_key, param.telegram_handle)
+        // Use BigInt to avoid floating point precision issues when converting to micro-units
+        const minAmountInMicroUnits = BigInt(Math.round(param.min_amount * CRYPTO_DECIMAL_PLACES))
+        const maxAmountInMicroUnits = BigInt(Math.round(param.max_amount * CRYPTO_DECIMAL_PLACES))
         const postOffer = {
           ...param,
-          min_amount: `${param.min_amount * CRYPTO_DECIMAL_PLACES}`,
-          max_amount: `${param.max_amount * CRYPTO_DECIMAL_PLACES}`,
+          min_amount: minAmountInMicroUnits.toString(),
+          max_amount: maxAmountInMicroUnits.toString(),
           owner_contact,
           owner_encryption_key,
         } as PostOffer
@@ -239,11 +258,32 @@ export const useClientStore = defineStore({
       this.loadingState = LoadingState.show('Opening trade...')
       try {
         const profile_taker_encryption_key = this.getSecrets().publicKey
-        const taker_contact = await encryptData(offerResponse.profile.encryption_key!, telegramHandle)
+        if (!profile_taker_encryption_key) {
+          throw new Error('Your profile does not have an encryption key. Please reconnect your wallet.')
+        }
+        
+        // Handle cases where the offer creator's profile doesn't have an encryption key
+        let taker_contact: string
+        if (offerResponse.profile?.encryption_key) {
+          try {
+            taker_contact = await encryptData(offerResponse.profile.encryption_key, telegramHandle)
+          } catch (e) {
+            console.warn('Failed to encrypt contact for maker, using plaintext fallback:', e)
+            // Fallback to plaintext if encryption fails
+            taker_contact = telegramHandle
+          }
+        } else {
+          console.warn('Offer profile does not have an encryption key, using plaintext contact')
+          // If no encryption key, use plaintext
+          taker_contact = telegramHandle
+        }
+        
         const profile_taker_contact = await encryptData(profile_taker_encryption_key, telegramHandle)
+        // Use BigInt to avoid floating point precision issues when converting to micro-units
+        const amountInMicroUnits = BigInt(Math.round(amount * CRYPTO_DECIMAL_PLACES))
         const newTrade: NewTrade = {
           offer_id: offerResponse.offer.id,
-          amount: `${Number(amount * CRYPTO_DECIMAL_PLACES).toFixed(0)}`,
+          amount: amountInMicroUnits.toString(),
           taker: `${this.userWallet.address}`,
           profile_taker_contact,
           taker_contact,
@@ -305,6 +345,11 @@ export const useClientStore = defineStore({
     },
     async updateFiatPrice(fiat: FiatCurrency, denom: Denom) {
       try {
+        // Fetch the exchange rate for non-USD currencies if not already cached
+        if (fiat !== 'USD' && !this.fiatExchangeRates.has(fiat)) {
+          await this.fetchFiatToUsdRate(fiat)
+        }
+        
         const price = await this.client.updateFiatPrice(fiat, denom)
         if (this.fiatPrices.has(fiat)) {
           this.fiatPrices.get(fiat)?.set(denomToValue(denom), price.price)
@@ -318,6 +363,19 @@ export const useClientStore = defineStore({
     },
     async fetchFiatPriceForDenom(fiat: FiatCurrency, denom: Denom) {
       return await this.client.updateFiatPrice(fiat, denom)
+    },
+    async fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number> {
+      try {
+        const rate = await this.client.fetchFiatToUsdRate(fiat)
+        // Store the exchange rate for future use only if valid
+        if (rate > 0) {
+          this.fiatExchangeRates.set(fiat, rate)
+        }
+        return rate
+      } catch (e) {
+        console.error(`Failed to fetch ${fiat}/USD rate:`, e)
+        return 0 // Return 0 to indicate no rate available
+      }
     },
     async acceptTradeRequest(tradeId: number, makerContact: string) {
       this.loadingState = LoadingState.show('Accepting trade...')
@@ -438,7 +496,36 @@ export const useClientStore = defineStore({
       }
     },
     getFiatPrice(fiatCurrency: FiatCurrency, denom: Denom): number {
-      const fiatPrice = this.fiatPrices.get(fiatCurrency)?.get(denomToValue(denom)) ?? 0
+      // Check if this is USDC
+      const denomStr = denomToValue(denom)
+      const isUSDC = denomStr === 'usdc' || 
+                     denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
+                     denomStr === 'ibc/295548A78785A1007F232DE286149A6FF512F180AF5657780FC89C009E2C348F' ||
+                     denomStr?.toLowerCase().includes('usdc')
+      
+      if (isUSDC) {
+        // For USDC, 1 USDC = 1 USD
+        if (fiatCurrency === 'USD') {
+          return 1.00 // 1 USDC = 1 USD
+        }
+        
+        // For other fiat currencies, convert using exchange rate
+        const exchangeRate = this.fiatExchangeRates.get(fiatCurrency)
+        if (exchangeRate && exchangeRate > 0) {
+          // exchangeRate is in cents of the fiat currency that equal 1 USD
+          // For COP: if 1 USD = 4000 COP, then exchangeRate = 400000 cents (since 1 COP = 100 cents)
+          // But we want to return the price in the fiat currency (not cents)
+          // So we divide by 100 to get the actual currency value
+          return exchangeRate / 100
+        }
+        
+        // No exchange rate available - return 0 to indicate price unavailable
+        console.warn(`No exchange rate found for ${fiatCurrency}, price unavailable`)
+        return 0
+      }
+      
+      // For other denoms, use the price from the map
+      const fiatPrice = this.fiatPrices.get(fiatCurrency)?.get(denomStr) ?? 0
       try {
         return fiatPrice / 100
       } catch (e) {

@@ -10,7 +10,7 @@ export class FeedbackHandler {
   public error(e: any) {
     // We can validate each type of error here
     const message = (e as ChainError).message
-    this.toast.error(message)
+    console.error(message, e)
   }
 
   public success(message: string) {

@@ -7,11 +7,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hub = "ETpJMS4nNW55KpjuJssRBmHpphYnBRPoRh9o6Yq6jy1K"
-offer = "D89P5L26y2wcLRYc5g3AgHVRpJiSGTWJZnrGGJoAiobj"
-price = "AHDAzufTjFrXHkJPrD85xoKMn9Cj4GRusWDQtZaG37dT"
-profile = "BMH3GaQKHbUG1X3wSASq6fN6qy8jRFf1WgdfMzaxWXmC"
-trade = "HjzdQZjxWcs514U2qiqecXuEGeMA2FnX9vAdDZPHUiwQ"
+hub = "2VqFPzXYsBvCLY6pYfrKxbqatVV4ASpjWEMXQoKNBZE2"
+offer = "DYJ8EBmhRJdKRg3wgapwX4ssTHRMwQd263hebwcsautj"
+price = "GMBAxgH2GZncN2zUfyjxDTYfeMwwhrebSfvqCe2w1YNL"
+profile = "6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC"
+trade = "5osZqhJj2SYGDHtUre2wpWiCFoBZQFmQ4x5b4Ln2TQQM"
 
 [registry]
 url = "https://api.apr.dev"

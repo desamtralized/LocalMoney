@@ -10,7 +10,7 @@ const currentDate = computed(() => formatDate(new Date(props.tradeInfo.trade.cre
 const fiatCurrency = computed(() => props.tradeInfo.offer.offer.fiat_currency)
 const fiatAmountStr = computed(() => {
   const fiatAmount = formatFiatAmount(
-    (parseInt(props.tradeInfo.trade.amount) / 1000000) * (props.tradeInfo.trade.denom_fiat_price / 100)
+    (parseInt(props.tradeInfo.trade.amount) / 1000000) * (props.tradeInfo.trade.denom_fiat_price / 1000000)
   )
   return `${fiatCurrency.value} ${fiatAmount}`
 })

@@ -1,0 +1,27 @@
+// Backup of original fetchOffers method
+  async fetchOffers(args: FetchOffersArgs, limit = 100, last?: number) {
+    // TODO: fix init
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      const queryMsg = {
+        offers_by: {
+          fiat_currency: args.fiatCurrency,
+          offer_type: args.offerType.toLowerCase(), // Convert to lowercase for contract (buy/sell)
+          denom: args.denom,
+          order: args.order, // Keep as-is (trades_count/price_rate)
+          limit,
+          last,
+        },
+      }
+      const response = (await this.cwClient!.queryContractSmart(
+        this.hubInfo.hubConfig.offer_addr,
+        queryMsg
+      )) as OfferResponse[]
+      console.log('response >>> ', response)
+      return response
+    } catch (e) {
+      throw DefaultError.fromError(e)
+    }
+  }

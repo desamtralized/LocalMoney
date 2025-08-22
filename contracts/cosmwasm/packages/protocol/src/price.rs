@@ -21,6 +21,7 @@ pub enum ExecuteMsg {
 #[serde(rename_all = "snake_case")]
 pub enum QueryMsg {
     Price { fiat: FiatCurrency, denom: Denom },
+    GetFiatPrice { currency: FiatCurrency },
 }
 
 pub const FIAT_PRICE: Map<&str, CurrencyPrice> = Map::new("fiat_price");

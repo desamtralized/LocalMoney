@@ -7,36 +7,53 @@ import type { ChainClient } from '~/network/Chain'
 
 const TRADE = 'trade'
 
+let isInitialized = false
+
 export function initAnalytics(token: string, config?: Partial<Config>) {
-  mixpanel.init(token, config)
+  if (token && token.trim() !== '') {
+    mixpanel.init(token, config)
+    isInitialized = true
+  }
 }
 
 export function trackPage(page: Page, data?: AppData) {
-  mixpanel.track(page, data)
+  if (isInitialized) {
+    mixpanel.track(page, data)
+  }
 }
 
 export function trackWalletConnection(events: WalletEvents, address?: string) {
-  if (address) {
-    mixpanel.identify(address)
+  if (isInitialized) {
+    if (address) {
+      mixpanel.identify(address)
+    }
+    mixpanel.track(events)
   }
-  mixpanel.track(events)
 }
 
 export function trackOffer(event: OfferEvents, offer: OfferData) {
-  mixpanel.track(event, offer)
+  if (isInitialized) {
+    mixpanel.track(event, offer)
+  }
 }
 
 export function trackTrade(event: TradeEvents, trade: TradeData) {
-  mixpanel.track(event, trade)
-  mixpanel.track(TRADE, trade)
+  if (isInitialized) {
+    mixpanel.track(event, trade)
+    mixpanel.track(TRADE, trade)
+  }
 }
 
 export function trackSocialLinks(event: ClickLinkEvents) {
-  mixpanel.track(event)
+  if (isInitialized) {
+    mixpanel.track(event)
+  }
 }
 
 export function trackAppEvents(event: AppEvents, data?: AppData) {
-  mixpanel.track(event, data)
+  if (isInitialized) {
+    mixpanel.track(event, data)
+  }
 }
 
 export enum Page {

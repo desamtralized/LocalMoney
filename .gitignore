@@ -11,3 +11,18 @@ codeIds.json
 /contracts/schema/
 test-ledger/
 *.log
+examples/*
+.claude/
+
+# Security - Never commit private keys or keypairs
+*keypair.json
+*.keypair
+*.key
+*.pem
+
+# EVM build artifacts and dependencies
+contracts/evm/cache/
+contracts/evm/.deps/
+
+# Solana keypairs
+contracts/solana/**/*keypair*.json

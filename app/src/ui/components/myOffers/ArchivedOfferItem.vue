@@ -11,9 +11,15 @@ const client = useClientStore()
 const currentDate = computed(() => formatDate(new Date(props.offer.timestamp * 1000), false))
 const fiatCurrency = computed(() => props.offer.fiat_currency)
 const price = computed(() => {
-  const denomFiatPrice = client.getFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  const baseFiatPrice = client.getFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  
+  // If no price is available (0), show price unavailable
+  if (baseFiatPrice === 0) {
+    return `${props.offer.fiat_currency} -`
+  }
+  
   return `${props.offer.fiat_currency} ${formatAmount(
-    calculateFiatPriceByRate(denomFiatPrice, props.offer.rate),
+    calculateFiatPriceByRate(baseFiatPrice * 100, props.offer.rate) / 100,
     false
   )}`
 })
@@ -22,6 +28,13 @@ const limit = computed(() => {
   const max = formatAmount(Number(props.offer.max_amount), true, 6)
   const denom = microDenomToDisplay(denomToValue(props.offer.denom), client.chainClient)
   return `${min} - ${max} ${denom}`
+})
+
+// Fetch exchange rate for non-USD currencies
+onBeforeMount(async () => {
+  if (props.offer.fiat_currency !== 'USD') {
+    await client.fetchFiatToUsdRate(props.offer.fiat_currency)
+  }
 })
 const type = computed(() => (props.offer.offer_type === OfferType.buy ? 'Buying' : 'Selling'))
 

@@ -12,14 +12,24 @@ const client = useClientStore()
 
 const marginRate = computed(() => convertOfferRateToMarginRate(props.offer.rate))
 const offerPrice = computed(() => {
-  const denomFiatPrice = client.getFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  const baseFiatPrice = client.getFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  
+  // If no price is available (0), show price unavailable
+  if (baseFiatPrice === 0) {
+    return `${props.offer.fiat_currency} -`
+  }
+  
   return `${props.offer.fiat_currency} ${formatAmount(
-    calculateFiatPriceByRate(denomFiatPrice, props.offer.rate),
+    calculateFiatPriceByRate(baseFiatPrice * 100, props.offer.rate) / 100,
     false
   )}`
 })
 
 onBeforeMount(async () => {
+  // Fetch exchange rate for non-USD currencies
+  if (props.offer.fiat_currency !== 'USD') {
+    await client.fetchFiatToUsdRate(props.offer.fiat_currency)
+  }
   await client.updateFiatPrice(props.offer.fiat_currency, props.offer.denom)
 })
 </script>

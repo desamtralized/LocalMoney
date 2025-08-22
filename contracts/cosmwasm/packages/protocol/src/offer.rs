@@ -236,8 +236,8 @@ impl<'a> OfferModel<'a> {
         )
         .unwrap();
 
-        let prefix = fiat_currency.to_string()
-            + &offer_type.to_string()
+        let prefix = offer_type.to_string()
+            + &fiat_currency.to_string()
             + &denom_to_string(&denom)
             + &*OfferState::Active.to_string();
 

@@ -19,6 +19,18 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 anchor-spl = { workspace = true }
+hex = "0.4"
+localmoney-shared = { workspace = true }
 profile = { path = "../profile", features = ["cpi"] }
 offer = { path = "../offer", features = ["cpi"] }
 hub = { path = "../hub", features = ["cpi"] }
+
+[dev-dependencies]
+proptest = "1.0"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+criterion = "0.5"
+
+[[bench]]
+name = "performance"
+harness = false

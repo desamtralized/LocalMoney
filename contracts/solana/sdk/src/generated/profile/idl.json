@@ -1,0 +1,448 @@
+{
+  "address": "6Lka8dnn5mEZ83Mv4HjWonqC6ZcwREUpTesJgnEd7mSC",
+  "metadata": {
+    "name": "profile",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "create_profile",
+      "discriminator": [
+        225,
+        205,
+        234,
+        143,
+        17,
+        186,
+        50,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "username",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "update_active_offers",
+      "discriminator": [
+        150,
+        12,
+        189,
+        194,
+        247,
+        102,
+        94,
+        155
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.owner",
+                "account": "Profile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "offer_state",
+          "type": {
+            "defined": {
+              "name": "OfferState"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_contact",
+      "discriminator": [
+        112,
+        131,
+        30,
+        238,
+        150,
+        187,
+        74,
+        235
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "contact",
+          "type": "string"
+        },
+        {
+          "name": "encryption_key",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "update_trade_stats",
+      "discriminator": [
+        171,
+        169,
+        113,
+        43,
+        225,
+        230,
+        69,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.owner",
+                "account": "Profile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "actor",
+          "signer": true
+        },
+        {
+          "name": "buyer"
+        },
+        {
+          "name": "seller"
+        },
+        {
+          "name": "arbitrator"
+        }
+      ],
+      "args": [
+        {
+          "name": "trade_state",
+          "type": {
+            "defined": {
+              "name": "TradeState"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Profile",
+      "discriminator": [
+        184,
+        101,
+        165,
+        188,
+        95,
+        63,
+        127,
+        188
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized access"
+    },
+    {
+      "code": 6001,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6002,
+      "name": "ArithmeticUnderflow",
+      "msg": "Arithmetic underflow"
+    },
+    {
+      "code": 6003,
+      "name": "DivisionByZero",
+      "msg": "Division by zero"
+    },
+    {
+      "code": 6004,
+      "name": "StringTooLong",
+      "msg": "String exceeds maximum length"
+    },
+    {
+      "code": 6005,
+      "name": "CollectionFull",
+      "msg": "Collection is full"
+    },
+    {
+      "code": 6006,
+      "name": "RateLimitExceeded",
+      "msg": "Rate limit exceeded"
+    },
+    {
+      "code": 6007,
+      "name": "PageFull",
+      "msg": "Page is full"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidPageNumber",
+      "msg": "Invalid page number"
+    }
+  ],
+  "types": [
+    {
+      "name": "BoundedString",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OfferState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Paused"
+          },
+          {
+            "name": "Archive"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Profile",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "username",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "u64"
+          },
+          {
+            "name": "requested_trades_count",
+            "type": "u64"
+          },
+          {
+            "name": "active_trades_count",
+            "type": "u8"
+          },
+          {
+            "name": "released_trades_count",
+            "type": "u64"
+          },
+          {
+            "name": "last_trade",
+            "type": "u64"
+          },
+          {
+            "name": "contact",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "BoundedString"
+                }
+              }
+            }
+          },
+          {
+            "name": "encryption_key",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "BoundedString"
+                }
+              }
+            }
+          },
+          {
+            "name": "active_offers_count",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "RequestCreated"
+          },
+          {
+            "name": "RequestCanceled"
+          },
+          {
+            "name": "RequestExpired"
+          },
+          {
+            "name": "RequestAccepted"
+          },
+          {
+            "name": "EscrowFunded"
+          },
+          {
+            "name": "EscrowCanceled"
+          },
+          {
+            "name": "EscrowRefunded"
+          },
+          {
+            "name": "FiatDeposited"
+          },
+          {
+            "name": "EscrowReleased"
+          },
+          {
+            "name": "EscrowDisputed"
+          },
+          {
+            "name": "DisputeOpened"
+          },
+          {
+            "name": "DisputeResolved"
+          },
+          {
+            "name": "Released"
+          },
+          {
+            "name": "SettledForMaker"
+          },
+          {
+            "name": "SettledForTaker"
+          },
+          {
+            "name": "Refunded"
+          }
+        ]
+      }
+    }
+  ]
+}

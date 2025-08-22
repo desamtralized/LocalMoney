@@ -971,10 +971,12 @@ fn settle_dispute(
     );
 
     // Pay arbitration fee
-    let arbitration_fee_amount = (hub_config.arbitration_fee_pct
-        * Decimal::from_ratio(trade.amount.u128(), 1u128))
-    .atomics();
-    let mut release_amount = trade.amount.sub(Uint128::from(arbitration_fee_amount));
+    // Compute arbitration fee as amount * pct, keeping token atomics
+    let one_e18 = Decimal::one().atomics();
+    let arbitration_fee_amount = trade
+        .amount
+        .multiply_ratio(hub_config.arbitration_fee_pct.atomics(), one_e18);
+    let mut release_amount = trade.amount.sub(arbitration_fee_amount);
 
     // Only deducts fees from the release_amount if the maker (offer owner) is the buyer
     if trade.buyer.eq(&offer.owner) {
@@ -1177,17 +1179,21 @@ fn create_send_msg(to_address: Addr, amount: Vec<Coin>) -> CosmosMsg {
 
 /// Returns a FeeInfo struct containing the calculated fees and the final release amount.
 fn calculate_fees(hub_config: &HubConfig, amount: Uint128) -> FeeInfo {
-    let amount_u128 = amount.u128();
-    let burn_amount = (hub_config.burn_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
-    let chain_amount =
-        (hub_config.chain_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
-    let warchest_amount =
-        (hub_config.warchest_fee_pct * Decimal::from_ratio(amount_u128, 1u128)).atomics();
+    // hub_config.*_fee_pct are Decimal values with 18 fractional digits.
+    // We must compute amount * pct in token atomics (micro-units) without
+    // introducing the Decimal's 1e18 scaling into the result.
+    // Use Uint128::multiply_ratio with pct.atomics() / 1e18 to avoid precision bugs.
+
+    let one_e18 = Decimal::one().atomics();
+
+    let burn_amount = amount.multiply_ratio(hub_config.burn_fee_pct.atomics(), one_e18);
+    let chain_amount = amount.multiply_ratio(hub_config.chain_fee_pct.atomics(), one_e18);
+    let warchest_amount = amount.multiply_ratio(hub_config.warchest_fee_pct.atomics(), one_e18);
 
     FeeInfo {
-        burn_amount: Uint128::from(burn_amount),
-        chain_amount: Uint128::from(chain_amount),
-        warchest_amount: Uint128::from(warchest_amount),
+        burn_amount,
+        chain_amount,
+        warchest_amount,
     }
 }
 

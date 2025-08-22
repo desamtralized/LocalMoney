@@ -20,10 +20,9 @@ onUnmounted(() => {
   <section class="page">
     <div class="wrap-hero">
       <div class="wrap-title">
-        <h1 class="title"><span class="text-primary">Cryptos</span> native fiat ramp</h1>
+        <h1 class="title"><span class="text-primary">Decentralized</span> <br/>P2P Fiat Gateway</h1>
         <p class="sub-title">
-          Your Gateway to the Decentralized Economy: Swap <span class="text-primary">USDC</span> for Fiat in an Open
-          Marketplace.
+          Trade <span class="text-primary">USDC</span> for Fiat Directly with Your Community in an Open Marketplace.
         </p>
         <div class="wrap-cta">
           <div class="wrap-btns">

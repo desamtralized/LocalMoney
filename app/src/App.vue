@@ -8,7 +8,7 @@ import './ui/style/reset.scss'
 import 'vue-toastification/dist/index.css'
 
 const client = useClientStore()
-client.setClient(ChainClient.neutron) // required to properly init chain
+client.setClient(ChainClient.cosmoshub) // required to properly init chain
 const loading = computed(() => client.loadingState)
 
 let title: string
@@ -23,7 +23,7 @@ switch (client.chainClient) {
     title = 'Local Money - powered by Neutron'
     break
   default:
-    title = 'Local Money - TESTNET'
+    title = 'Local Money'
     break
 }
 

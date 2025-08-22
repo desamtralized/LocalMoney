@@ -85,17 +85,19 @@ export interface PostOffer {
   description?: string
 }
 
-export enum FiatCurrency {
-  USD = 'USD',
-  ARS = 'ARS',
-  BRL = 'BRL',
-  CLP = 'CLP',
-  COP = 'COP',
-  EUR = 'EUR',
-  GBP = 'GBP',
-  MXN = 'MXN',
-  VES = 'VES',
-}
+export const FiatCurrency = {
+  USD: 'USD',
+  ARS: 'ARS',
+  BRL: 'BRL',
+  CLP: 'CLP',
+  COP: 'COP',
+  EUR: 'EUR',
+  GBP: 'GBP',
+  MXN: 'MXN',
+  VES: 'VES',
+} as const
+
+export type FiatCurrency = typeof FiatCurrency[keyof typeof FiatCurrency]
 
 export function isFiatCurrency(fiat: string): boolean {
   return Object.values(FiatCurrency).includes(fiat as FiatCurrency)

@@ -1,0 +1,1594 @@
+{
+  "address": "2VqFPzXYsBvCLY6pYfrKxbqatVV4ASpjWEMXQoKNBZE2",
+  "metadata": {
+    "name": "hub",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "add_guardian",
+      "discriminator": [
+        167,
+        189,
+        170,
+        27,
+        74,
+        240,
+        201,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "guardian",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "approve_pause",
+      "discriminator": [
+        149,
+        48,
+        3,
+        81,
+        156,
+        74,
+        195,
+        172
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pause_approval",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  117,
+                  115,
+                  101,
+                  95,
+                  97,
+                  112,
+                  112,
+                  114,
+                  111,
+                  118,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pause_approval.pause_type",
+                "account": "PauseApproval"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "InitializeParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initiate_pause",
+      "discriminator": [
+        127,
+        34,
+        235,
+        228,
+        144,
+        146,
+        49,
+        132
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "pause_approval",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  97,
+                  117,
+                  115,
+                  101,
+                  95,
+                  97,
+                  112,
+                  112,
+                  114,
+                  111,
+                  118,
+                  97,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "pause_type"
+              }
+            ]
+          }
+        },
+        {
+          "name": "guardian",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "pause_type",
+          "type": {
+            "defined": {
+              "name": "PauseType"
+            }
+          }
+        },
+        {
+          "name": "reason",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "auto_resume_seconds",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "register_program",
+      "discriminator": [
+        104,
+        9,
+        166,
+        5,
+        200,
+        228,
+        112,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "program_id",
+          "type": "pubkey"
+        },
+        {
+          "name": "program_type",
+          "type": {
+            "defined": {
+              "name": "ProgramType"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "remove_guardian",
+      "discriminator": [
+        72,
+        117,
+        160,
+        244,
+        155,
+        185,
+        71,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "guardian",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "resume_protocol",
+      "discriminator": [
+        62,
+        91,
+        76,
+        18,
+        174,
+        87,
+        87,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "pause_type",
+          "type": {
+            "defined": {
+              "name": "PauseType"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_guardian_threshold",
+      "discriminator": [
+        85,
+        225,
+        97,
+        126,
+        126,
+        73,
+        15,
+        44
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "required_signatures",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "update_config",
+      "discriminator": [
+        29,
+        158,
+        252,
+        191,
+        10,
+        83,
+        219,
+        99
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "hub_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "UpdateConfigParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_program_versions",
+      "discriminator": [
+        123,
+        66,
+        238,
+        247,
+        10,
+        247,
+        182,
+        206
+      ],
+      "accounts": [
+        {
+          "name": "hub_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  117,
+                  98
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "upgrade_authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "UpdateProgramVersionsParams"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "HubConfig",
+      "discriminator": [
+        115,
+        89,
+        81,
+        4,
+        182,
+        207,
+        219,
+        46
+      ]
+    },
+    {
+      "name": "PauseApproval",
+      "discriminator": [
+        15,
+        81,
+        106,
+        186,
+        217,
+        158,
+        170,
+        11
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "EmergencyPauseEvent",
+      "discriminator": [
+        159,
+        241,
+        192,
+        232,
+        29,
+        208,
+        51,
+        21
+      ]
+    },
+    {
+      "name": "GuardianAddedEvent",
+      "discriminator": [
+        70,
+        163,
+        168,
+        110,
+        229,
+        33,
+        222,
+        72
+      ]
+    },
+    {
+      "name": "GuardianRemovedEvent",
+      "discriminator": [
+        96,
+        80,
+        129,
+        201,
+        8,
+        10,
+        133,
+        66
+      ]
+    },
+    {
+      "name": "ProtocolResumedEvent",
+      "discriminator": [
+        213,
+        125,
+        245,
+        148,
+        202,
+        50,
+        203,
+        63
+      ]
+    },
+    {
+      "name": "ThresholdUpdatedEvent",
+      "discriminator": [
+        92,
+        37,
+        94,
+        1,
+        80,
+        168,
+        25,
+        222
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized access"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidFeeRate",
+      "msg": "Invalid fee rate"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidFeePercentage",
+      "msg": "Invalid fee percentage (must be <= 10000 bps)"
+    },
+    {
+      "code": 6003,
+      "name": "ExcessiveFeeTotal",
+      "msg": "Total fee percentages exceed 10000 bps"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidProgramType",
+      "msg": "Invalid program type"
+    },
+    {
+      "code": 6005,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6006,
+      "name": "UnauthorizedUpgrade",
+      "msg": "Unauthorized program upgrade attempt"
+    },
+    {
+      "code": 6007,
+      "name": "ArithmeticUnderflow",
+      "msg": "Arithmetic underflow"
+    },
+    {
+      "code": 6008,
+      "name": "DivisionByZero",
+      "msg": "Division by zero"
+    },
+    {
+      "code": 6009,
+      "name": "GlobalPause",
+      "msg": "Protocol is globally paused"
+    },
+    {
+      "code": 6010,
+      "name": "TradingPaused",
+      "msg": "Trading is temporarily paused"
+    },
+    {
+      "code": 6011,
+      "name": "DepositsPaused",
+      "msg": "Deposits are temporarily paused"
+    },
+    {
+      "code": 6012,
+      "name": "WithdrawalsPaused",
+      "msg": "Withdrawals are temporarily paused"
+    },
+    {
+      "code": 6013,
+      "name": "OffersPaused",
+      "msg": "Offer creation is temporarily paused"
+    },
+    {
+      "code": 6014,
+      "name": "NotGuardian",
+      "msg": "Not an authorized guardian"
+    },
+    {
+      "code": 6015,
+      "name": "MaxGuardiansReached",
+      "msg": "Maximum guardians reached"
+    },
+    {
+      "code": 6016,
+      "name": "InsufficientSignatures",
+      "msg": "Insufficient guardian signatures"
+    },
+    {
+      "code": 6017,
+      "name": "ResumeTooEarly",
+      "msg": "Resume time not reached"
+    },
+    {
+      "code": 6018,
+      "name": "InvalidPauseType",
+      "msg": "Invalid pause type"
+    },
+    {
+      "code": 6019,
+      "name": "ApprovalExpired",
+      "msg": "Approval expired"
+    },
+    {
+      "code": 6020,
+      "name": "AlreadySigned",
+      "msg": "Already signed this pause approval"
+    },
+    {
+      "code": 6021,
+      "name": "PauseApprovalNotFound",
+      "msg": "Pause approval not found"
+    },
+    {
+      "code": 6022,
+      "name": "PauseAlreadyExecuted",
+      "msg": "Pause already executed"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidThreshold",
+      "msg": "Invalid guardian threshold"
+    },
+    {
+      "code": 6024,
+      "name": "StringTooLong",
+      "msg": "String exceeds maximum length"
+    },
+    {
+      "code": 6025,
+      "name": "CollectionFull",
+      "msg": "Collection is full"
+    },
+    {
+      "code": 6026,
+      "name": "RateLimitExceeded",
+      "msg": "Rate limit exceeded"
+    },
+    {
+      "code": 6027,
+      "name": "PageFull",
+      "msg": "Page is full"
+    },
+    {
+      "code": 6028,
+      "name": "InvalidPageNumber",
+      "msg": "Invalid page number"
+    }
+  ],
+  "types": [
+    {
+      "name": "EmergencyPauseEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pause_type",
+            "type": {
+              "defined": {
+                "name": "PauseType"
+              }
+            }
+          },
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "reason",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "auto_resume_after",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GuardianAddedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "added_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GuardianRemovedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "guardian",
+            "type": "pubkey"
+          },
+          {
+            "name": "removed_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "guardian_count",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HubConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "profile_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "offer_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "trade_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "price_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "local_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "jupiter_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_fee_collector",
+            "type": "pubkey"
+          },
+          {
+            "name": "warchest_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "burn_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "chain_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "warchest_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "conversion_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          },
+          {
+            "name": "min_conversion_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_conversion_routes",
+            "type": "u8"
+          },
+          {
+            "name": "fee_rate",
+            "type": "u16"
+          },
+          {
+            "name": "burn_rate",
+            "type": "u16"
+          },
+          {
+            "name": "warchest_rate",
+            "type": "u16"
+          },
+          {
+            "name": "trade_limit_min",
+            "type": "u64"
+          },
+          {
+            "name": "trade_limit_max",
+            "type": "u64"
+          },
+          {
+            "name": "trade_expiration_timer",
+            "type": "u64"
+          },
+          {
+            "name": "trade_dispute_timer",
+            "type": "u64"
+          },
+          {
+            "name": "arbitration_fee_rate",
+            "type": "u16"
+          },
+          {
+            "name": "profile_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "offer_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "trade_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "price_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "last_upgrade_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "upgrade_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "emergency_council",
+            "type": {
+              "array": [
+                "pubkey",
+                5
+              ]
+            }
+          },
+          {
+            "name": "guardian_count",
+            "type": "u8"
+          },
+          {
+            "name": "required_signatures",
+            "type": "u8"
+          },
+          {
+            "name": "global_pause",
+            "type": "bool"
+          },
+          {
+            "name": "pause_new_trades",
+            "type": "bool"
+          },
+          {
+            "name": "pause_deposits",
+            "type": "bool"
+          },
+          {
+            "name": "pause_withdrawals",
+            "type": "bool"
+          },
+          {
+            "name": "pause_new_offers",
+            "type": "bool"
+          },
+          {
+            "name": "pause_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "auto_resume_after",
+            "type": "i64"
+          },
+          {
+            "name": "pause_reason",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "pause_count",
+            "type": "u32"
+          },
+          {
+            "name": "last_pause_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitializeParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "profile_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "offer_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "trade_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "price_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "local_token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "jupiter_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "chain_fee_collector",
+            "type": "pubkey"
+          },
+          {
+            "name": "warchest_address",
+            "type": "pubkey"
+          },
+          {
+            "name": "burn_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "chain_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "warchest_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "conversion_fee_pct",
+            "type": "u16"
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": "u16"
+          },
+          {
+            "name": "min_conversion_amount",
+            "type": "u64"
+          },
+          {
+            "name": "max_conversion_routes",
+            "type": "u8"
+          },
+          {
+            "name": "fee_rate",
+            "type": "u16"
+          },
+          {
+            "name": "burn_rate",
+            "type": "u16"
+          },
+          {
+            "name": "warchest_rate",
+            "type": "u16"
+          },
+          {
+            "name": "trade_limit_min",
+            "type": "u64"
+          },
+          {
+            "name": "trade_limit_max",
+            "type": "u64"
+          },
+          {
+            "name": "trade_expiration_timer",
+            "type": "u64"
+          },
+          {
+            "name": "trade_dispute_timer",
+            "type": "u64"
+          },
+          {
+            "name": "arbitration_fee_rate",
+            "type": "u16"
+          },
+          {
+            "name": "profile_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "offer_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "trade_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "price_program_version",
+            "type": "u16"
+          },
+          {
+            "name": "upgrade_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "required_signatures",
+            "type": {
+              "option": "u8"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseApproval",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pause_type",
+            "type": {
+              "defined": {
+                "name": "PauseType"
+              }
+            }
+          },
+          {
+            "name": "signatures",
+            "type": {
+              "array": [
+                "pubkey",
+                5
+              ]
+            }
+          },
+          {
+            "name": "signature_count",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "executed",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Global"
+          },
+          {
+            "name": "Trading"
+          },
+          {
+            "name": "Deposits"
+          },
+          {
+            "name": "Withdrawals"
+          },
+          {
+            "name": "Offers"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProgramType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Profile"
+          },
+          {
+            "name": "Offer"
+          },
+          {
+            "name": "Trade"
+          },
+          {
+            "name": "Price"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolResumedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pause_type",
+            "type": {
+              "defined": {
+                "name": "PauseType"
+              }
+            }
+          },
+          {
+            "name": "resumed_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ThresholdUpdatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "new_threshold",
+            "type": "u8"
+          },
+          {
+            "name": "updated_by",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateConfigParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "treasury",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "local_token_mint",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "jupiter_program",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "chain_fee_collector",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "warchest_address",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "burn_fee_pct",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "chain_fee_pct",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "warchest_fee_pct",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "conversion_fee_pct",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "max_slippage_bps",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "min_conversion_amount",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "max_conversion_routes",
+            "type": {
+              "option": "u8"
+            }
+          },
+          {
+            "name": "fee_rate",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "burn_rate",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "warchest_rate",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "trade_limit_min",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "trade_limit_max",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "trade_expiration_timer",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "trade_dispute_timer",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "arbitration_fee_rate",
+            "type": {
+              "option": "u16"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "UpdateProgramVersionsParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "profile_program_version",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "offer_program_version",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "trade_program_version",
+            "type": {
+              "option": "u16"
+            }
+          },
+          {
+            "name": "price_program_version",
+            "type": {
+              "option": "u16"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

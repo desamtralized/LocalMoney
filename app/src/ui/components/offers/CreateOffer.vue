@@ -12,7 +12,7 @@ import {
 import type { Denom } from '~/types/components.interface'
 import { FiatCurrency, OfferType } from '~/types/components.interface'
 import { useClientStore } from '~/stores/client'
-import { defaultMicroDenomAvailable, denomsAvailable, microDenomToDisplay } from '~/utils/denom'
+import { defaultMicroDenomAvailable, denomsAvailable, microDenomToDisplay, checkMicroDenomAvailable } from '~/utils/denom'
 import { fiatsAvailable } from '~/utils/fiat'
 
 const emit = defineEmits<{
@@ -28,7 +28,7 @@ async function defaultUserContact() {
 const minAmount = ref(0)
 const maxAmount = ref(0)
 const margin = ref('above')
-const marginOffset = ref('')
+const marginOffset = ref('0')
 const ownerContact = ref('')
 const description = ref('')
 const marginOffsetUnmasked = ref(0)
@@ -37,16 +37,31 @@ const selectedDenom = useLocalStorage<string>('selected_offer_denom', defaultMic
 const selectedFiat = useLocalStorage<FiatCurrency>('selected_offer_fiat', FiatCurrency.USD)
 const selectedType = useLocalStorage<OfferType>('selected_offer_type', OfferType.sell)
 
-const valid = computed(() => maxAmount.value > minAmount.value && isTelegramHandleValid(ownerContact.value))
+const valid = computed(() => {
+  const denomFiatPrice = client.getFiatPrice(selectedFiat.value, { native: selectedDenom.value })
+  return maxAmount.value > minAmount.value && 
+         isTelegramHandleValid(ownerContact.value) && 
+         denomFiatPrice > 0 // Ensure exchange rate is available
+})
 const offerPrice = computed(() => {
   const denomFiatPrice = client.getFiatPrice(selectedFiat.value, { native: selectedDenom.value })
   if (denomFiatPrice === 0) {
-    return ''
+    // Show loading or unavailable message when price is not available
+    return `${selectedFiat.value} -`
   }
-  const fiatPrice = calculateFiatPriceByRate(denomFiatPrice, rate.value)
+  const fiatPrice = calculateFiatPriceByRate(denomFiatPrice * 100, rate.value) / 100
   return `${selectedFiat.value} ${formatAmount(fiatPrice, false)}`
 })
 const fiatLabel = computed(() => (selectedType.value === 'sell' ? 'receive' : 'pay'))
+
+// Watch for fiat currency changes and fetch exchange rate
+watch(selectedFiat, async (newFiat) => {
+  if (newFiat !== 'USD') {
+    await client.fetchFiatToUsdRate(newFiat)
+  }
+  const denom: Denom = { native: selectedDenom.value }
+  await client.updateFiatPrice(newFiat, denom)
+})
 
 // TODO - Make isMobile global
 const width = ref(window.innerWidth)
@@ -60,6 +75,16 @@ onMounted(() => {
   })
 })
 onBeforeMount(async () => {
+  // Check if stored denom is valid for current chain
+  if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {
+    selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
+  }
+  
+  // Fetch exchange rate for non-USD currencies
+  if (selectedFiat.value !== 'USD') {
+    await client.fetchFiatToUsdRate(selectedFiat.value)
+  }
+  
   const denom: Denom = { native: selectedDenom.value }
   await client.updateFiatPrice(selectedFiat.value, denom)
 })
@@ -73,14 +98,56 @@ const vh = window.innerHeight * 0.01
 document.documentElement.style.setProperty('--vh', `${vh}px`)
 
 function calculateMarginRate() {
-  rate.value = convertMarginRateToOfferRate(margin.value, marginOffsetUnmasked.value)
+  // Ensure marginOffsetUnmasked is a valid number
+  const offsetValue = Number(marginOffsetUnmasked.value) || 0
+  const newRate = convertMarginRateToOfferRate(margin.value, offsetValue)
+  rate.value = newRate
+  console.log('Calculated rate:', { 
+    margin: margin.value, 
+    marginOffset: marginOffset.value,
+    marginOffsetUnmasked: marginOffsetUnmasked.value,
+    offsetValue, 
+    newRate,
+    rate: rate.value 
+  })
 }
+function onMaskaMargin(e: any) {
+  const rawValue = e?.target?.dataset?.maskRawValue ?? e?.detail?.unmasked ?? e?.detail?.masked
+  const parsed = Number(typeof rawValue === 'string' ? rawValue : `${rawValue ?? ''}`)
+  marginOffsetUnmasked.value = isNaN(parsed) ? 0 : parsed
+  calculateMarginRate()
+  console.log('Maska event:', { raw: rawValue, parsed: marginOffsetUnmasked.value, rate: rate.value })
+}
+
+// Keep rate in sync when marginOffset string changes
+watch(marginOffset, (val) => {
+  let num = 0
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[^0-9.-]/g, '')
+    num = Number(cleaned)
+  } else {
+    num = Number(val)
+  }
+  marginOffsetUnmasked.value = isNaN(num) ? 0 : num
+  calculateMarginRate()
+})
 async function createOffer() {
+  // Recalculate rate before creating to ensure it's up to date
+  calculateMarginRate()
+  
+  // Validate rate is a valid number
+  if (isNaN(rate.value) || rate.value <= 0) {
+    console.error('Invalid rate value:', rate.value)
+    return
+  }
+  
+  console.log('Creating offer with rate:', rate.value)
+  
   await client.createOffer({
     telegram_handle: removeTelegramHandlePrefix(ownerContact.value),
     offer_type: selectedType.value,
     fiat_currency: selectedFiat.value,
-    rate: `${rate.value}`,
+    rate: `${Math.floor(rate.value)}`,
     denom: { native: selectedDenom.value },
     min_amount: minAmount.value,
     max_amount: maxAmount.value,
@@ -88,13 +155,15 @@ async function createOffer() {
   })
   emit('cancel')
 }
-watch(marginOffset, () => {
-  calculateMarginRate()
-})
+// Watch for margin direction changes
 watch(margin, () => {
   calculateMarginRate()
 })
 async function updateFiatPrice() {
+  // Validate denom before querying price
+  if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {
+    selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
+  }
   const denom: Denom = { native: selectedDenom.value }
   await client.updateFiatPrice(selectedFiat.value, denom)
 }
@@ -140,7 +209,7 @@ watch(selectedFiat, async () => {
           <label>Min amount of {{ microDenomToDisplay(selectedDenom, client.chainClient) }}</label>
           <CurrencyInput
             v-model="minAmount"
-            :placeholder="0"
+            placeholder="0"
             :prefix="microDenomToDisplay(selectedDenom, client.chainClient)"
             :isCrypto="true"
             :decimals="6"
@@ -150,7 +219,7 @@ watch(selectedFiat, async () => {
           <label>Max amount of {{ microDenomToDisplay(selectedDenom, client.chainClient) }}</label>
           <CurrencyInput
             v-model="maxAmount"
-            :placeholder="0"
+            placeholder="0"
             :prefix="microDenomToDisplay(selectedDenom, client.chainClient)"
             :isCrypto="true"
             :decimals="6"
@@ -178,7 +247,7 @@ watch(selectedFiat, async () => {
             v-maska="['##%', '#%']"
             type="text"
             placeholder="0%"
-            @maska="marginOffsetUnmasked = $event.target.dataset.maskRawValue"
+            @maska="onMaskaMargin"
           />
         </div>
       </div>

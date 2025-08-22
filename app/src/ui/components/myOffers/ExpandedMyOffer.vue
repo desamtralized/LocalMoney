@@ -39,6 +39,23 @@ watch(maxAmount, (val) => {
   valid.value = Number(updatedOffer.value.min_amount) < Number(updatedOffer.value.max_amount)
 })
 
+// Update rate when margin or marginOffset changes
+watch([margin, marginOffset], () => {
+  // Parse marginOffset to handle percentage strings
+  let marginOffsetNum = marginOffset.value
+  if (typeof marginOffsetNum === 'string') {
+    marginOffsetNum = parseFloat(marginOffsetNum.replace(/[^0-9.-]/g, ''))
+  }
+  if (isNaN(marginOffsetNum)) {
+    marginOffsetNum = 0
+  }
+  
+  const newRate = convertMarginRateToOfferRate(margin.value, marginOffsetNum)
+  if (!isNaN(newRate)) {
+    rate.value = newRate
+  }
+})
+
 const fiatPriceByRate = computed(() => {
   const denomFiatPrice = client.getFiatPrice(props.offer.fiat_currency, props.offer.denom)
   return calculateFiatPriceByRate(denomFiatPrice, rate.value)
@@ -47,12 +64,46 @@ const offerPrice = computed(() => `${props.offer.fiat_currency} ${formatAmount(f
 
 function update() {
   const offer = updatedOffer.value
+  
+  // Parse marginOffset to handle percentage strings (e.g., "5%" -> 5)
+  let marginOffsetNum = marginOffset.value
+  if (typeof marginOffsetNum === 'string') {
+    // Remove any non-numeric characters except decimal points
+    marginOffsetNum = parseFloat(marginOffsetNum.replace(/[^0-9.-]/g, ''))
+  }
+  
+  // Default to 0 if parsing fails
+  if (isNaN(marginOffsetNum)) {
+    marginOffsetNum = 0
+  }
+  
+  // Use the actual ref values for margin and parsed marginOffset
+  const calculatedRate = convertMarginRateToOfferRate(margin.value, marginOffsetNum)
+  
+  // Validate all numeric values before sending
+  const rateValue = Math.floor(Number(calculatedRate))
+  const minAmountValue = Math.floor(Number(offer.min_amount) * 1000000)
+  const maxAmountValue = Math.floor(Number(offer.max_amount) * 1000000)
+  
+  // Check for NaN or invalid values
+  if (isNaN(rateValue) || isNaN(minAmountValue) || isNaN(maxAmountValue)) {
+    console.error('Invalid numeric values detected:', { 
+      rateValue, 
+      minAmountValue, 
+      maxAmountValue,
+      margin: margin.value,
+      marginOffset: marginOffset.value,
+      marginOffsetNum
+    })
+    return
+  }
+  
   client.updateOffer({
     id: offer.id,
     state: offer.state,
-    rate: `${convertMarginRateToOfferRate(marginRate.value.margin, marginRate.value.marginOffset)}`,
-    min_amount: `${(Number(offer.min_amount) * 1000000).toFixed(0)}`,
-    max_amount: `${(Number(offer.max_amount) * 1000000).toFixed(0)}`,
+    rate: rateValue.toString(),
+    min_amount: minAmountValue.toString(),
+    max_amount: maxAmountValue.toString(),
     description: description.value,
   })
 }
@@ -118,7 +169,7 @@ function update() {
               v-model="marginOffset"
               v-maska="['##%', '#%']"
               placeholder="0%"
-              @maska="marginRate.marginOffset = $event.target.dataset.maskRawValue"
+              @maska="marginOffset = Number($event.target.dataset.maskRawValue) || 0"
             />
           </div>
         </div>

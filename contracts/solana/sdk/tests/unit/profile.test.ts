@@ -45,7 +45,7 @@ describe('LocalMoneySDK - Profile Methods', () => {
 
     test('should handle createProfile errors', async () => {
       // Mock program to throw error
-      const mockProgram = sdk['profileProgram'];
+      const mockProgram = sdk['profileProgram']! as any;
       mockProgram.methods.createProfile = jest.fn().mockReturnValue({
         accountsPartial: jest.fn().mockReturnValue({
           rpc: jest.fn().mockRejectedValue(new Error('Transaction failed'))
@@ -66,7 +66,7 @@ describe('LocalMoneySDK - Profile Methods', () => {
         tradesCompleted: 5
       };
 
-      const mockProgram = sdk['profileProgram'];
+      const mockProgram = sdk['profileProgram']! as any;
       mockProgram.account.profile.fetchNullable = jest.fn().mockResolvedValue(mockProfile);
 
       const profile = await sdk.getProfile(user);
@@ -76,7 +76,7 @@ describe('LocalMoneySDK - Profile Methods', () => {
     test('should return null for non-existent profile', async () => {
       const user = new PublicKey('11111111111111111111111111111112');
       
-      const mockProgram = sdk['profileProgram'];
+      const mockProgram = sdk['profileProgram']! as any;
       mockProgram.account.profile.fetchNullable = jest.fn().mockResolvedValue(null);
 
       const profile = await sdk.getProfile(user);
@@ -87,7 +87,7 @@ describe('LocalMoneySDK - Profile Methods', () => {
       const user = new PublicKey('11111111111111111111111111111112');
       const mockProfile = { user, username: 'cached-user' };
 
-      const mockProgram = sdk['profileProgram'];
+      const mockProgram = sdk['profileProgram']! as any;
       const fetchSpy = jest.fn().mockResolvedValue(mockProfile);
       mockProgram.account.profile.fetchNullable = fetchSpy;
 
@@ -105,7 +105,7 @@ describe('LocalMoneySDK - Profile Methods', () => {
     test('should handle getProfile errors', async () => {
       const user = new PublicKey('11111111111111111111111111111112');
       
-      const mockProgram = sdk['profileProgram'];
+      const mockProgram = sdk['profileProgram']! as any;
       mockProgram.account.profile.fetchNullable = jest.fn().mockRejectedValue(
         new Error('Network error')
       );

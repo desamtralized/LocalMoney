@@ -6,14 +6,17 @@ import type { OfflineDirectSigner } from '@cosmjs/proto-signing'
 import type { Coin } from '@cosmjs/stargate'
 import type { Chain } from '~/network/Chain'
 import { DefaultError, WalletNotConnected, WalletNotInstalled } from '~/network/chain-error'
+import { extractOfferId, extractTradeId } from './utils/events'
 import type { CosmosConfig, HubInfo } from '~/network/cosmos/config'
+import {
+  FiatCurrency,
+} from '~/types/components.interface'
 import type {
   Addr,
   Arbitrator,
   Denom,
   DenomFiatPrice,
   FetchOffersArgs,
-  FiatCurrency,
   HubConfig,
   NewTrade,
   OfferResponse,
@@ -113,7 +116,29 @@ export class CosmosChain implements Chain {
 
   // TODO encrypt the postOffer.owner_contact field
   async createOffer(postOffer: PostOffer) {
-    const msg = { create: { offer: postOffer } }
+    // Ensure all numeric values are properly formatted as integer strings for Uint128
+    const rateNum = Number(postOffer.rate)
+    const minAmountNum = Number(postOffer.min_amount)
+    const maxAmountNum = Number(postOffer.max_amount)
+    
+    // Check for NaN or invalid values
+    if (isNaN(rateNum) || rateNum <= 0) {
+      throw new Error(`Invalid rate value: ${postOffer.rate}`)
+    }
+    if (isNaN(minAmountNum) || minAmountNum < 0) {
+      throw new Error(`Invalid min_amount value: ${postOffer.min_amount}`)
+    }
+    if (isNaN(maxAmountNum) || maxAmountNum <= 0) {
+      throw new Error(`Invalid max_amount value: ${postOffer.max_amount}`)
+    }
+    
+    const formattedOffer = {
+      ...postOffer,
+      rate: Math.floor(rateNum).toString(),
+      min_amount: Math.floor(minAmountNum).toString(),
+      max_amount: Math.floor(maxAmountNum).toString(),
+    }
+    const msg = { create: { offer: formattedOffer } }
     console.log('Create offer msg >> ', msg)
     if (this.cwClient instanceof SigningCosmWasmClient && this.signer) {
       try {
@@ -124,10 +149,13 @@ export class CosmosChain implements Chain {
           'auto'
         )
         console.log('Create offer result >> ', result)
-        const offer_id = result.logs[0].events
-          .find((e) => e.type === 'wasm')
-          ?.attributes.find((a) => a.key === 'id')?.value
-        return Number(offer_id)
+        const offer_id = extractOfferId(result)
+        if (!offer_id) {
+          console.warn('Could not extract offer ID from transaction events')
+          // Return a default or throw an error depending on requirements
+          throw new Error('Could not read offer ID from transaction events')
+        }
+        return offer_id
       } catch (e) {
         throw DefaultError.fromError(e)
       }
@@ -138,7 +166,29 @@ export class CosmosChain implements Chain {
 
   // TODO encrypt the postOffer.owner_contact field
   async updateOffer(updateOffer: PatchOffer) {
-    const msg = { update_offer: { offer_update: updateOffer } }
+    // Ensure all numeric values are properly formatted as integer strings for Uint128
+    const rateNum = Number(updateOffer.rate)
+    const minAmountNum = Number(updateOffer.min_amount)
+    const maxAmountNum = Number(updateOffer.max_amount)
+    
+    // Check for NaN or invalid values
+    if (isNaN(rateNum) || rateNum <= 0) {
+      throw new Error(`Invalid rate value: ${updateOffer.rate}`)
+    }
+    if (isNaN(minAmountNum) || minAmountNum < 0) {
+      throw new Error(`Invalid min_amount value: ${updateOffer.min_amount}`)
+    }
+    if (isNaN(maxAmountNum) || maxAmountNum <= 0) {
+      throw new Error(`Invalid max_amount value: ${updateOffer.max_amount}`)
+    }
+    
+    const formattedUpdate = {
+      ...updateOffer,
+      rate: Math.floor(rateNum).toString(),
+      min_amount: Math.floor(minAmountNum).toString(),
+      max_amount: Math.floor(maxAmountNum).toString(),
+    }
+    const msg = { update_offer: { offer_update: formattedUpdate } }
     console.log('Update offer msg >> ', msg)
     if (this.cwClient instanceof SigningCosmWasmClient && this.signer) {
       try {
@@ -218,9 +268,9 @@ export class CosmosChain implements Chain {
       const queryMsg = {
         offers_by: {
           fiat_currency: args.fiatCurrency,
-          offer_type: args.offerType,
+          offer_type: args.offerType.toLowerCase(), // Convert to lowercase for contract (buy/sell)
           denom: args.denom,
-          order: args.order,
+          order: args.order, // Keep as-is (trades_count/price_rate)
           limit,
           last,
         },
@@ -248,10 +298,13 @@ export class CosmosChain implements Chain {
           'auto'
         )
         console.log('Open Trade result >> ', result)
-        const trade_id = result.logs[0].events
-          .find((e) => e.type === 'wasm')
-          ?.attributes.find((a) => a.key === 'trade_id')?.value
-        return Number(trade_id)
+        const trade_id = extractTradeId(result)
+        if (!trade_id) {
+          console.warn('Could not extract trade ID from transaction events')
+          // Return a default or throw an error depending on requirements
+          throw new Error('Could not read trade ID from transaction events')
+        }
+        return trade_id
       } catch (e) {
         throw DefaultError.fromError(e)
       }
@@ -374,6 +427,47 @@ export class CosmosChain implements Chain {
     }
   }
 
+  async fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number> {
+    // TODO: fix init
+    if (!this.cwClient) {
+      await this.init()
+    }
+    
+    // If it's already USD, return 1:1 rate
+    if (fiat === FiatCurrency.USD) {
+      return 100 // 100 cents = 1 USD
+    }
+    
+    try {
+      const queryMsg = { get_fiat_price: { currency: fiat } }
+      console.log(`Querying fiat price for ${fiat}:`, queryMsg)
+      
+      const response = await this.cwClient!.queryContractSmart(
+        this.hubInfo.hubConfig.price_addr,
+        queryMsg
+      )
+      
+      console.log(`Got fiat price response for ${fiat}:`, response)
+      
+      if (response && response.usd_price) {
+        // response.usd_price is how many cents of the fiat currency equal 1 USD
+        // For example, if 1 USD = 4000 COP, then usd_price = 4000
+        const rate = Number(response.usd_price)
+        console.log(`Exchange rate for ${fiat}: ${rate} (${rate/100} ${fiat} = 1 USD)`)
+        return rate
+      }
+      
+      // No price found in contract
+      console.warn(`No USD exchange rate found for ${fiat} in contract`)
+      return 0 // Return 0 to indicate no rate available
+    } catch (e) {
+      console.error(`Failed to fetch ${fiat}/USD exchange rate:`, e)
+      // Return 0 to indicate no exchange rate is available
+      // The frontend should handle this case appropriately
+      return 0
+    }
+  }
+
   async updateFiatPrice(fiat: FiatCurrency, denom: Denom): Promise<DenomFiatPrice> {
     // TODO: fix init
     if (!this.cwClient) {
@@ -387,7 +481,43 @@ export class CosmosChain implements Chain {
       )) as DenomFiatPrice
       console.log('response >>> ', response)
       return response
-    } catch (e) {
+    } catch (e: any) {
+      // Handle USDC special case: 1 USDC = 1 USD
+      const denomStr = 'native' in denom ? denom.native : denom.cw20
+      const isUSDC = denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
+                     denomStr === 'usdc' ||
+                     denomStr?.toLowerCase().includes('usdc')
+      
+      if (isUSDC && (e.message?.includes('No price route') || e.message?.includes('not found'))) {
+        console.log(`No price route for USDC, handling as 1:1 with USD`)
+        
+        // For USDC, we know 1 USDC = 1 USD = 100 cents
+        let price = 100 // 100 cents = 1 USD
+        
+        // If the requested fiat is not USD, we need to convert
+        if (fiat !== FiatCurrency.USD) {
+          try {
+            // Get the exchange rate from USD to the target fiat
+            const exchangeRate = await this.fetchFiatToUsdRate(fiat)
+            if (exchangeRate > 0) {
+              // Convert USD price to target fiat
+              // exchangeRate tells us how many cents of target fiat = 100 cents USD
+              // So 1 USDC (100 cents USD) = exchangeRate cents of target fiat
+              price = exchangeRate
+              console.log(`Converted USDC price from USD to ${fiat}: ${price} cents (rate: ${exchangeRate})`)
+            }
+          } catch (err) {
+            console.error(`Failed to get exchange rate for ${fiat}, using USD price`)
+          }
+        }
+        
+        return {
+          price: price,
+          denom: denom,
+          fiat: fiat
+        } as DenomFiatPrice
+      }
+      
       throw DefaultError.fromError(e)
     }
   }
@@ -407,23 +537,39 @@ export class CosmosChain implements Chain {
 
   async fundEscrow(tradeInfo: TradeInfo, makerContact?: string) {
     const hubConfig = this.hubInfo.hubConfig
-    let fundAmount = Number(tradeInfo.trade.amount)
-    console.log('amount: ', fundAmount)
+    
+    // Parse amount as BigInt to avoid precision issues
+    const baseAmount = BigInt(tradeInfo.trade.amount)
+    console.log('base amount (microdenomination): ', baseAmount.toString())
+
+    let fundAmount = baseAmount
 
     // If current user is the maker, add the fee to the amount to fund
     if (tradeInfo.offer.offer.owner === this.getWalletAddress()) {
-      const burnAmount = Math.floor(hubConfig.burn_fee_pct * fundAmount)
-      const chainAmount = Math.floor(hubConfig.chain_fee_pct * fundAmount)
-      const warchestAmount = Math.floor(hubConfig.warchest_fee_pct * fundAmount)
+      // Calculate fees using BigInt arithmetic to avoid precision issues
+      // Fee percentages are stored as string decimals (e.g., "0.002" = 0.2%)
+      // Convert to basis points (multiply by 10000) to avoid floating point issues
+      const burnFeeBps = BigInt(Math.floor(Number(hubConfig.burn_fee_pct) * 10000))
+      const chainFeeBps = BigInt(Math.floor(Number(hubConfig.chain_fee_pct) * 10000))
+      const warchestFeeBps = BigInt(Math.floor(Number(hubConfig.warchest_fee_pct) * 10000))
+      
+      const burnAmount = (baseAmount * burnFeeBps) / BigInt(10000)
+      const chainAmount = (baseAmount * chainFeeBps) / BigInt(10000)
+      const warchestAmount = (baseAmount * warchestFeeBps) / BigInt(10000)
       const totalFee = burnAmount + chainAmount + warchestAmount
-      console.log('total fee:', totalFee)
-      fundAmount += totalFee
-      console.log('amount + fees: ', fundAmount)
+      
+      console.log('burn fee:', burnAmount.toString())
+      console.log('chain fee:', chainAmount.toString())
+      console.log('warchest fee:', warchestAmount.toString())
+      console.log('total fee:', totalFee.toString())
+      
+      fundAmount = baseAmount + totalFee
+      console.log('amount + fees: ', fundAmount.toString())
     }
 
     const funds: Coin[] = [
       {
-        amount: Math.floor(fundAmount).toFixed(0),
+        amount: fundAmount.toString(),
         denom: denomToValue(tradeInfo.trade.denom),
       },
     ]

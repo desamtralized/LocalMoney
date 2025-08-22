@@ -130,7 +130,8 @@ echo ""
 echo "🧪 Running E2E Trading Flow Test..."
 echo "=================================="
 
-INTEGRATION_TESTS=true npm test -- --testNamePattern="should execute complete trading flow"
+# Restrict Jest to integration tests to avoid unrelated unit test TS errors
+INTEGRATION_TESTS=true npm run test:integration -- --testNamePattern="should execute complete trading flow"
 
 TEST_EXIT_CODE=$?
 
