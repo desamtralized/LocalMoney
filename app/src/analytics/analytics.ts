@@ -149,7 +149,6 @@ export enum WalletEvents {
 }
 
 export enum ClickLinkEvents {
-  discord = 'link_discord',
   twitter = 'link_twitter',
   github = 'link_github',
   litepaper = 'link_litepaper',
