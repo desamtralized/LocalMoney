@@ -522,6 +522,65 @@ export class CosmosChain implements Chain {
     }
   }
 
+  async batchUpdateFiatPrices(fiats: FiatCurrency[], denom: Denom): Promise<DenomFiatPrice[]> {
+    // TODO: fix init
+    if (!this.cwClient) {
+      await this.init()
+    }
+    
+    // Create batch of query promises - these will be executed in parallel
+    const queryPromises = fiats.map(fiat => {
+      const queryMsg = { price: { fiat, denom } }
+      return this.cwClient!.queryContractSmart(
+        this.hubInfo.hubConfig.price_addr,
+        queryMsg
+      ).then(result => {
+        return result
+      }).catch(e => {
+        // Handle USDC special case: 1 USDC = 1 USD
+        const denomStr = 'native' in denom ? denom.native : denom.cw20
+        const isUSDC = denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
+                      denomStr === 'usdc' ||
+                      denomStr?.toLowerCase().includes('usdc')
+        
+        if (isUSDC && (e.message?.includes('No price route') || e.message?.includes('not found'))) {
+          // For USDC, we know 1 USDC = 1 USD
+          // We need to use the exchange rate we already fetched
+          if (fiat === FiatCurrency.USD || fiat === 'USD') {
+            // 1 USDC = 1 USD = 100 cents
+            return {
+              price: 100,
+              denom: denom,
+              fiat: fiat
+            } as DenomFiatPrice
+          }
+          
+          // For non-USD, we should have already fetched the exchange rate
+          // Return null here to trigger the fallback that uses exchange rates
+          return null
+        }
+        
+        // Return null for other errors
+        console.error(`Failed to fetch price for ${fiat}:`, e.message || e)
+        return null
+      })
+    })
+    
+    // Execute all queries in parallel
+    const results = await Promise.all(queryPromises)
+    
+    // If all results are null, return empty array to trigger fallback
+    if (results.every(r => r === null)) {
+      console.warn('All price queries failed - check contract query format')
+      return []
+    }
+    
+    // Filter out null results and return
+    const validResults = results.filter(r => r !== null) as DenomFiatPrice[]
+    
+    return validResults
+  }
+
   // TODO encrypt maker_contact field
   async acceptTradeRequest(tradeId: number, makerContact: string) {
     await this.changeTradeState(this.hubInfo.hubConfig.trade_addr, {

@@ -361,6 +361,114 @@ export const useClientStore = defineStore({
         console.error(e)
       }
     },
+    async batchUpdateFiatPrices(fiats: FiatCurrency[], denom: Denom) {
+      try {
+        // Batch fetch all exchange rates first for non-USD currencies
+        const exchangeRatePromises = fiats
+          .filter(fiat => fiat !== 'USD' && !this.fiatExchangeRates.has(fiat))
+          .map(fiat => this.fetchFiatToUsdRate(fiat))
+        
+        await Promise.allSettled(exchangeRatePromises)
+        
+        console.log('Exchange rates available:', Array.from(this.fiatExchangeRates.entries()))
+        
+        // Check if batch method is available, otherwise fall back to individual queries
+        if (this.client.batchUpdateFiatPrices) {
+          // Use the new batched RPC method from CosmosChain
+          const prices = await this.client.batchUpdateFiatPrices(fiats, denom)
+          
+          // Store the fetched prices in the state
+          for (const priceData of prices) {
+            if (this.fiatPrices.has(priceData.fiat)) {
+              this.fiatPrices.get(priceData.fiat)?.set(denomToValue(denom), priceData.price)
+            } else {
+              const priceForDenom = new Map([[denomToValue(denom), priceData.price]])
+              this.fiatPrices.set(priceData.fiat, priceForDenom)
+            }
+          }
+          
+          // If no prices were returned, fall back to individual queries
+          if (!prices || prices.length === 0) {
+            console.log('No prices from batch method, using individual queries')
+            return await this.individualPriceFetch(fiats, denom)
+          }
+          
+          const result = prices.map(p => ({ 
+            fiat: p.fiat, 
+            price: p.price, 
+            success: true 
+          }))
+          return result
+        } else {
+          // Fallback to individual queries if batch method not available
+          console.log('Batch method not available, falling back to individual queries')
+          return await this.individualPriceFetch(fiats, denom)
+        }
+      } catch (e) {
+        console.error('Failed to batch fetch prices:', e)
+        return []
+      }
+    },
+    async individualPriceFetch(fiats: FiatCurrency[], denom: Denom) {
+      // For USDC, we can calculate prices using exchange rates
+      const denomStr = denomToValue(denom)
+      const isUSDC = denomStr?.toLowerCase().includes('usdc')
+      
+      if (isUSDC) {
+        console.log('Using exchange rates for USDC pricing')
+        // For USDC, use exchange rates directly (1 USDC = 1 USD)
+        const results = fiats.map(fiat => {
+          if (fiat === 'USD') {
+            // 1 USDC = 1 USD = 100 cents
+            const price = 100
+            if (this.fiatPrices.has(fiat)) {
+              this.fiatPrices.get(fiat)?.set(denomStr, price)
+            } else {
+              this.fiatPrices.set(fiat, new Map([[denomStr, price]]))
+            }
+            return { fiat, price, success: true }
+          } else {
+            // Use the exchange rate if we have it
+            const rate = this.fiatExchangeRates.get(fiat)
+            console.log(`Exchange rate for ${fiat}: ${rate}`)
+            if (rate && rate > 0) {
+              // rate is how many cents of the fiat currency equal 1 USD
+              // Since 1 USDC = 1 USD, the price is the same as the rate
+              if (this.fiatPrices.has(fiat)) {
+                this.fiatPrices.get(fiat)?.set(denomStr, rate)
+              } else {
+                this.fiatPrices.set(fiat, new Map([[denomStr, rate]]))
+              }
+              return { fiat, price: rate, success: true }
+            }
+            console.log(`No exchange rate for ${fiat}`)
+            return { fiat, price: 0, success: false }
+          }
+        })
+        console.log('USDC price results:', results)
+        return results.filter(r => r.success)
+      }
+      
+      // For non-USDC denoms, try to fetch prices from the contract
+      const pricePromises = fiats.map(async (fiat) => {
+        try {
+          const price = await this.client.updateFiatPrice(fiat, denom)
+          if (this.fiatPrices.has(fiat)) {
+            this.fiatPrices.get(fiat)?.set(denomToValue(denom), price.price)
+          } else {
+            const priceForDenom = new Map([[denomToValue(denom), price.price]])
+            this.fiatPrices.set(fiat, priceForDenom)
+          }
+          return { fiat, price: price.price, success: true }
+        } catch (e) {
+          console.error(`Failed to fetch price for ${fiat}:`, e)
+          return { fiat, price: 0, success: false }
+        }
+      })
+      
+      const results = await Promise.allSettled(pricePromises)
+      return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean)
+    },
     async fetchFiatPriceForDenom(fiat: FiatCurrency, denom: Denom) {
       return await this.client.updateFiatPrice(fiat, denom)
     },

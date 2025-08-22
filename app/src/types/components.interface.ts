@@ -89,12 +89,20 @@ export const FiatCurrency = {
   USD: 'USD',
   ARS: 'ARS',
   BRL: 'BRL',
+  CAD: 'CAD',
   CLP: 'CLP',
   COP: 'COP',
   EUR: 'EUR',
   GBP: 'GBP',
   MXN: 'MXN',
+  NGN: 'NGN',
+  THB: 'THB',
   VES: 'VES',
+  IDR: 'IDR',
+  PHP: 'PHP',
+  VND: 'VND',
+  MYR: 'MYR',
+  SGD: 'SGD',
 } as const
 
 export type FiatCurrency = typeof FiatCurrency[keyof typeof FiatCurrency]

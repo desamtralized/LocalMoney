@@ -4,12 +4,18 @@ import Trades from '~/ui/pages/Trades.vue'
 import TradeDetail from '~/ui/pages/TradeDetail.vue'
 import Arbitration from '~/ui/pages/Arbitration.vue'
 import Maker from '~/ui/pages/Maker.vue'
+import Dashboard from '~/ui/pages/Dashboard.vue'
 
 const routes = [
   {
     path: '/:type?/:token?/:fiat?',
     name: 'Home',
     component: Home,
+  },
+  {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: Dashboard,
   },
   {
     path: '/maker/:addr',

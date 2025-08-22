@@ -25,7 +25,8 @@ const tradeAddr = process.env.TRADE || 'cosmos1dgcc74cucjp4kjnuhljv5jc4jypgkutxn
 // Available fiat currencies from app/src/utils/fiats-config.json
 const fiatCurrencies = [
   'USD', 'ARS', 'BRL', 'CAD', 'CLP', 'COP', 
-  'EUR', 'GBP', 'MXN', 'NGN', 'THB', 'VES'
+  'EUR', 'GBP', 'MXN', 'NGN', 'THB', 'VES',
+  'IDR', 'MYR', 'PHP', 'SGD', 'VND'
 ];
 
 // Encryption key for the arbitrator (you may want to generate a unique one)

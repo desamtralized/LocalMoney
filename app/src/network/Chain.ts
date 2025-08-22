@@ -68,6 +68,8 @@ export interface Chain {
   fetchArbitrators(): Promise<Arbitrator[]>
 
   updateFiatPrice(fiat: FiatCurrency, denom: Denom): Promise<DenomFiatPrice>
+  
+  batchUpdateFiatPrices(fiats: FiatCurrency[], denom: Denom): Promise<DenomFiatPrice[]>
 
   fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number>
 

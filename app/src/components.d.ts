@@ -16,6 +16,7 @@ declare module 'vue' {
     CreateOffer: typeof import('./ui/components/offers/CreateOffer.vue')['default']
     CurrencyInput: typeof import('./ui/components/CurrencyInput.vue')['default']
     CustomSelect: typeof import('./ui/components/commons/CustomSelect.vue')['default']
+    Dashboard: typeof import('./ui/pages/Dashboard.vue')['default']
     ExpandedMakerOffer: typeof import('./ui/components/maker/ExpandedMakerOffer.vue')['default']
     ExpandedMyOffer: typeof import('./ui/components/myOffers/ExpandedMyOffer.vue')['default']
     ExpandedOffer: typeof import('./ui/components/offers/ExpandedOffer.vue')['default']
