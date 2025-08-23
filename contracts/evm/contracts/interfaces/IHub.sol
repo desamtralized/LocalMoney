@@ -52,6 +52,7 @@ interface IHub {
     event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
     event ContractRegistered(address indexed contractAddress, string contractType);
     event CircuitBreakerActivated(string reason, address indexed activatedBy);
+    event TimelockControllerUpdated(address indexed oldTimelock, address indexed newTimelock);
     event CircuitBreakerDeactivated(address indexed deactivatedBy);
     
     // Phase 4: Enhanced Circuit Breaker Events
@@ -59,6 +60,7 @@ interface IHub {
     event OperationUnpaused(bytes32 indexed operation, address indexed unpausedBy);
     event ContractSpecificPause(address indexed contractAddress, bool paused, address indexed pausedBy);
     event EmergencyPauseExtended(uint256 previousTime, uint256 newTime, address indexed extendedBy);
+    event UpgradeAuthorized(address indexed newImplementation, address indexed authorizedBy);
 
     // Custom errors
     error InvalidPlatformFee(uint256 totalFee, uint256 maxAllowed);
@@ -70,8 +72,9 @@ interface IHub {
     /**
      * @notice Initialize the hub with configuration
      * @param _config Initial hub configuration
+     * @param _minDelay Minimum delay for timelock operations
      */
-    function initialize(HubConfig memory _config) external;
+    function initialize(HubConfig memory _config, uint256 _minDelay) external;
 
     /**
      * @notice Update hub configuration (admin only)
@@ -120,4 +123,18 @@ interface IHub {
      * @notice Resume operations (admin only)
      */
     function resume() external;
+
+    /**
+     * @notice Check if an upgrade is authorized
+     * @param contractAddress Contract being upgraded
+     * @param newImplementation New implementation address
+     * @return authorized Whether the upgrade is authorized
+     */
+    function isUpgradeAuthorized(address contractAddress, address newImplementation) external view returns (bool authorized);
+
+    /**
+     * @notice Get the timelock controller address
+     * @return Timelock controller address
+     */
+    function getTimelockController() external view returns (address);
 }

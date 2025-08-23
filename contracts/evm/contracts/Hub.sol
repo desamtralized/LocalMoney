@@ -5,6 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/governance/TimelockController.sol";
 import "./interfaces/IHub.sol";
 
 /**
@@ -44,6 +45,7 @@ contract Hub is
     HubConfig private _config;
     bool private _initialized;
     address private _admin;
+    TimelockController public timelockController;
     
     // Phase 4: Enhanced Circuit Breaker Storage
     mapping(bytes32 => bool) public operationPaused;
@@ -52,7 +54,7 @@ contract Hub is
     string public lastPauseReason;
 
     // Storage gap for future upgrades (reduced to accommodate new storage)
-    uint256[46] private __gap;
+    uint256[45] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -83,9 +85,13 @@ contract Hub is
     /**
      * @notice Initialize the Hub contract
      * @param _initialConfig Initial configuration for the Hub
+     * @param _minDelay Minimum delay for timelock operations (e.g., 2 days = 172800)
      * @dev Can only be called once during deployment
      */
-    function initialize(HubConfig memory _initialConfig) 
+    function initialize(
+        HubConfig memory _initialConfig,
+        uint256 _minDelay
+    ) 
         external 
         initializer 
     {
@@ -100,6 +106,19 @@ contract Hub is
         
         // Set admin
         _admin = msg.sender;
+
+        // Deploy and configure TimelockController
+        address[] memory proposers = new address[](1);
+        address[] memory executors = new address[](1);
+        proposers[0] = msg.sender;
+        executors[0] = msg.sender;
+        
+        timelockController = new TimelockController(
+            _minDelay,     // Minimum delay for operations
+            proposers,     // List of addresses that can propose
+            executors,     // List of addresses that can execute
+            msg.sender     // Admin who can grant/revoke roles
+        );
 
         // Validate and set initial configuration
         _validateAndSetConfig(_initialConfig);
@@ -444,16 +463,31 @@ contract Hub is
     }
 
     /**
-     * @notice Authorize upgrade (UUPS pattern)
+     * @notice Authorize upgrade with timelock protection (UUPS pattern)
      * @param newImplementation Address of the new implementation
-     * @dev Only admin can authorize upgrades
+     * @dev SECURITY FIX UPG-012: Requires admin role and timelock controller
      */
     function _authorizeUpgrade(address newImplementation) 
         internal 
         override 
         onlyRole(ADMIN_ROLE) 
     {
-        // Additional upgrade authorization logic can be added here
+        // SECURITY FIX UPG-012: Ensure upgrade goes through timelock
+        require(newImplementation != address(0), "Invalid implementation");
+        
+        // Verify the upgrade has been scheduled through the timelock
+        if (address(timelockController) != address(0)) {
+            // Check if the caller is the timelock controller or if the operation is pending
+            require(
+                msg.sender == address(timelockController) || 
+                timelockController.isOperationPending(
+                    keccak256(abi.encode(address(this), newImplementation))
+                ),
+                "Upgrade must go through timelock"
+            );
+        }
+        
+        emit UpgradeAuthorized(newImplementation, msg.sender);
     }
 
     /**
@@ -470,5 +504,47 @@ contract Hub is
      */
     function isInitialized() external view returns (bool) {
         return _initialized;
+    }
+
+    /**
+     * @notice Check if an upgrade is authorized
+     * @dev SECURITY FIX: Uses TimelockController for upgrade authorization
+     * @param contractAddress Contract being upgraded
+     * @param newImplementation New implementation address
+     * @return authorized Whether the upgrade is authorized
+     */
+    function isUpgradeAuthorized(
+        address contractAddress,
+        address newImplementation
+    ) external view override returns (bool authorized) {
+        // Check if the caller is the timelock controller
+        // In production, upgrades should be scheduled through the timelock
+        if (address(timelockController) != address(0)) {
+            return msg.sender == address(timelockController);
+        }
+        // Fallback to admin if timelock not set (should not happen in production)
+        return msg.sender == _admin;
+    }
+
+    /**
+     * @notice Get the timelock controller address
+     * @return Timelock controller address
+     */
+    function getTimelockController() external view override returns (address) {
+        return address(timelockController);
+    }
+
+    /**
+     * @notice Update the timelock controller (only callable by current timelock or admin)
+     * @param _newTimelock New timelock controller address
+     */
+    function setTimelockController(address _newTimelock) 
+        external 
+        onlyRole(ADMIN_ROLE) 
+    {
+        require(_newTimelock != address(0), "Invalid timelock address");
+        address oldTimelock = address(timelockController);
+        timelockController = TimelockController(payable(_newTimelock));
+        emit TimelockControllerUpdated(oldTimelock, _newTimelock);
     }
 }

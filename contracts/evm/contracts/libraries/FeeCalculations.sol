@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "../interfaces/IHub.sol";
-import "../interfaces/ITrade.sol";
+import "../interfaces/IEscrow.sol";
 
 /**
  * @title FeeCalculations
@@ -76,7 +76,7 @@ library FeeCalculations {
     function toStandardFees(OptimizedFeeDistribution memory optimizedFees)
         internal 
         pure 
-        returns (ITrade.FeeDistribution memory fees)
+        returns (IEscrow.FeeDistribution memory fees)
     {
         fees.burnAmount = optimizedFees.burnAmount;
         fees.chainAmount = optimizedFees.chainAmount;

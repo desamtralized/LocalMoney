@@ -8,7 +8,11 @@
     "test": "npx hardhat test",
     "coverage": "npx hardhat coverage",
     "gas-report": "REPORT_GAS=true npx hardhat test",
-    "size-contracts": "npx hardhat size-contracts"
+    "size-contracts": "npx hardhat size-contracts",
+    "deploy:testnet": "npx hardhat run scripts/deploy-testnet.js --network",
+    "verify": "npx hardhat run scripts/verify-contracts.js --network",
+    "test:integration": "npx hardhat run scripts/test-integration.js --network",
+    "test:security": "npx hardhat test test/SecurityFixes.test.js"
   },
   "keywords": [],
   "author": "",

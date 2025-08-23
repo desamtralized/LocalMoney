@@ -60,14 +60,22 @@ contract PriceOracle is
     // Storage
     mapping(string => PriceData) public fiatPrices;         // Fiat currency USD prices
     mapping(address => PriceRoute) public tokenPriceRoutes; // Token price calculation routes
-    mapping(address => PriceData) public tokenPrices;       // Cached token prices
+    mapping(address => PriceData) public tokenPrices;       // Cached token prices - FIXED: Already public
     mapping(string => ChainlinkFeedInfo) public chainlinkFeeds; // Chainlink feed registry
+    
+    // Circuit breaker state for price deviation protection
+    mapping(address => uint256) public lastValidPrice;
+    mapping(address => bool) public circuitBreakerActive;
+    uint256 public circuitBreakerDeviationBps; // Configurable deviation threshold
+    uint256 public constant MAX_DEVIATION_BPS = 5000; // 50% max allowed deviation
+    uint256 public constant MIN_DEVIATION_BPS = 500; // 5% min allowed deviation
+    uint256 public constant DEFAULT_DEVIATION_BPS = 2000; // 20% default deviation
     
     address public swapRouter; // Uniswap V3 SwapRouter address
     bool public emergencyPause;
 
     // Storage gap for upgrades
-    uint256[50] private __gap;
+    uint256[46] private __gap;
 
     // Events
     event FiatPriceUpdated(string indexed currency, uint256 price, uint256 timestamp);
@@ -77,6 +85,9 @@ contract PriceOracle is
     event SwapRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event EmergencyPauseToggled(bool paused);
     event StalePriceDetected(address indexed token, uint256 age, uint256 maxAge);
+    event CircuitBreakerTriggered(address indexed token, uint256 priceDeviation, uint256 maxDeviation);
+    event CircuitBreakerReset(address indexed token);
+    event CircuitBreakerDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
 
     // Custom errors
     error PriceNotFound(address token);
@@ -133,6 +144,9 @@ contract PriceOracle is
 
         swapRouter = _swapRouter;
         emergencyPause = false;
+        
+        // Initialize circuit breaker with default threshold
+        circuitBreakerDeviationBps = DEFAULT_DEVIATION_BPS;
     }
 
     /**
@@ -546,5 +560,99 @@ contract PriceOracle is
         
         return block.timestamp > priceData.updatedAt ? 
             block.timestamp - priceData.updatedAt : 0;
+    }
+
+    /**
+     * @notice Check circuit breaker for price deviation
+     * @dev SECURITY FIX: Added circuit breaker for extreme price movements
+     * @param _token Token address to check
+     * @param _currentPrice Current price to validate
+     * @return triggered Whether circuit breaker is triggered
+     */
+    function checkCircuitBreaker(address _token, uint256 _currentPrice) public returns (bool triggered) {
+        if (circuitBreakerActive[_token]) {
+            return true; // Already triggered
+        }
+        
+        uint256 lastPrice = lastValidPrice[_token];
+        
+        if (lastPrice > 0) {
+            // Calculate price deviation
+            uint256 deviation;
+            if (_currentPrice > lastPrice) {
+                deviation = ((_currentPrice - lastPrice) * 10000) / lastPrice;
+            } else {
+                deviation = ((lastPrice - _currentPrice) * 10000) / lastPrice;
+            }
+            
+            // Trigger circuit breaker if deviation exceeds threshold
+            if (deviation > circuitBreakerDeviationBps) {
+                circuitBreakerActive[_token] = true;
+                emit CircuitBreakerTriggered(_token, deviation, circuitBreakerDeviationBps);
+                return true;
+            }
+        }
+        
+        // Update last valid price
+        lastValidPrice[_token] = _currentPrice;
+        return false;
+    }
+
+    /**
+     * @notice Reset circuit breaker for a token
+     * @dev Only callable by emergency role
+     * @param _token Token address to reset
+     */
+    function resetCircuitBreaker(address _token) external onlyRole(EMERGENCY_ROLE) {
+        circuitBreakerActive[_token] = false;
+        lastValidPrice[_token] = 0;
+        emit CircuitBreakerReset(_token);
+    }
+
+    /**
+     * @notice Check if circuit breaker is active for a token
+     * @param _token Token address to check
+     * @return active Whether circuit breaker is active
+     */
+    function isCircuitBreakerActive(address _token) external view returns (bool active) {
+        return circuitBreakerActive[_token];
+    }
+
+    /**
+     * @notice Update circuit breaker deviation threshold
+     * @dev SECURITY: Configurable circuit breaker for price protection
+     * @param _newDeviationBps New deviation threshold in basis points
+     */
+    function setCircuitBreakerDeviation(uint256 _newDeviationBps) 
+        external 
+        onlyRole(DEFAULT_ADMIN_ROLE) 
+    {
+        require(
+            _newDeviationBps >= MIN_DEVIATION_BPS && _newDeviationBps <= MAX_DEVIATION_BPS,
+            "Deviation out of range"
+        );
+        
+        uint256 oldDeviation = circuitBreakerDeviationBps;
+        circuitBreakerDeviationBps = _newDeviationBps;
+        
+        emit CircuitBreakerDeviationUpdated(oldDeviation, _newDeviationBps);
+    }
+
+    /**
+     * @notice Get current circuit breaker configuration
+     * @return deviationBps Current deviation threshold in basis points
+     * @return minBps Minimum allowed deviation
+     * @return maxBps Maximum allowed deviation
+     */
+    function getCircuitBreakerConfig() 
+        external 
+        view 
+        returns (
+            uint256 deviationBps,
+            uint256 minBps,
+            uint256 maxBps
+        ) 
+    {
+        return (circuitBreakerDeviationBps, MIN_DEVIATION_BPS, MAX_DEVIATION_BPS);
     }
 }

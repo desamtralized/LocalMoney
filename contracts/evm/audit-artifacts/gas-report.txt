@@ -1,0 +1,101 @@
+|  [32m[1mMethods[22m[39m                                                                                                                                           │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [1mContract[22m            ·  [1mMethod[22m                                             ·  [32mMin[39m        ·  [32mMax[39m        ·  [32mAvg[39m        ·  [1m# calls[22m      ·  [1musd (avg)[22m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mMockERC20[39m           ·  mint(address,uint256)                              ·      [36m51048[39m  ·      [31m68148[39m  ·      59596  ·            [90m6[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mPriceOracle[39m         ·  setEmergencyPause(bool)                            ·          -  ·          -  ·      35575  ·            [90m1[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mPriceOracle[39m         ·  updateChainlinkFeed(string,address,uint8,uint256)  ·          -  ·          -  ·      99453  ·            [90m2[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mPriceOracle[39m         ·  updateFiatPrices(string[],uint256[])               ·     [36m103283[39m  ·     [31m173775[39m  ·     131480  ·            [90m5[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mPriceOracle[39m         ·  updateSwapRouter(address)                          ·          -  ·          -  ·      36243  ·            [90m2[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [90mTimelockController[39m  ·  grantRole(bytes32,address)                         ·      [36m34223[39m  ·      [31m56385[39m  ·      55708  ·           [90m33[39m  ·          [32m[90m-[32m[39m  │
+·······················|·····················································|·············|·············|·············|···············|··············
+|  [32m[1mDeployments[22m[39m                                                               ·                                         ·  [1m% of limit[22m   ·             │
+·············································································|·············|·············|·············|···············|··············
+|  Hub                                                                       ·          -  ·          -  ·    4125160  ·       [90m34.4 %[39m  ·          [32m[90m-[32m[39m  │
+·············································································|·············|·············|·············|···············|··············
+|  MockERC20                                                                 ·     [36m592036[39m  ·     [31m592096[39m  ·     592043  ·        [90m4.9 %[39m  ·          [32m[90m-[32m[39m  │
+·············································································|·············|·············|·············|···············|··············
+|  PriceOracle                                                               ·          -  ·          -  ·    2961041  ·       [90m24.7 %[39m  ·          [32m[90m-[32m[39m  │
+·----------------------------------------------------------------------------|-------------|-------------|-------------|---------------|-------------·
+
+  14 passing (627ms)
+  11 failing
+
+  1) VRF Arbitrator Selection
+       "before each" hook for "Should allow admin to configure VRF settings":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)
+      at Interface._encodeParams (node_modules/ethers/src.ts/abi/interface.ts:795:31)
+      at Interface.encodeFunctionData (node_modules/ethers/src.ts/abi/interface.ts:884:18)
+      at getInitializerData (node_modules/@openzeppelin/hardhat-upgrades/src/utils/initializer-data.ts:28:30)
+      at Proxy.deployProxy (node_modules/@openzeppelin/hardhat-upgrades/src/deploy-proxy.ts:58:36)
+      at deployContracts (test/ArbitratorSelection.test.js:338:15)
+      at Context.<anonymous> (test/ArbitratorSelection.test.js:38:9)
+
+  2) Circuit Breaker
+       "before each" hook for "Should allow emergency role to pause globally":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)
+      at Interface._encodeParams (node_modules/ethers/src.ts/abi/interface.ts:795:31)
+      at Interface.encodeFunctionData (node_modules/ethers/src.ts/abi/interface.ts:884:18)
+      at getInitializerData (node_modules/@openzeppelin/hardhat-upgrades/src/utils/initializer-data.ts:28:30)
+      at Proxy.deployProxy (node_modules/@openzeppelin/hardhat-upgrades/src/deploy-proxy.ts:58:36)
+      at Context.<anonymous> (test/CircuitBreaker.test.js:43:15)
+
+  3) Dispute Resolution
+       "before each" hook for "Should register arbitrators correctly":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)
+      at Interface._encodeParams (node_modules/ethers/src.ts/abi/interface.ts:795:31)
+      at Interface.encodeFunctionData (node_modules/ethers/src.ts/abi/interface.ts:884:18)
+      at getInitializerData (node_modules/@openzeppelin/hardhat-upgrades/src/utils/initializer-data.ts:28:30)
+      at Proxy.deployProxy (node_modules/@openzeppelin/hardhat-upgrades/src/deploy-proxy.ts:58:36)
+      at Context.<anonymous> (test/DisputeResolution.test.js:62:15)
+
+  4) Fee Distribution
+       "before each" hook for "Should calculate standard fees correctly":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)
+      at Interface._encodeParams (node_modules/ethers/src.ts/abi/interface.ts:795:31)
+      at Interface.encodeFunctionData (node_modules/ethers/src.ts/abi/interface.ts:884:18)
+      at getInitializerData (node_modules/@openzeppelin/hardhat-upgrades/src/utils/initializer-data.ts:28:30)
+      at Proxy.deployProxy (node_modules/@openzeppelin/hardhat-upgrades/src/deploy-proxy.ts:58:36)
+      at Context.<anonymous> (test/FeeDistribution.test.js:57:15)
+
+  5) Hub Contract
+       "before each" hook for "Should initialize with correct config":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)
+      at Interface._encodeParams (node_modules/ethers/src.ts/abi/interface.ts:795:31)
+      at Interface.encodeFunctionData (node_modules/ethers/src.ts/abi/interface.ts:884:18)
+      at getInitializerData (node_modules/@openzeppelin/hardhat-upgrades/src/utils/initializer-data.ts:28:30)
+      at Proxy.deployProxy (node_modules/@openzeppelin/hardhat-upgrades/src/deploy-proxy.ts:58:36)
+      at Context.<anonymous> (test/Hub.test.js:41:15)
+
+  6) Offer Contract
+       "before each" hook for "Should initialize with correct hub address":
+     Error: missing argument: types/values length mismatch (count=1, expectedCount=2, code=MISSING_ARGUMENT, version=6.15.0)
+      at makeError (node_modules/ethers/src.ts/utils/errors.ts:698:21)
+      at assert (node_modules/ethers/src.ts/utils/errors.ts:719:25)
+      at assertArgumentCount (node_modules/ethers/src.ts/utils/errors.ts:738:5)
+      at AbiCoder.encode (node_modules/ethers/src.ts/abi/abi-coder.ts:189:28)

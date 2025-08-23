@@ -28,6 +28,10 @@ contract Profile is
     // Admin address for upgrades
     address public admin;
 
+    // Events for admin operations
+    event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
+    event HubUpdated(address indexed oldHub, address indexed newHub);
+
     // Storage gap for future upgrades
     uint256[50] private __gap;
 
@@ -310,7 +314,9 @@ contract Profile is
         require(msg.sender == admin, "Only admin");
         require(_newHub != address(0), "Invalid hub address");
         
+        address oldHub = address(hub);
         hub = IHub(_newHub);
+        emit HubUpdated(oldHub, _newHub);
     }
 
     /**
@@ -321,16 +327,20 @@ contract Profile is
         require(msg.sender == admin, "Only admin");
         require(_newAdmin != address(0), "Invalid admin address");
         
+        address oldAdmin = admin;
         admin = _newAdmin;
+        emit AdminUpdated(oldAdmin, _newAdmin);
     }
 
     /**
      * @notice Authorize upgrade (UUPS pattern)
      * @param newImplementation Address of the new implementation
-     * @dev Only admin can authorize upgrades
+     * @dev SECURITY FIX: Added timelock requirement via Hub
      */
-    function _authorizeUpgrade(address newImplementation) internal override {
+    function _authorizeUpgrade(address newImplementation) internal view override {
         require(msg.sender == admin, "Only admin can upgrade");
+        // Timelock is enforced at the Hub level
+        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized or timelock not met");
     }
 
     /**

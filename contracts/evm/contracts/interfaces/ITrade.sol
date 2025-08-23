@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "./IEscrow.sol";
+
 /**
  * @title ITrade
  * @notice Interface for the Trade contract (to be implemented in Phase 2)
@@ -51,12 +53,7 @@ interface ITrade {
         string sellerContact;
     }
 
-    struct FeeDistribution {
-        uint256 burnAmount;
-        uint256 chainAmount;
-        uint256 warchestAmount;
-        uint256 arbitratorAmount;
-    }
+    // Use FeeDistribution from IEscrow
     
     // Gas-optimized fee distribution for internal calculations
     struct OptimizedFeeDistribution {
@@ -86,5 +83,5 @@ interface ITrade {
     function resolveDispute(uint256 _tradeId, address _winner) external;
     
     function getTrade(uint256 _tradeId) external view returns (TradeData memory);
-    function calculateFees(uint256 _amount) external view returns (FeeDistribution memory);
+    function calculateFees(uint256 _amount) external view returns (IEscrow.FeeDistribution memory);
 }
