@@ -58,7 +58,9 @@ const counterparty = computed(() => {
       <p>{{ fiatAmountStr }}</p>
     </div>
     <div class="col-6 trader">
-      <p>{{ formatAddress(counterparty) }}</p>
+      <router-link :to="`/maker/${counterparty}`">
+        {{ formatAddress(counterparty) }}
+      </router-link>
     </div>
     <div class="col-7">
       <p>{{ formatTradeState(tradeInfo.trade.state) }}</p>
@@ -95,6 +97,20 @@ const counterparty = computed(() => {
         width: 16px;
         height: 16px;
         stroke: $gray900;
+      }
+    }
+  }
+
+  .trader {
+    a {
+      color: $gray900;
+      font-size: 14px;
+      font-weight: $regular;
+      text-decoration: none;
+
+      &:hover {
+        color: $primary;
+        text-decoration: underline;
       }
     }
   }

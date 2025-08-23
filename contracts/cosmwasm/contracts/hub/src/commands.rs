@@ -110,8 +110,7 @@ fn validate_config(config: &HubConfig) -> Result<(), ContractError> {
         return Err(ContractError::InvalidParameter {
             parameter: "trade_expiration_timer".to_string(),
             message: Some(format!(
-                "Must be <= {}",
-                MAX_TRADE_EXPIRATION_TIMER
+                "Must be <= {MAX_TRADE_EXPIRATION_TIMER}"
             )),
         });
     }
@@ -120,8 +119,7 @@ fn validate_config(config: &HubConfig) -> Result<(), ContractError> {
         return Err(ContractError::InvalidParameter {
             parameter: "trade_dispute_timer".to_string(),
             message: Some(format!(
-                "Must be <= {}",
-                MAX_TRADE_DISPUTE_TIMER
+                "Must be <= {MAX_TRADE_DISPUTE_TIMER}"
             )),
         });
     }

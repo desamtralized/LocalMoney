@@ -64,7 +64,7 @@ impl fmt::Display for PriceRoute {
         write!(
             f,
             "pool: {}, offer_asset: {}",
-            self.pool.to_string(),
+            self.pool,
             denom_str
         )
     }

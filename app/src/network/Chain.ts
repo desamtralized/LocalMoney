@@ -47,11 +47,17 @@ export interface Chain {
 
   fetchOffer(offerId: string): Promise<OfferResponse>
 
+  fetchAllOffers(limit: number, last?: number): Promise<OfferResponse[]>
+
   fetchOffers(args: FetchOffersArgs, limit: number, last?: number): Promise<OfferResponse[]>
 
   fetchMakerOffers(maker: Addr): Promise<OfferResponse[]>
 
   fetchMyOffers(limit: number, last?: number): Promise<OfferResponse[]>
+  
+  fetchOffersCountByStates(states: string[]): Promise<number>
+  
+  fetchAllFiatsOffersCount(states: string[]): Promise<Array<{ fiat: string; count: number }>>
 
   createOffer(postOffer: PostOffer): Promise<number>
 
@@ -60,6 +66,10 @@ export interface Chain {
   openTrade(trade: NewTrade): Promise<number>
 
   fetchTrades(limit: number, last?: number): Promise<TradeInfo[]>
+  
+  fetchTradesCountByStates(states: string[]): Promise<number>
+  
+  fetchAllFiatsTradesCount(states: string[]): Promise<Array<{ fiat: string; count: number }>>
 
   fetchDisputedTrades(limit: number, last?: number): Promise<{ openDisputes: TradeInfo[]; closedDisputes: TradeInfo[] }>
 

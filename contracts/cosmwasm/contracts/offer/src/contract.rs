@@ -68,6 +68,12 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::OffersByOwner { owner, limit, last } => {
             to_json_binary(&OfferModel::query_by_owner(deps, owner, limit, last)?)
         }
+        QueryMsg::OffersCountByStates { states } => {
+            to_json_binary(&queries::count_offers_by_states(deps, states)?)
+        }
+        QueryMsg::AllFiatsOffersCount { states } => {
+            to_json_binary(&queries::count_all_fiats_offers(deps, states)?)
+        }
     }
 }
 

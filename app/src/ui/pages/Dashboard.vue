@@ -8,7 +8,7 @@ import { denomToValue } from '~/utils/denom'
 import { FiatCurrency, OfferState, TradeState } from '~/types/components.interface'
 
 const client = useClientStore()
-const { fiatPrices, offers, trades, myOffers } = storeToRefs(client)
+const { fiatPrices, offers, trades, myOffers, userWallet } = storeToRefs(client)
 
 interface Stats {
   totalOffers: number
@@ -23,12 +23,20 @@ interface PriceData {
   loading: boolean
 }
 
+interface FiatRanking {
+  fiat: string
+  activeOffers: number
+  completedTrades: number
+}
+
 const stats = ref<Stats>({
   totalOffers: 0,
   activeOffers: 0,
   completedTrades: 0,
   activeTrades: 0,
 })
+
+const fiatRankings = ref<FiatRanking[]>([])
 
 const currencyPrices = ref<PriceData[]>([])
 const isLoading = ref(true)
@@ -129,46 +137,103 @@ async function fetchAllPrices() {
 
 async function fetchStats() {
   try {
-    await client.fetchOffers({ 
-      type: undefined, 
-      fiatCurrency: undefined, 
-      denom: undefined 
-    })
+    // Use the new count queries for more efficient stats fetching
+    const activeOffersCount = await client.client.fetchOffersCountByStates(['active'])
+    // Only count trades that are actually in progress (not just requested)
+    const activeTradesCount = await client.client.fetchTradesCountByStates([
+      'request_accepted', 
+      'escrow_funded',
+      'fiat_deposited'
+    ])
     
-    await client.fetchMyOffers()
+    let userActiveOffers = 0
+    let userActiveTrades = 0
     
-    await client.fetchTrades()
-    
-    const allOffers = offers.value.data
-    const allMyOffers = myOffers.value.data
-    const allTrades = trades.value.data
+    // Fetch user-specific stats if wallet is connected
+    if (userWallet.value.isConnected) {
+      try {
+        await client.fetchMyOffers()
+        userActiveOffers = myOffers.value.data.filter(o => o.offer.state === OfferState.active).length
+      } catch (e) {
+        console.log('Could not fetch user offers:', e)
+      }
+      
+      try {
+        await client.fetchTrades()
+        userActiveTrades = trades.value.data.filter(t => 
+          t.trade.state === TradeState.request_accepted ||
+          t.trade.state === TradeState.escrow_funded ||
+          t.trade.state === TradeState.fiat_deposited
+        ).length
+      } catch (e) {
+        console.log('Could not fetch user trades:', e)
+      }
+    }
     
     stats.value = {
-      totalOffers: allOffers.length + allMyOffers.length,
-      activeOffers: allOffers.filter(o => o.offer.state === OfferState.active).length +
-                   allMyOffers.filter(o => o.offer.state === OfferState.active).length,
-      completedTrades: allTrades.filter(t => 
-        t.trade.state === TradeState.escrow_released ||
-        t.trade.state === TradeState.escrow_refunded
-      ).length,
-      activeTrades: allTrades.filter(t => 
-        t.trade.state === TradeState.request_created ||
-        t.trade.state === TradeState.request_accepted ||
-        t.trade.state === TradeState.escrow_funded ||
-        t.trade.state === TradeState.fiat_deposited
-      ).length,
+      totalOffers: activeOffersCount, // Now showing ACTIVE offers count (system-wide)
+      activeOffers: activeTradesCount, // Now showing ACTIVE trades count (system-wide)
+      completedTrades: userActiveOffers, // Now showing YOUR active offers
+      activeTrades: userActiveTrades, // Now showing YOUR active trades
     }
   } catch (error) {
     console.error('Failed to fetch stats:', error)
   }
 }
 
+async function fetchFiatRankings() {
+  try {
+    // Fetch offers count by fiat
+    const offersCountByFiat = await client.client.fetchAllFiatsOffersCount(['active'])
+    
+    // Fetch completed trades count by fiat  
+    const tradesCountByFiat = await client.client.fetchAllFiatsTradesCount([
+      'escrow_released',
+      'escrow_refunded'
+    ])
+    
+    // Combine the data
+    const rankingMap = new Map<string, FiatRanking>()
+    
+    // Add offers data
+    offersCountByFiat.forEach(item => {
+      rankingMap.set(item.fiat, {
+        fiat: item.fiat,
+        activeOffers: item.count,
+        completedTrades: 0
+      })
+    })
+    
+    // Add trades data
+    tradesCountByFiat.forEach(item => {
+      const existing = rankingMap.get(item.fiat)
+      if (existing) {
+        existing.completedTrades = item.count
+      } else {
+        rankingMap.set(item.fiat, {
+          fiat: item.fiat,
+          activeOffers: 0,
+          completedTrades: item.count
+        })
+      }
+    })
+    
+    // Convert to array and sort by total activity
+    fiatRankings.value = Array.from(rankingMap.values())
+      .sort((a, b) => (b.activeOffers + b.completedTrades) - (a.activeOffers + a.completedTrades))
+      .slice(0, 10) // Top 10
+  } catch (error) {
+    console.error('Failed to fetch fiat rankings:', error)
+  }
+}
+
 async function refreshData() {
   isLoading.value = true
   try {
-    // Fetch prices first, then stats
+    // Fetch prices first, then stats, then rankings
     await fetchAllPrices()
     await fetchStats()
+    await fetchFiatRankings()
   } catch (error) {
     console.error('Error refreshing data:', error)
   } finally {
@@ -202,6 +267,13 @@ onMounted(async () => {
 watch(selectedDenom, async () => {
   await fetchAllPrices()
 })
+
+// Refetch stats when wallet connection changes
+watch(() => userWallet.value.isConnected, async (isConnected) => {
+  if (isConnected) {
+    await fetchStats()
+  }
+})
 </script>
 
 <template>
@@ -220,21 +292,36 @@ watch(selectedDenom, async () => {
 
     <div class="stats-grid">
       <div class="stat-card card">
-        <div class="stat-label">Total Offers</div>
+        <div class="stat-label">Active Offers</div>
         <div class="stat-value">{{ stats.totalOffers }}</div>
       </div>
       <div class="stat-card card">
-        <div class="stat-label">Active Offers</div>
+        <div class="stat-label">Active Trades</div>
         <div class="stat-value">{{ stats.activeOffers }}</div>
       </div>
-      <div class="stat-card card">
-        <div class="stat-label">Completed Trades</div>
-        <div class="stat-value">{{ stats.completedTrades }}</div>
+      <div class="stat-card card" :class="{ 'wallet-required': !userWallet.isConnected }">
+        <div class="stat-label">{{ userWallet.isConnected ? 'Your Active Offers' : 'Your Active Offers' }}</div>
+        <div class="stat-value" v-if="userWallet.isConnected">{{ stats.completedTrades }}</div>
+        <div class="stat-value" v-else>
+          <span class="connect-prompt">—</span>
+        </div>
       </div>
-      <div class="stat-card card">
-        <div class="stat-label">Active Trades</div>
-        <div class="stat-value">{{ stats.activeTrades }}</div>
+      <div class="stat-card card" :class="{ 'wallet-required': !userWallet.isConnected }">
+        <div class="stat-label">{{ userWallet.isConnected ? 'Your Active Trades' : 'Your Active Trades' }}</div>
+        <div class="stat-value" v-if="userWallet.isConnected">{{ stats.activeTrades }}</div>
+        <div class="stat-value" v-else>
+          <span class="connect-prompt">—</span>
+        </div>
       </div>
+    </div>
+
+    <div v-if="!userWallet.isConnected" class="wallet-notice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7V12C2 16.5 4.23 20.68 7.62 23.15L12 26L16.38 23.15C19.77 20.68 22 16.5 22 12V7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12 8V12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="16" r="1" fill="currentColor"/>
+      </svg>
+      <span>Connect wallet to view your trades</span>
     </div>
 
     <div class="prices-section">
@@ -264,6 +351,36 @@ watch(selectedDenom, async () => {
             <Loading />
           </div>
         </div>
+      </div>
+    </div>
+    
+    <div class="rankings-section">
+      <div class="rankings-header">
+        <h3>Top Fiat Currencies</h3>
+        <p class="subtitle">Most active currencies on the platform</p>
+      </div>
+      <div class="rankings-table" v-if="fiatRankings.length > 0">
+        <div class="table-header">
+          <div class="col-rank">#</div>
+          <div class="col-currency">Currency</div>
+          <div class="col-offers">Active Offers</div>
+          <div class="col-trades">Completed Trades</div>
+          <div class="col-total">Total Activity</div>
+        </div>
+        <div class="table-row" v-for="(ranking, index) in fiatRankings" :key="ranking.fiat">
+          <div class="col-rank">{{ index + 1 }}</div>
+          <div class="col-currency">
+            <span class="currency-flag">{{ getFiatInfo(ranking.fiat).flag }}</span>
+            <span class="currency-code">{{ ranking.fiat }}</span>
+            <span class="currency-name">{{ getFiatInfo(ranking.fiat).name }}</span>
+          </div>
+          <div class="col-offers">{{ ranking.activeOffers }}</div>
+          <div class="col-trades">{{ ranking.completedTrades }}</div>
+          <div class="col-total">{{ ranking.activeOffers + ranking.completedTrades }}</div>
+        </div>
+      </div>
+      <div class="no-data" v-else>
+        <p>No fiat currency data available</p>
       </div>
     </div>
   </section>
@@ -333,6 +450,31 @@ watch(selectedDenom, async () => {
       font-weight: $bold;
       color: $primary;
     }
+  }
+}
+
+.wallet-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: $gray100;
+  border: 1px solid $border;
+  border-radius: 8px;
+  margin-bottom: 48px;
+  color: $gray600;
+  font-size: 14px;
+  
+  svg {
+    flex-shrink: 0;
+  }
+}
+
+.stat-card.wallet-required {
+  opacity: 0.5;
+  
+  .connect-prompt {
+    color: $gray600;
   }
 }
 
@@ -454,6 +596,117 @@ watch(selectedDenom, async () => {
     .prices-grid {
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     }
+  }
+}
+
+.rankings-section {
+  margin-top: 48px;
+  
+  .rankings-header {
+    margin-bottom: 24px;
+    
+    h3 {
+      margin: 0 0 8px 0;
+      font-size: 24px;
+      font-weight: $bold;
+    }
+    
+    .subtitle {
+      margin: 0;
+      color: $gray600;
+      font-size: 14px;
+    }
+  }
+  
+  .rankings-table {
+    background: $gray100;
+    border: 1px solid $border;
+    border-radius: 12px;
+    overflow: hidden;
+    
+    .table-header,
+    .table-row {
+      display: grid;
+      grid-template-columns: 60px 2fr 1fr 1fr 1fr;
+      padding: 16px 24px;
+      align-items: center;
+      gap: 16px;
+      
+      @media (max-width: 768px) {
+        grid-template-columns: 40px 2fr 1fr;
+        
+        .col-trades,
+        .col-total {
+          display: none;
+        }
+      }
+    }
+    
+    .table-header {
+      background: $gray200;
+      border-bottom: 1px solid $border;
+      font-weight: $semi-bold;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: $gray600;
+    }
+    
+    .table-row {
+      transition: background-color 0.2s;
+      
+      &:hover {
+        background: $gray150;
+      }
+      
+      &:not(:last-child) {
+        border-bottom: 1px solid $border;
+      }
+    }
+    
+    .col-rank {
+      font-weight: $bold;
+      color: $primary;
+    }
+    
+    .col-currency {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      
+      .currency-flag {
+        font-size: 20px;
+      }
+      
+      .currency-code {
+        font-weight: $semi-bold;
+      }
+      
+      .currency-name {
+        color: $gray600;
+        font-size: 14px;
+        
+        @media (max-width: 768px) {
+          display: none;
+        }
+      }
+    }
+    
+    .col-offers,
+    .col-trades,
+    .col-total {
+      font-weight: 500;
+    }
+    
+    .col-total {
+      font-weight: $bold;
+      color: $primary;
+    }
+  }
+  
+  .no-data {
+    text-align: center;
+    padding: 48px;
+    color: $gray600;
   }
 }
 </style>

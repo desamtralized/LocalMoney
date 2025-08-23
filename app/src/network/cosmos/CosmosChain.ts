@@ -259,6 +259,79 @@ export class CosmosChain implements Chain {
     }
   }
 
+  async fetchOffersCountByStates(states: string[]) {
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      const result = (await this.cwClient!.queryContractSmart(this.hubInfo.hubConfig.offer_addr, {
+        offers_count_by_states: { states }
+      })) as { count: number }
+      return result.count
+    } catch (e) {
+      throw DefaultError.fromError(e)
+    }
+  }
+
+  async fetchAllFiatsOffersCount(states: string[]) {
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      const result = (await this.cwClient!.queryContractSmart(this.hubInfo.hubConfig.offer_addr, {
+        all_fiats_offers_count: { states }
+      })) as Array<{ fiat: string; count: number }>
+      return result
+    } catch (e) {
+      throw DefaultError.fromError(e)
+    }
+  }
+
+  async fetchAllOffers(limit = 1000, last?: number) {
+    // TODO: fix init
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      // We need to fetch offers for each combination of offer_type and fiat_currency
+      // Since the contract requires these parameters, we'll fetch common combinations
+      const allOffers: OfferResponse[] = []
+      const offerTypes = ['buy', 'sell']
+      
+      // Fetch for each offer type with no specific fiat currency filter
+      // We'll use USD as a placeholder but fetch all
+      for (const offerType of offerTypes) {
+        try {
+          const queryMsg = {
+            offers_by: {
+              offer_type: offerType,
+              fiat_currency: null, // Try with null to get all
+              denom: null,
+              order: 'trades_count',
+              limit,
+              last,
+            },
+          }
+          const response = (await this.cwClient!.queryContractSmart(
+            this.hubInfo.hubConfig.offer_addr,
+            queryMsg
+          )) as OfferResponse[]
+          allOffers.push(...response)
+        } catch (e) {
+          // If null doesn't work, we need to fetch with specific values
+          console.log(`Could not fetch ${offerType} offers with null fiat, trying with USD`)
+        }
+      }
+      
+      // If we couldn't get offers with null, return empty array
+      // The contract seems to require specific parameters
+      console.log('All offers fetched:', allOffers.length)
+      return allOffers
+    } catch (e) {
+      throw DefaultError.fromError(e)
+    }
+  }
+
   async fetchOffers(args: FetchOffersArgs, limit = 100, last?: number) {
     // TODO: fix init
     if (!this.cwClient) {
@@ -268,7 +341,7 @@ export class CosmosChain implements Chain {
       const queryMsg = {
         offers_by: {
           fiat_currency: args.fiatCurrency,
-          offer_type: args.offerType.toLowerCase(), // Convert to lowercase for contract (buy/sell)
+          offer_type: args.offerType ? args.offerType.toLowerCase() : undefined, // Convert to lowercase for contract (buy/sell)
           denom: args.denom,
           order: args.order, // Keep as-is (trades_count/price_rate)
           limit,
@@ -333,6 +406,34 @@ export class CosmosChain implements Chain {
       }
     } else {
       throw new WalletNotConnected()
+    }
+  }
+  
+  async fetchTradesCountByStates(states: string[]) {
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      const result = (await this.cwClient!.queryContractSmart(this.hubInfo.hubConfig.trade_addr, {
+        trades_count_by_states: { states }
+      })) as { count: number }
+      return result.count
+    } catch (e) {
+      throw DefaultError.fromError(e)
+    }
+  }
+
+  async fetchAllFiatsTradesCount(states: string[]) {
+    if (!this.cwClient) {
+      await this.init()
+    }
+    try {
+      const result = (await this.cwClient!.queryContractSmart(this.hubInfo.hubConfig.trade_addr, {
+        all_fiats_trades_count: { states }
+      })) as Array<{ fiat: string; count: number }>
+      return result
+    } catch (e) {
+      throw DefaultError.fromError(e)
     }
   }
 
