@@ -10,21 +10,27 @@ import {
 import { microDenomToDisplay } from '~/utils/denom'
 import type { GetOffer } from '~/types/components.interface'
 import { useClientStore } from '~/stores/client'
+import { CRYPTO_DECIMAL_PLACES } from '~/utils/constants'
 
 const props = defineProps<{ offer: GetOffer }>()
 const emit = defineEmits<{ (e: 'cancel'): void }>()
 const client = useClientStore()
+// Use appropriate decimal places based on chain type (EVM uses 18 decimals, Cosmos uses 6)
+// Amounts are normalized to micro-units (1e6) across chains
+const decimalPlaces = CRYPTO_DECIMAL_PLACES
+const displayDecimals = client.client.getChainType() === 'evm' ? 18 : 6
+
 const updatedOffer = ref<GetOffer>({
   ...props.offer,
-  min_amount: `${formatAmount(props.offer.min_amount, true, 6)}`,
-  max_amount: `${formatAmount(props.offer.max_amount, true, 6)}`,
+  min_amount: `${formatAmount(props.offer.min_amount, true, displayDecimals)}`,
+  max_amount: `${formatAmount(props.offer.max_amount, true, displayDecimals)}`,
 })
 
 const marginRate = computed(() => convertOfferRateToMarginRate(props.offer.rate))
 const margin = ref(marginRate.value.margin)
 const marginOffset = ref(marginRate.value.marginOffset)
-const minAmount = ref(Number(props.offer.min_amount) / 1000000)
-const maxAmount = ref(Number(props.offer.max_amount) / 1000000)
+const minAmount = ref(Number(props.offer.min_amount) / decimalPlaces)
+const maxAmount = ref(Number(props.offer.max_amount) / decimalPlaces)
 const description = ref(updatedOffer.value.description)
 const rate = ref(props.offer.rate)
 const valid = ref(true)
@@ -82,8 +88,8 @@ function update() {
   
   // Validate all numeric values before sending
   const rateValue = Math.floor(Number(calculatedRate))
-  const minAmountValue = Math.floor(Number(offer.min_amount) * 1000000)
-  const maxAmountValue = Math.floor(Number(offer.max_amount) * 1000000)
+  const minAmountValue = Math.floor(Number(offer.min_amount) * decimalPlaces)
+  const maxAmountValue = Math.floor(Number(offer.max_amount) * decimalPlaces)
   
   // Check for NaN or invalid values
   if (isNaN(rateValue) || isNaN(minAmountValue) || isNaN(maxAmountValue)) {
@@ -137,7 +143,7 @@ function update() {
             <CurrencyInput
               v-model="minAmount"
               placeholder="Offer min amount"
-              :decimals="6"
+              :decimals="displayDecimals"
               :isCrypto="true"
               :prefix="microDenomToDisplay(offer.denom.native, client.chainClient)"
             />
@@ -148,7 +154,7 @@ function update() {
             <CurrencyInput
               v-model="maxAmount"
               placeholder="Offer max amount"
-              :decimals="6"
+              :decimals="displayDecimals"
               :isCrypto="true"
               :prefix="microDenomToDisplay(offer.denom.native, client.chainClient)"
             />

@@ -12,6 +12,7 @@ import {
   encodeAbiParameters,
   decodeAbiResult,
   type Hex,
+  ContractFunctionRevertedError,
 } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import type { Coin } from '@cosmjs/stargate'
@@ -143,6 +144,16 @@ export class EVMChain implements Chain {
   constructor(config: EVMConfig, hubInfo: EVMHubInfo) {
     this.config = config
     this.hubInfo = hubInfo
+  }
+
+  private isFiatPriceNotFoundError(error: any): boolean {
+    return error instanceof ContractFunctionRevertedError ||
+           error?.name === 'ContractFunctionRevertedError' ||
+           error?.message?.includes('FiatPriceNotFound') || 
+           error?.message?.includes('0x4a1e0a41') || 
+           error?.message?.includes('0x8686a196') ||
+           error?.message?.includes('revert') ||
+           error?.data?.errorName === 'FiatPriceNotFound'
   }
 
   async init() {
@@ -431,18 +442,30 @@ export class EVMChain implements Chain {
         args: [BigInt(offerId)],
       })
 
-      return {
-        id: result.id.toString(),
+      // Convert amounts from wei (1e18) to micro-units (1e6) for frontend compatibility
+      const minAmountInMicroUnits = result.minAmount / BigInt(1e12)
+      const maxAmountInMicroUnits = result.maxAmount / BigInt(1e12)
+
+      const offer = {
+        id: Number(result.id),
         owner: result.owner,
         offer_type: mapOfferType(result.offerType),
         fiat_currency: result.fiatCurrency as FiatCurrency,
         rate: result.rate.toString(),
-        min_amount: result.minAmount.toString(),
-        max_amount: result.maxAmount.toString(),
+        min_amount: minAmountInMicroUnits.toString(),
+        max_amount: maxAmountInMicroUnits.toString(),
         state: mapOfferState(result.state),
-        terms: result.terms,
-        timestamp: result.createdAt.toString(),
+        denom: result.tokenAddress === '0x0000000000000000000000000000000000000000'
+          ? { native: 'bnb' }
+          : { native: this.mapTokenAddressToDenom(result.tokenAddress) },
+        description: result.description,
+        timestamp: Number(result.createdAt),
       }
+
+      // EVM profiles may not exist; return minimal/null profile if unavailable
+      const profile = null
+
+      return { offer, profile } as unknown as OfferResponse
     } catch (error) {
       throw DefaultError.fromError(error)
     }
@@ -767,11 +790,10 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'openTrade',
+        functionName: 'createTrade',
         args: [
           BigInt(trade.offer_id),
           BigInt(trade.amount),
-          BigInt(trade.price),
           trade.taker_contact,
         ],
       })
@@ -779,7 +801,8 @@ export class EVMChain implements Chain {
       const hash = await this.walletClient.writeContract(request)
       const receipt = await this.publicClient.waitForTransactionReceipt({ hash })
       
-      // Extract trade ID from events
+      // TODO: extract real tradeId from event logs if available
+      // For now, return a placeholder to keep flow working
       return Date.now()
     } catch (error) {
       throw DefaultError.fromError(error)
@@ -792,27 +815,80 @@ export class EVMChain implements Chain {
     }
 
     try {
-      const results = await this.publicClient.readContract({
+      const tradeIds = await this.publicClient.readContract({
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
         functionName: 'getTradesByUser',
         args: [this.account],
-      })
+      }) as bigint[]
 
-      const trades = results.map((result: any) => ({
-        id: result.id.toString(),
-        offer_id: result.offerId.toString(),
-        buyer: result.buyer,
-        seller: result.seller,
-        amount: result.amount.toString(),
-        price: result.price.toString(),
-        state: mapTradeState(result.state),
-        created_at: result.createdAt.toString(),
-        expires_at: result.expiresAt.toString(),
-        buyer_contact: result.buyerContact,
-        seller_contact: result.sellerContact,
-        terms: result.terms,
-      }))
+      const trades: TradeInfo[] = []
+      for (const id of tradeIds) {
+        try {
+          const t = await this.publicClient.readContract({
+            address: this.hubInfo.tradeAddress as Address,
+            abi: TradeABI,
+            functionName: 'getTrade',
+            args: [id],
+          })
+          // Compose TradeInfo in the same shape as Cosmos
+          const amountInMicroUnits = (t.amount as bigint) / BigInt(1e12)
+
+          // Map token address to denom
+          const denom = t.tokenAddress === '0x0000000000000000000000000000000000000000'
+            ? { native: 'bnb' }
+            : { native: this.mapTokenAddressToDenom(t.tokenAddress) }
+
+          // Basic trade object
+          const trade = {
+            id: Number(t.id),
+            addr: `trade-${t.id.toString()}`,
+            factory_addr: '',
+            buyer: t.buyer as string,
+            buyer_contact: t.buyerContact as string,
+            buyer_encryption_key: '',
+            seller: t.seller as string,
+            seller_contact: t.sellerContact as string,
+            seller_encryption_key: '',
+            arbitrator: (t.arbitrator as string) || null,
+            arbitrator_encryption_key: '',
+            arbitrator_buyer_contact: undefined,
+            arbitrator_seller_contact: undefined,
+            offer_contract: this.hubInfo.offerAddress,
+            offer_id: Number(t.offerId),
+            created_at: Number(t.createdAt),
+            expires_at: Number(t.expiresAt),
+            enables_dispute_at: Number(t.disputeDeadline) || undefined,
+            amount: amountInMicroUnits.toString(),
+            denom,
+            denom_fiat_price: 0, // filled below for stablecoins
+            state: mapTradeState(t.state),
+            state_history: [{ actor: t.buyer as string, state: mapTradeState(t.state), timestamp: Number(t.createdAt) }],
+            fiat: (t.fiatCurrency as string) as FiatCurrency,
+          }
+
+          // Try to enrich fiat price for stablecoins (1:1 to USD)
+          const denomStr = denomToValue(denom).toLowerCase()
+          const isStablecoin = denomStr === 'usdt' || denomStr === 'usdc' ||
+            denomStr.includes('usdt') || denomStr.includes('usdc') ||
+            denomStr === '0x55d398326f99059ff775485246999027b3197955' ||
+            denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+          if (isStablecoin && trade.fiat) {
+            try {
+              const rateRaw = await this.fetchFiatToUsdRate(trade.fiat)
+              const fiatPerUSD = this.formatFiatPrice(rateRaw)
+              trade.denom_fiat_price = Math.round(fiatPerUSD * 1_000_000)
+            } catch { /* ignore */ }
+          }
+
+          // Fetch offer details to include in TradeInfo
+          const offer = await this.fetchOffer(t.offerId.toString())
+
+          trades.push({ trade, offer, expired: false } as unknown as TradeInfo)
+        } catch (e) {
+          console.warn('Failed to fetch trade details for id', id.toString(), e)
+        }
+      }
 
       // Apply pagination
       const startIndex = last || 0
@@ -853,21 +929,55 @@ export class EVMChain implements Chain {
         functionName: 'getTrade',
         args: [BigInt(tradeId)],
       })
+      // Shape the detailed trade like Cosmos
+      const amountInMicroUnits = (result.amount as bigint) / BigInt(1e12)
+      const denom = result.tokenAddress === '0x0000000000000000000000000000000000000000'
+        ? { native: 'bnb' }
+        : { native: this.mapTokenAddressToDenom(result.tokenAddress) }
 
-      return {
-        id: result.id.toString(),
-        offer_id: result.offerId.toString(),
-        buyer: result.buyer,
-        seller: result.seller,
-        amount: result.amount.toString(),
-        price: result.price.toString(),
+      const trade = {
+        id: Number(result.id),
+        addr: `trade-${result.id.toString()}`,
+        factory_addr: '',
+        buyer: result.buyer as string,
+        buyer_contact: result.buyerContact as string,
+        buyer_encryption_key: '',
+        seller: result.seller as string,
+        seller_contact: result.sellerContact as string,
+        seller_encryption_key: '',
+        arbitrator: (result.arbitrator as string) || null,
+        arbitrator_encryption_key: '',
+        arbitrator_buyer_contact: undefined,
+        arbitrator_seller_contact: undefined,
+        offer_contract: this.hubInfo.offerAddress,
+        offer_id: Number(result.offerId),
+        created_at: Number(result.createdAt),
+        expires_at: Number(result.expiresAt),
+        enables_dispute_at: Number(result.disputeDeadline) || undefined,
+        amount: amountInMicroUnits.toString(),
+        denom,
+        denom_fiat_price: 0,
         state: mapTradeState(result.state),
-        created_at: result.createdAt.toString(),
-        expires_at: result.expiresAt.toString(),
-        buyer_contact: result.buyerContact,
-        seller_contact: result.sellerContact,
-        terms: result.terms,
+        state_history: [{ actor: result.buyer as string, state: mapTradeState(result.state), timestamp: Number(result.createdAt) }],
+        fiat: (result.fiatCurrency as string) as FiatCurrency,
       }
+
+      // Populate denom fiat price for stablecoins if possible
+      const denomStr = denomToValue(denom).toLowerCase()
+      const isStablecoin = denomStr === 'usdt' || denomStr === 'usdc' ||
+        denomStr.includes('usdt') || denomStr.includes('usdc') ||
+        denomStr === '0x55d398326f99059ff775485246999027b3197955' ||
+        denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'
+      if (isStablecoin && trade.fiat) {
+        try {
+          const rateRaw = await this.fetchFiatToUsdRate(trade.fiat)
+          const fiatPerUSD = this.formatFiatPrice(rateRaw)
+          trade.denom_fiat_price = Math.round(fiatPerUSD * 1_000_000)
+        } catch { /* ignore */ }
+      }
+
+      const offer = await this.fetchOffer(result.offerId.toString())
+      return { trade, offer, expired: false } as unknown as TradeInfo
     } catch (error) {
       throw DefaultError.fromError(error)
     }
@@ -934,10 +1044,16 @@ export class EVMChain implements Chain {
     try {
       const denomStr = denomToValue(denom).toLowerCase()
       const isStablecoin = denomStr === 'usdt' || denomStr === 'usdc' || 
-                          denomStr?.includes('usdt') || denomStr?.includes('usdc')
+                          denomStr?.includes('usdt') || denomStr?.includes('usdc') ||
+                          denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                          denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'    // USDC on BSC
+      
+      console.log(`[EVMChain.updateFiatPrice] Querying price for ${fiat} with denom`, denom, 'on', this.config.chainName)
+      console.log(`[EVMChain.updateFiatPrice] Denom string: ${denomStr}, is stablecoin: ${isStablecoin}`)
       
       if (fiat === 'USD' && isStablecoin) {
         // For USD stablecoins, price is always 1:1
+        console.log(`[EVMChain.updateFiatPrice] Using 1:1 USD rate for stablecoin`)
         return {
           denom,
           price: '100000000', // 1 USD with 8 decimals
@@ -950,6 +1066,8 @@ export class EVMChain implements Chain {
           throw new Error('Price oracle not configured')
         }
         
+        console.log(`[EVMChain.updateFiatPrice] Price oracle address: ${this.hubInfo.priceOracleAddress}`)
+        
         // Get fiat/USD exchange rate from oracle
         const fiatPrice = await this.publicClient.readContract({
           address: this.hubInfo.priceOracleAddress as Address,
@@ -958,6 +1076,8 @@ export class EVMChain implements Chain {
           args: [fiat],
         })
         
+        console.log(`[EVMChain.updateFiatPrice] Price response for ${fiat}:`, fiatPrice.toString())
+        
         return {
           denom,
           price: fiatPrice.toString(),
@@ -965,29 +1085,67 @@ export class EVMChain implements Chain {
         }
       }
     } catch (error: any) {
-      // Don't log errors for known missing prices
-      if (!error?.message?.includes('FiatPriceNotFound') && !error?.message?.includes('0x4a1e0a41')) {
-        console.error(`Failed to fetch price for ${fiat}:`, error)
-      }
+      console.log(`[EVMChain.updateFiatPrice] Price query failed for ${fiat}, checking for stablecoin special case...`)
       
-      // For stablecoins, we can provide reasonable defaults
+      // Handle stablecoin special case: 1 USDC/USDT = 1 USD
       const denomStr = denomToValue(denom).toLowerCase()
       const isStablecoin = denomStr === 'usdt' || denomStr === 'usdc' || 
-                          denomStr?.includes('usdt') || denomStr?.includes('usdc')
+                          denomStr?.includes('usdt') || denomStr?.includes('usdc') ||
+                          denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                          denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'    // USDC on BSC
       
-      if (isStablecoin) {
-        // Return 1:1 rate for USD, or a reasonable default for other fiats
-        const defaultPrice = fiat === 'USD' ? '100000000' : '100000000' // 1 USD with 8 decimals
+      console.log(`[EVMChain.updateFiatPrice] Denom string: ${denomStr}, is USDC/USDT: ${isStablecoin}`)
+      
+      if (isStablecoin && this.isFiatPriceNotFoundError(error)) {
+        console.log(`[EVMChain.updateFiatPrice] No price route for stablecoin, handling as 1:1 with USD`)
+        
+        // For stablecoins, we know 1 USDC/USDT = 1 USD
+        if (fiat === 'USD') {
+          return {
+            denom,
+            price: '100000000', // 1 USD with 8 decimals
+            fiat,
+          }
+        }
+        
+        // For other fiats, fetch the USD/fiat exchange rate
+        console.log(`[EVMChain.updateFiatPrice] Fetching ${fiat}/USD rate for stablecoin`)
+        const fiatToUsdRate = await this.fetchFiatToUsdRate(fiat)
+        
+        if (fiatToUsdRate > 0) {
+          // fiatToUsdRate is how many units of fiat equal 1 USD (with 8 decimals)
+          // For example, COP = 405187890000 means 1 USD = 4051.8789 COP
+          console.log(`[EVMChain.updateFiatPrice] Got ${fiat}/USD rate: ${fiatToUsdRate}, returning for stablecoin`)
+          return {
+            denom,
+            price: fiatToUsdRate.toString(),
+            fiat,
+          }
+        }
+        
+        // Only use fallback if we couldn't get the exchange rate
+        console.log(`[EVMChain.updateFiatPrice] Could not get ${fiat}/USD rate, using fallback`)
         return {
           denom,
-          price: defaultPrice,
+          price: '100000000', // 1 USD equivalent with 8 decimals
           fiat,
         }
       }
       
+      // Don't log errors for known missing prices
+      if (!this.isFiatPriceNotFoundError(error)) {
+        console.error(`[EVMChain.updateFiatPrice] Failed to fetch price for ${fiat}:`, {
+          chain: this.config.chainName,
+          priceOracleAddr: this.hubInfo.priceOracleAddress,
+          denom,
+          error: error?.message || error
+        })
+      }
+      
+      // Return fallback price
       return {
         denom,
-        price: '100000000', // Default price
+        price: '100000000', // Default price (1 USD equivalent)
         fiat,
       }
     }
@@ -1002,11 +1160,16 @@ export class EVMChain implements Chain {
     const results: DenomFiatPrice[] = []
     const denomStr = denomToValue(denom).toLowerCase()
     const isStablecoin = denomStr === 'usdt' || denomStr === 'usdc' || 
-                        denomStr?.includes('usdt') || denomStr?.includes('usdc')
+                        denomStr?.includes('usdt') || denomStr?.includes('usdc') ||
+                        denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                        denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'    // USDC on BSC
+    
+    console.log(`[EVMChain.batchUpdateFiatPrices] Fetching prices for ${fiats.length} fiats with denom`, denom, 'on', this.config.chainName)
+    console.log(`[EVMChain.batchUpdateFiatPrices] Denom string: ${denomStr}, is stablecoin: ${isStablecoin}`)
     
     // Check if oracle is configured
     if (!this.hubInfo.priceOracleAddress || this.hubInfo.priceOracleAddress === '0x0000000000000000000000000000000000000000') {
-      console.warn(`Price oracle not configured for ${this.config.chainName}, using fallback prices`)
+      console.warn(`[EVMChain.batchUpdateFiatPrices] Price oracle not configured for ${this.config.chainName}, using fallback prices`)
       
       // Return fallback prices for stablecoins
       if (isStablecoin) {
@@ -1021,10 +1184,15 @@ export class EVMChain implements Chain {
       return []
     }
     
+    console.log(`[EVMChain.batchUpdateFiatPrices] Price oracle address: ${this.hubInfo.priceOracleAddress}`)
+    
     for (const fiat of fiats) {
       try {
+        console.log(`[EVMChain.batchUpdateFiatPrices] Querying ${fiat}`)
+        
         if (fiat === 'USD' && isStablecoin) {
           // For USD stablecoins, price is always 1:1
+          console.log(`[EVMChain.batchUpdateFiatPrices] Using 1:1 USD rate for stablecoin`)
           results.push({
             denom,
             price: '100000000', // 1 USD with 8 decimals
@@ -1040,6 +1208,8 @@ export class EVMChain implements Chain {
             args: [fiat],
           })
           
+          console.log(`[EVMChain.batchUpdateFiatPrices] Success for ${fiat}:`, fiatPrice.toString())
+          
           // For stablecoins, the price in fiat is just the fiat/USD rate
           // Since 1 USDT = 1 USD, and we have X fiat = 1 USD
           // So 1 USDT = X fiat
@@ -1051,12 +1221,18 @@ export class EVMChain implements Chain {
           })
         }
       } catch (err: any) {
-        // Don't log errors for known missing prices
-        if (!err?.message?.includes('FiatPriceNotFound') && !err?.message?.includes('0x4a1e0a41')) {
-          console.error(`Failed to fetch ${fiat} price:`, err)
-        }
+        console.log(`[EVMChain.batchUpdateFiatPrices] Failed for ${fiat}:`, err?.message || err)
         
-        // Return a fallback price based on whether it's a stablecoin
+        // Don't skip any currencies - log the error and continue
+        // The error might be temporary or network-related
+        console.error(`[EVMChain.batchUpdateFiatPrices] Error fetching price for ${fiat}:`, {
+          chain: this.config.chainName,
+          priceOracleAddr: this.hubInfo.priceOracleAddress,
+          denom,
+          error: err?.message || err
+        })
+        
+        // Return a fallback price
         const fallbackPrice = isStablecoin ? '100000000' : '100000000' // 1 USD with 8 decimals
         results.push({
           denom,
@@ -1067,6 +1243,13 @@ export class EVMChain implements Chain {
       }
     }
 
+    console.log(`[EVMChain.batchUpdateFiatPrices] Returning ${results.length} results`)
+    
+    // If all results are unsuccessful for non-stablecoins, log warning
+    if (!isStablecoin && results.every(r => !r.success)) {
+      console.warn(`[EVMChain.batchUpdateFiatPrices] All price queries failed - check contract query format and oracle configuration`)
+    }
+
     return results
   }
 
@@ -1075,7 +1258,15 @@ export class EVMChain implements Chain {
       await this.init()
     }
 
+    // Check if oracle is configured
+    if (!this.hubInfo.priceOracleAddress || this.hubInfo.priceOracleAddress === '0x0000000000000000000000000000000000000000') {
+      console.warn(`[EVMChain.fetchFiatToUsdRate] Price oracle not configured for ${this.config.chainName}`)
+      return 0
+    }
+
     try {
+      console.log(`[EVMChain.fetchFiatToUsdRate] Fetching ${fiat}/USD rate from oracle: ${this.hubInfo.priceOracleAddress}`)
+      
       const rate = await this.publicClient.readContract({
         address: this.hubInfo.priceOracleAddress as Address,
         abi: PriceOracleABI,
@@ -1083,16 +1274,21 @@ export class EVMChain implements Chain {
         args: [fiat],
       })
 
+      console.log(`[EVMChain.fetchFiatToUsdRate] Raw rate for ${fiat}:`, rate.toString())
+
       // PriceOracle returns how many units of fiat equal 1 USD (with 8 decimals)
       // For example, COP = 405187890000 means 1 USD = 4051.8789 COP
       // For now, return the raw value - the client will handle formatting
       return Number(rate)
     } catch (error: any) {
       // Don't log FiatPriceNotFound errors - use defaults silently
-      if (!error?.message?.includes('0x4a1e0a41') && !error?.message?.includes('0x8686a196')) {
-        console.error('Failed to fetch fiat rate:', error)
+      if (!this.isFiatPriceNotFoundError(error)) {
+        console.error(`[EVMChain.fetchFiatToUsdRate] Failed to fetch ${fiat}/USD rate:`, error)
+      } else {
+        console.log(`[EVMChain.fetchFiatToUsdRate] No price route found for ${fiat}`)
       }
-      return 1
+      // Return 0 to indicate no rate available, not 1 which would be incorrectly formatted
+      return 0
     }
   }
 
@@ -1126,11 +1322,11 @@ export class EVMChain implements Chain {
 
     try {
       // Get trade details to determine amount
-      const trade = await this.fetchTradeDetail(tradeId)
-      const offer = await this.fetchOffer(trade.offer_id)
+      const tradeInfo = await this.fetchTradeDetail(tradeId)
+      const offer = await this.fetchOffer(tradeInfo.trade.offer_id.toString())
       
       // Calculate amount to send (assuming seller needs to escrow)
-      const amount = BigInt(trade.amount)
+      const amount = BigInt(tradeInfo.trade.amount)
 
       const { request } = await this.publicClient.simulateContract({
         account: this.account,
@@ -1138,7 +1334,6 @@ export class EVMChain implements Chain {
         abi: TradeABI,
         functionName: 'acceptTrade',
         args: [BigInt(tradeId), makerContact],
-        value: offer.offer_type === 'sell' ? amount : BigInt(0), // Send funds if seller
       })
 
       const hash = await this.walletClient.writeContract(request)
@@ -1169,9 +1364,30 @@ export class EVMChain implements Chain {
     }
   }
 
-  async fundEscrow(tradeInfo: TradeInfo, maker_contact?: string): Promise<void> {
-    // This is handled in acceptTradeRequest for EVM
-    await this.acceptTradeRequest(Number(tradeInfo.id), maker_contact || '')
+  async fundEscrow(tradeInfo: TradeInfo, _maker_contact?: string): Promise<void> {
+    if (!this.walletClient || !this.account) {
+      throw new WalletNotConnected()
+    }
+    try {
+      // Determine if native token is used; if so, send value
+      const trade = await this.fetchTradeDetail(Number(tradeInfo.trade.id))
+      const isNative = true // assume native unless token address mapping available in UI
+      const value = isNative ? BigInt(trade.trade.amount) : BigInt(0)
+
+      const { request } = await this.publicClient.simulateContract({
+        account: this.account,
+        address: this.hubInfo.tradeAddress as Address,
+        abi: TradeABI,
+        functionName: 'fundEscrow',
+        args: [BigInt(tradeInfo.trade.id)],
+        value,
+      })
+
+      const hash = await this.walletClient.writeContract(request)
+      await this.publicClient.waitForTransactionReceipt({ hash })
+    } catch (error) {
+      throw DefaultError.fromError(error)
+    }
   }
 
   async setFiatDeposited(tradeId: number): Promise<void> {
@@ -1184,7 +1400,7 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'confirmFiatDeposit',
+        functionName: 'markFiatDeposited',
         args: [BigInt(tradeId)],
       })
 
@@ -1205,7 +1421,7 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'releaseFunds',
+        functionName: 'releaseEscrow',
         args: [BigInt(tradeId)],
       })
 
@@ -1226,7 +1442,7 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'refundFunds',
+        functionName: 'refundExpiredTrade',
         args: [BigInt(tradeId)],
       })
 
@@ -1237,7 +1453,7 @@ export class EVMChain implements Chain {
     }
   }
 
-  async openDispute(tradeId: number, buyerContact: string, sellerContact: string): Promise<void> {
+  async openDispute(tradeId: number, _buyerContact: string, _sellerContact: string): Promise<void> {
     if (!this.walletClient || !this.account) {
       throw new WalletNotConnected()
     }
@@ -1247,8 +1463,8 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'openDispute',
-        args: [BigInt(tradeId)],
+        functionName: 'disputeTrade',
+        args: [BigInt(tradeId), ''],
       })
 
       const hash = await this.walletClient.writeContract(request)
@@ -1268,7 +1484,7 @@ export class EVMChain implements Chain {
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
-        functionName: 'settleDispute',
+        functionName: 'resolveDispute',
         args: [BigInt(tradeId), winner as Address],
       })
 

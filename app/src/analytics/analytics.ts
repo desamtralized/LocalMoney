@@ -4,6 +4,7 @@ import type { GetOffer, PatchOffer, PostOffer, Trade } from '~/types/components.
 import { denomToValue, microDenomToDisplay } from '~/utils/denom'
 import { CRYPTO_DECIMAL_PLACES } from '~/utils/constants'
 import type { ChainClient } from '~/network/Chain'
+import { chainFactory } from '~/network/Chain'
 
 const TRADE = 'trade'
 
@@ -100,10 +101,14 @@ export function toTradeData(trade: Trade, offer: GetOffer, chainClient: ChainCli
     trade_taker = trade.buyer
   }
 
+  // Amounts are normalized to micro-units (1e6) across chains
+  const client = chainFactory(chainClient)
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+
   return {
     trade_id: trade.id,
     offer_id: trade.offer_id,
-    trade_amount: Number(trade.amount) / CRYPTO_DECIMAL_PLACES,
+    trade_amount: Number(trade.amount) / decimalPlaces,
     trade_denom: microDenomToDisplay(denomToValue(trade.denom), chainClient),
     trade_type: offer.offer_type,
     trade_state: trade.state,
@@ -130,11 +135,15 @@ export interface OfferData {
 }
 
 export function toOfferData(offerId: number, offer: PostOffer | PatchOffer, chainClient: ChainClient): OfferData {
+  // Amounts are normalized to micro-units (1e6) across chains
+  const client = chainFactory(chainClient)
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+  
   const offer_denom = 'denom' in offer ? microDenomToDisplay(denomToValue(offer.denom), chainClient) : undefined
   return {
     offer_id: offerId,
-    offer_max: Number(offer.max_amount) / CRYPTO_DECIMAL_PLACES,
-    offer_min: Number(offer.min_amount) / CRYPTO_DECIMAL_PLACES,
+    offer_max: Number(offer.max_amount) / decimalPlaces,
+    offer_min: Number(offer.min_amount) / decimalPlaces,
     offer_rate: offer.rate,
     offer_state: (offer as PatchOffer).state ?? null,
     offer_type: (offer as PostOffer).offer_type ?? null,

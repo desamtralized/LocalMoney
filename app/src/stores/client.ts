@@ -60,6 +60,7 @@ export const useClientStore = defineStore({
      * @param {ChainClient} chainClient - The Blockchain backend to connect to
      */
     async setClient(chainClient: ChainClient) {
+      const previousChain = this.chainClient
       this.$reset()
       // TODO disconnect old chain adapter
       this.chainClient = chainClient
@@ -67,6 +68,10 @@ export const useClientStore = defineStore({
       await this.client.init()
       if (this.applicationConnected) {
         await this.connectWallet()
+      }
+      // Emit chain change event for subscribers
+      if (previousChain !== chainClient) {
+        this.$patch({ chainClient })
       }
     },
     async connectWallet(walletType?: any) {
@@ -209,9 +214,10 @@ export const useClientStore = defineStore({
         // Encrypt contact to save on the profile when an offer is created
         const owner_encryption_key = this.getSecrets().publicKey
         const owner_contact = await encryptData(owner_encryption_key, param.telegram_handle)
-        // Use BigInt to avoid floating point precision issues when converting to micro-units
-        const minAmountInMicroUnits = BigInt(Math.round(param.min_amount * CRYPTO_DECIMAL_PLACES))
-        const maxAmountInMicroUnits = BigInt(Math.round(param.max_amount * CRYPTO_DECIMAL_PLACES))
+        // Use BigInt to avoid floating point precision issues; amounts use micro-units (1e6)
+        const decimalPlaces = CRYPTO_DECIMAL_PLACES
+        const minAmountInMicroUnits = BigInt(Math.round(param.min_amount * decimalPlaces))
+        const maxAmountInMicroUnits = BigInt(Math.round(param.max_amount * decimalPlaces))
         const postOffer = {
           ...param,
           min_amount: minAmountInMicroUnits.toString(),
@@ -279,11 +285,13 @@ export const useClientStore = defineStore({
         }
         
         const profile_taker_contact = await encryptData(profile_taker_encryption_key, telegramHandle)
-        // Use BigInt to avoid floating point precision issues when converting to micro-units
-        const amountInMicroUnits = BigInt(Math.round(amount * CRYPTO_DECIMAL_PLACES))
+        // Use BigInt to avoid floating point precision issues; amounts use micro-units (1e6)
+        const decimalPlaces = CRYPTO_DECIMAL_PLACES
+        const amountInMicroUnits = BigInt(Math.round(amount * decimalPlaces))
         const newTrade: NewTrade = {
           offer_id: offerResponse.offer.id,
           amount: amountInMicroUnits.toString(),
+          price: offerResponse.offer.rate,
           taker: `${this.userWallet.address}`,
           profile_taker_contact,
           taker_contact,
@@ -351,10 +359,15 @@ export const useClientStore = defineStore({
         }
         
         const price = await this.client.updateFiatPrice(fiat, denom)
+        // Convert the raw price to decimal value using the chain's formatter
+        const formattedPrice = this.client.formatFiatPrice(price.price)
+        // Convert back to cents for consistent storage
+        const priceInCents = Math.round(formattedPrice * 100)
+        
         if (this.fiatPrices.has(fiat)) {
-          this.fiatPrices.get(fiat)?.set(denomToValue(denom), price.price)
+          this.fiatPrices.get(fiat)?.set(denomToValue(denom), priceInCents)
         } else {
-          const priceForDenom = new Map([[denomToValue(denom), price.price]])
+          const priceForDenom = new Map([[denomToValue(denom), priceInCents]])
           this.fiatPrices.set(fiat, priceForDenom)
         }
       } catch (e) {
@@ -422,7 +435,9 @@ export const useClientStore = defineStore({
       const denomStr = denomToValue(denom)
       const isStablecoin = denomStr?.toLowerCase().includes('usdc') || 
                           denomStr?.toLowerCase().includes('usdt') ||
-                          denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013'
+                          denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
+                          denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                          denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'    // USDC on BSC
       
       console.log(`[individualPriceFetch] Processing ${fiats.length} fiats for denom ${denomStr}, isStablecoin: ${isStablecoin}`)
       
@@ -470,14 +485,18 @@ export const useClientStore = defineStore({
           const price = await this.client.updateFiatPrice(fiat, denom)
           console.log(`[individualPriceFetch] Got price for ${fiat}:`, price)
           
-          const priceValue = typeof price.price === 'string' ? parseInt(price.price) : price.price
+          // Convert the raw price to decimal value using the chain's formatter
+          const formattedPrice = this.client.formatFiatPrice(price.price)
+          // Convert back to cents for consistent storage
+          const priceInCents = Math.round(formattedPrice * 100)
+          
           if (this.fiatPrices.has(fiat)) {
-            this.fiatPrices.get(fiat)?.set(denomToValue(denom), priceValue)
+            this.fiatPrices.get(fiat)?.set(denomToValue(denom), priceInCents)
           } else {
-            const priceForDenom = new Map([[denomToValue(denom), priceValue]])
+            const priceForDenom = new Map([[denomToValue(denom), priceInCents]])
             this.fiatPrices.set(fiat, priceForDenom)
           }
-          return { fiat, price: priceValue, success: true }
+          return { fiat, price: priceInCents, success: true }
         } catch (e) {
           console.error(`[individualPriceFetch] Failed to fetch price for ${fiat}:`, e)
           return { fiat, price: 0, success: false }
@@ -490,7 +509,25 @@ export const useClientStore = defineStore({
       return finalResults
     },
     async fetchFiatPriceForDenom(fiat: FiatCurrency, denom: Denom) {
-      return await this.client.updateFiatPrice(fiat, denom)
+      const priceData = await this.client.updateFiatPrice(fiat, denom)
+      
+      // Store the fetched price in the state
+      if (priceData && priceData.price) {
+        // Use chain-specific formatting method to handle different decimal formats
+        const fiatPerUSD = this.client.formatFiatPrice(priceData.price)
+        
+        // Convert to cents for consistency in storage (100 cents = 1 USD)
+        const priceValue = Math.round(fiatPerUSD * 100)
+        
+        if (this.fiatPrices.has(fiat)) {
+          this.fiatPrices.get(fiat)?.set(denomToValue(denom), priceValue)
+        } else {
+          const priceForDenom = new Map([[denomToValue(denom), priceValue]])
+          this.fiatPrices.set(fiat, priceForDenom)
+        }
+      }
+      
+      return priceData
     },
     async fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number> {
       try {
@@ -635,6 +672,7 @@ export const useClientStore = defineStore({
                      denomStr === 'ibc/295548A78785A1007F232DE286149A6FF512F180AF5657780FC89C009E2C348F' ||
                      denomStr?.toLowerCase().includes('usdc') ||
                      denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                     denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d' || // USDC on BSC
                      denomStr?.toLowerCase().includes('usdt') ||
                      denomStr?.toLowerCase().includes('busd')
       

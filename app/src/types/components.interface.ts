@@ -134,6 +134,7 @@ export enum OfferOrder {
 export interface NewTrade {
   offer_id: number
   amount: string
+  price?: string
   taker: string
   profile_taker_contact: string
   profile_taker_encryption_key: string

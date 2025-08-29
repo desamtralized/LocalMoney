@@ -63,19 +63,31 @@ const cryptoPlaceholder = computed(
       '0'
     ).toFixed(2)}`
 )
-const minAmountInCrypto = computed(
-  () => parseInt(props.offerResponse.offer.min_amount.toString()) / CRYPTO_DECIMAL_PLACES
-)
-const maxAmountInCrypto = computed(
-  () => parseInt(props.offerResponse.offer.max_amount.toString()) / CRYPTO_DECIMAL_PLACES
-)
+const minAmountInCrypto = computed(() => {
+  // Amounts are normalized to micro-units (1e6) across chains
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+  // Use Number() to handle large numbers properly - BigInt loses decimal precision in division
+  const amount = Number(props.offerResponse.offer.min_amount)
+  return amount / decimalPlaces
+})
+const maxAmountInCrypto = computed(() => {
+  // Amounts are normalized to micro-units (1e6) across chains
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+  // Use Number() to handle large numbers properly - BigInt loses decimal precision in division
+  const amount = Number(props.offerResponse.offer.max_amount)
+  return amount / decimalPlaces
+})
 const maxAmountInFiat = computed(() => {
-  const tokens = parseInt(props.offerResponse.offer.max_amount.toString()) / CRYPTO_DECIMAL_PLACES
+  // Amounts are normalized to micro-units (1e6) across chains
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+  const tokens = Number(props.offerResponse.offer.max_amount) / decimalPlaces
   const unitPrice = fiatPriceByRate.value / 100 // cents -> fiat units
   return parseFloat((tokens * unitPrice).toFixed(2))
 })
 const minAmountInFiat = computed(() => {
-  const tokens = parseInt(props.offerResponse.offer.min_amount.toString()) / CRYPTO_DECIMAL_PLACES
+  // Amounts are normalized to micro-units (1e6) across chains
+  const decimalPlaces = CRYPTO_DECIMAL_PLACES
+  const tokens = Number(props.offerResponse.offer.min_amount) / decimalPlaces
   const unitPrice = fiatPriceByRate.value / 100 // cents -> fiat units
   return parseFloat((tokens * unitPrice).toFixed(2))
 })
@@ -96,8 +108,9 @@ const minMaxFiatStr = computed(() => {
 })
 const minMaxCryptoStr = computed(() => {
   const symbol = microDenomToDisplay(denomToValue(props.offerResponse.offer.denom), client.chainClient)
-  const min = formatAmount(parseInt(props.offerResponse.offer.min_amount), true, 6)
-  const max = formatAmount(parseInt(props.offerResponse.offer.max_amount), true, 6)
+  // Use the already computed min/max values that have correct decimal places
+  const min = minAmountInCrypto.value.toFixed(6)
+  const max = maxAmountInCrypto.value.toFixed(6)
   return [`${symbol} ${parseFloat(min)}`, `${symbol} ${parseFloat(max)}`]
 })
 

@@ -19,6 +19,16 @@ const client = useClientStore()
 
 const offerTypeLabels: OfferTypeLabel = { [OfferType.buy]: t('label.sell'), [OfferType.sell]: t('label.buy') }
 const marginRate = computed(() => convertOfferRateToMarginRate(props.offerResponse.offer.rate))
+// Amounts are normalized to micro-units (1e6) across chains
+const decimalPlaces = computed(() => 1000000)
+const minAmountDisplay = computed(() => {
+  const amount = Number(props.offerResponse.offer.min_amount) / decimalPlaces.value
+  return amount.toFixed(6)
+})
+const maxAmountDisplay = computed(() => {
+  const amount = Number(props.offerResponse.offer.max_amount) / decimalPlaces.value
+  return amount.toFixed(6)
+})
 const offerPrice = computed(() => {
   const offer = props.offerResponse.offer
   const baseFiatPrice = client.getFiatPrice(offer.fiat_currency, offer.denom)
@@ -54,8 +64,8 @@ onBeforeMount(async () => {
         <div class="wrap">
           <p class="label">Trade limit</p>
           <p class="limit">
-            {{ formatAmount(offerResponse.offer.min_amount, true, 6) }} -
-            {{ formatAmount(offerResponse.offer.max_amount, true, 6) }}
+            {{ parseFloat(minAmountDisplay) }} -
+            {{ parseFloat(maxAmountDisplay) }}
             {{ microDenomToDisplay(offerResponse.offer.denom.native, client.chainClient) }}
           </p>
         </div>

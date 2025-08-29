@@ -23,11 +23,15 @@ const price = computed(() => {
     false
   )}`
 })
+// Amounts are normalized to micro-units (1e6) across chains
+const decimalPlaces = computed(() => 1000000)
 const limit = computed(() => {
-  const min = formatAmount(Number(props.offer.min_amount), true, 6)
-  const max = formatAmount(Number(props.offer.max_amount), true, 6)
+  const minAmount = Number(props.offer.min_amount) / decimalPlaces.value
+  const maxAmount = Number(props.offer.max_amount) / decimalPlaces.value
+  const min = minAmount.toFixed(6)
+  const max = maxAmount.toFixed(6)
   const denom = microDenomToDisplay(denomToValue(props.offer.denom), client.chainClient)
-  return `${min} - ${max} ${denom}`
+  return `${parseFloat(min)} - ${parseFloat(max)} ${denom}`
 })
 
 // Fetch exchange rate for non-USD currencies

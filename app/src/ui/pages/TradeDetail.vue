@@ -65,12 +65,30 @@ const counterparty = computed(() => {
   return walletAddress.value === trade.seller ? trade.buyer : trade.seller
 })
 const fiatCurrency = computed(() => tradeInfo.value.offer.offer.fiat_currency)
-const denomFiatPrice = computed(() => tradeInfo.value.trade.denom_fiat_price / 1000000)
+const denomFiatPrice = computed(() => {
+  // First check if trade already has the price set (EVM chains set this)
+  if (tradeInfo.value?.trade?.denom_fiat_price && tradeInfo.value.trade.denom_fiat_price > 0) {
+    return tradeInfo.value.trade.denom_fiat_price / 1000000
+  }
+  
+  // Otherwise calculate from market price and offer rate
+  const denom = tradeInfo.value?.trade?.denom || tradeInfo.value?.offer?.offer?.denom
+  const fiat = fiatCurrency.value
+  const offerRate = parseInt(tradeInfo.value?.offer?.offer?.rate || '100')
+  
+  // Get market price from client store (stored as cents)
+  const marketPriceCents = client.fiatPrices.get(fiat)?.get(denomToValue(denom)) || 0
+  const marketPrice = marketPriceCents / 100 // Convert from cents to actual price
+  
+  // Apply the offer rate (e.g., 105 = 5% above market, 95 = 5% below market)
+  const actualPrice = marketPrice * (offerRate / 100)
+  
+  return actualPrice
+})
 const offerPrice = computed(() => `${fiatCurrency.value} ${formatAmount(denomFiatPrice.value, false)}`)
 const fiatAmountStr = computed(() => {
-  const fiatAmount = formatFiatAmount(
-    (parseInt(tradeInfo.value.trade.amount) / 1000000) * (tradeInfo.value.trade.denom_fiat_price / 1000000)
-  )
+  const tradeAmount = parseInt(tradeInfo.value?.trade?.amount || 0) / 1000000
+  const fiatAmount = formatFiatAmount(tradeAmount * denomFiatPrice.value)
   return `${fiatCurrency.value} ${fiatAmount}`
 })
 const marginRate = computed(() => convertOfferRateToMarginRate(tradeInfo.value.offer.offer.rate))
@@ -140,6 +158,7 @@ function startTradeTimer() {
 }
 
 function tradeTimerTick() {
+  if (!tradeInfo.value?.trade?.expires_at) return
   const currentTime = Date.now()
   const expiresAt = tradeInfo.value.trade.expires_at * 1000
   const timer = new Date(expiresAt - currentTime)
@@ -153,6 +172,29 @@ function stopTradeTimer() {
 function fetchTrade(id: number) {
   nextTick(async () => {
     tradeInfo.value = await client.fetchTradeDetail(id)
+    
+    // Always fetch market price for accurate display
+    if (tradeInfo.value) {
+      const denom = tradeInfo.value.trade.denom || tradeInfo.value.offer.offer.denom
+      const fiat = tradeInfo.value.offer.offer.fiat_currency
+      
+      // Always fetch to ensure we have the latest price
+      try {
+        const priceResult = await client.fetchFiatPriceForDenom(fiat, denom)
+        console.log('Fetched price for trade detail:', priceResult)
+        
+        // If the trade doesn't have a price set and we fetched one, update it
+        if ((!tradeInfo.value.trade.denom_fiat_price || tradeInfo.value.trade.denom_fiat_price === 0) && priceResult?.price) {
+          // Use the fetched price directly (it's already formatted correctly)
+          const formattedPrice = client.client.formatFiatPrice(priceResult.price)
+          tradeInfo.value.trade.denom_fiat_price = Math.round(formattedPrice * 1_000_000)
+          console.log('Updated trade denom_fiat_price to:', tradeInfo.value.trade.denom_fiat_price)
+        }
+      } catch (error) {
+        console.error('Failed to fetch price for trade detail:', error)
+      }
+    }
+    
     refreshInterval = setInterval(async () => {
       tradeInfo.value = await client.fetchTradeDetail(id)
     }, 10 * 1000)

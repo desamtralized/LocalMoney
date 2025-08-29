@@ -101,6 +101,17 @@ watch(selectedOfferItem, async () => {
   console.log('selectedOfferItem', selectedOfferItem.value)
 })
 watch(selectedType, async () => await fetchOffers())
+
+// Watch for chain changes and auto-select first crypto
+watch(() => client.chainClient, (newChain, oldChain) => {
+  if (newChain !== oldChain) {
+    // Auto-select the first available cryptocurrency for the new chain
+    const firstDenom = defaultMicroDenomAvailable(newChain)
+    if (firstDenom) {
+      selectedDenom.value = firstDenom
+    }
+  }
+})
 </script>
 
 <template>

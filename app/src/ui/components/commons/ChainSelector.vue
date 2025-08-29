@@ -17,9 +17,9 @@ interface ChainOption {
 
 const chainOptions: ChainOption[] = [
   // Cosmos chains
-  { id: ChainClient.cosmoshub, name: 'Cosmos Hub', type: ChainType.COSMOS, icon: '⚛️', isTestnet: false },
+  { id: ChainClient.cosmoshub, name: 'Cosmos Hub', type: ChainType.COSMOS, icon: '/tokens/cosmos.png', isTestnet: false },
   // EVM chains
-  { id: ChainClient.bscMainnet, name: 'BNB Smart Chain', type: ChainType.EVM, icon: '💛', isTestnet: false },
+  { id: ChainClient.bscMainnet, name: 'BNB Smart Chain', type: ChainType.EVM, icon: '/tokens/bnb.png', isTestnet: false },
 ]
 
 const selectedChain = computed(() => {
@@ -74,7 +74,7 @@ function handleClickOutside(event: MouseEvent) {
 <template>
   <div class="chain-selector">
     <button class="chain-button" @click="toggleDropdown">
-      <span class="chain-icon">{{ selectedChain.icon }}</span>
+      <img class="chain-icon" :src="selectedChain.icon" :alt="selectedChain.name" />
       <svg 
         class="dropdown-arrow"
         :class="{ 'rotate': showDropdown }"
@@ -105,7 +105,7 @@ function handleClickOutside(event: MouseEvent) {
           :class="{ 'selected': chain.id === selectedChain.id }"
           @click="selectChain(chain)"
         >
-          <span class="chain-icon">{{ chain.icon }}</span>
+          <img class="chain-icon" :src="chain.icon" :alt="chain.name" />
           <span class="chain-name">{{ chain.name }}</span>
           <span class="chain-type">{{ chain.type.toUpperCase() }}</span>
           <svg v-if="chain.id === selectedChain.id" class="check-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -152,7 +152,9 @@ function handleClickOutside(event: MouseEvent) {
   }
 
   .chain-icon {
-    font-size: 20px;
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
   }
 
   .dropdown-arrow {
@@ -217,7 +219,9 @@ function handleClickOutside(event: MouseEvent) {
     }
 
     .chain-icon {
-      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      object-fit: contain;
     }
 
     .chain-name {
