@@ -22,6 +22,9 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
     mapping(uint256 => OfferData) private _offers;
     mapping(address => uint256[]) private _userOffers;
     
+    // AUDIT FIX: Add counter to avoid unbounded loops
+    mapping(address => uint256) private _userActiveOfferCounts;
+    
     // Indexes for efficient queries
     mapping(bytes32 => uint256[]) private _offersByType; // hash(type, fiat, token) => ids
     EnumerableSet.UintSet private _activeOfferIds;
@@ -67,18 +70,10 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
      * @notice Get user's active offer count
      * @param _user User address
      * @return Number of active offers
+     * @dev AUDIT FIX: Use counter instead of unbounded loop
      */
     function getUserActiveOfferCount(address _user) public view returns (uint256) {
-        uint256[] storage userOfferIds = _userOffers[_user];
-        uint256 count = 0;
-        
-        for (uint256 i = 0; i < userOfferIds.length; i++) {
-            if (_offers[userOfferIds[i]].state == OfferState.Active) {
-                count++;
-            }
-        }
-        
-        return count;
+        return _userActiveOfferCounts[_user];
     }
 
     /**
@@ -136,7 +131,12 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
         
         // Update indexes
         _userOffers[msg.sender].push(offerId);
-        _activeOfferIds.add(offerId);
+        // SECURITY FIX: Check return value from EnumerableSet.add
+        bool added = _activeOfferIds.add(offerId);
+        require(added, "Failed to add offer to active set");
+        
+        // AUDIT FIX: Increment active offer counter
+        _userActiveOfferCounts[msg.sender]++;
         
         // Add to type-based index
         bytes32 typeKey = _getTypeKey(_type, _fiatCurrency, _token);
@@ -428,6 +428,79 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
     }
 
     /**
+     * @notice Get offers by owner
+     * @param owner Owner address
+     * @return ownerOffers Array of offer IDs owned by the user
+     */
+    function getOffersByOwner(address owner) external view returns (uint256[] memory) {
+        uint256 count = 0;
+        
+        // First pass: count offers
+        for (uint256 i = 1; i < nextOfferId; i++) {
+            if (_offers[i].owner == owner) {
+                count++;
+            }
+        }
+        
+        // Second pass: collect offer IDs
+        uint256[] memory ownerOffers = new uint256[](count);
+        uint256 index = 0;
+        
+        for (uint256 i = 1; i < nextOfferId; i++) {
+            if (_offers[i].owner == owner) {
+                ownerOffers[index] = i;
+                index++;
+            }
+        }
+        
+        return ownerOffers;
+    }
+
+    /**
+     * @notice Get active offers by owner
+     * @param owner Owner address
+     * @return activeOffers Array of active offer IDs owned by the user
+     */
+    function getActiveOffersByOwner(address owner) external view returns (uint256[] memory) {
+        uint256 count = 0;
+        
+        // First pass: count active offers
+        for (uint256 i = 1; i < nextOfferId; i++) {
+            if (_offers[i].owner == owner && _offers[i].state == OfferState.Active) {
+                count++;
+            }
+        }
+        
+        // Second pass: collect offer IDs
+        uint256[] memory activeOffers = new uint256[](count);
+        uint256 index = 0;
+        
+        for (uint256 i = 1; i < nextOfferId; i++) {
+            if (_offers[i].owner == owner && _offers[i].state == OfferState.Active) {
+                activeOffers[index] = i;
+                index++;
+            }
+        }
+        
+        return activeOffers;
+    }
+
+    /**
+     * @notice Get all active offers
+     * @return activeOfferIds Array of all active offer IDs
+     */
+    function getAllActiveOffers() external view returns (uint256[] memory) {
+        uint256 length = _activeOfferIds.length();
+        uint256[] memory activeOfferIds = new uint256[](length);
+        
+        for (uint256 i = 0; i < length; i++) {
+            activeOfferIds[i] = _activeOfferIds.at(i);
+        }
+        
+        return activeOfferIds;
+    }
+
+    /**
      * @notice Update offer indexes when state changes
      * @param _offerId Offer ID
      * @param _oldState Previous state
@@ -438,22 +511,41 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
         OfferState _oldState,
         OfferState _newState
     ) internal {
-        if (_oldState == OfferState.Active) {
-            _activeOfferIds.remove(_offerId);
-        }
-        if (_newState == OfferState.Active) {
-            _activeOfferIds.add(_offerId);
+        // AUDIT FIX: Update active offer counter
+        address owner = _offers[_offerId].owner;
+        
+        if (_oldState == OfferState.Active && _newState != OfferState.Active) {
+            // SECURITY FIX: Check return value from EnumerableSet.remove
+            bool removed = _activeOfferIds.remove(_offerId);
+            // Only decrement counter if actually removed
+            if (removed && _userActiveOfferCounts[owner] > 0) {
+                _userActiveOfferCounts[owner]--;
+            }
+        } else if (_oldState != OfferState.Active && _newState == OfferState.Active) {
+            // SECURITY FIX: Check return value from EnumerableSet.add
+            bool added = _activeOfferIds.add(_offerId);
+            // Only increment counter if actually added
+            if (added) {
+                _userActiveOfferCounts[owner]++;
+            }
         }
     }
 
     /**
      * @notice Authorize upgrade (UUPS pattern)
-     * @dev Only hub admin can upgrade the contract
+     * @dev SECURITY FIX UPG-003: Strict timelock enforcement - no admin bypass
      */
-    function _authorizeUpgrade(address /* newImplementation */) internal view override {
-        // Only hub admin can upgrade
-        if (msg.sender != hub.getAdmin()) {
-            revert UnauthorizedAccess(msg.sender, hub.getAdmin());
-        }
+    function _authorizeUpgrade(address newImplementation) internal view override {
+        // SECURITY FIX UPG-003: Strict validation
+        require(newImplementation != address(0), "Invalid implementation");
+        require(newImplementation != address(this), "Cannot upgrade to same implementation");
+        
+        // SECURITY FIX UPG-003: Only timelock can authorize upgrades
+        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized through timelock");
+        
+        // SECURITY FIX UPG-003: Additional check - ensure caller is the timelock
+        address timelockController = hub.getTimelockController();
+        require(timelockController != address(0), "Timelock controller not configured");
+        require(msg.sender == timelockController, "Only timelock controller can execute upgrades");
     }
 }

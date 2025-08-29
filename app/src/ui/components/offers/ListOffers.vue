@@ -66,12 +66,8 @@ async function fetchMoreOffers() {
 }
 
 async function updateFiatPrice() {
-  // Validate denom before querying price
-  if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {
-    selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
-  }
-  const denom: Denom = { native: selectedDenom.value }
-  await client.updateFiatPrice(selectedFiat.value, denom)
+  // Price updates should be handled by backend/oracle, not frontend
+  // Removed direct price update call
 }
 
 onBeforeMount(() => {
@@ -92,16 +88,13 @@ onBeforeMount(() => {
 })
 
 onMounted(async () => {
-  await updateFiatPrice()
   await fetchOffers()
 })
 
 watch(selectedFiat, async () => {
-  await updateFiatPrice()
   await fetchOffers()
 })
 watch(selectedDenom, async () => {
-  await updateFiatPrice()
   await fetchOffers()
 })
 watch(selectedOfferItem, async () => {

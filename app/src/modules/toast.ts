@@ -1,6 +1,18 @@
 import type { PluginOptions } from 'vue-toastification'
-import Toast, { POSITION } from 'vue-toastification'
+import Toast from 'vue-toastification'
 import type { UserModule } from '~/types'
+
+// Import CSS for toastification
+import 'vue-toastification/dist/index.css'
+
+const POSITION = {
+  TOP_LEFT: 'top-left',
+  TOP_CENTER: 'top-center',
+  TOP_RIGHT: 'top-right',
+  BOTTOM_LEFT: 'bottom-left',
+  BOTTOM_CENTER: 'bottom-center',
+  BOTTOM_RIGHT: 'bottom-right',
+} as const
 
 const options: PluginOptions = {
   position: POSITION.TOP_CENTER,
@@ -22,6 +34,7 @@ const options: PluginOptions = {
   //   },
   // },
 }
+
 // https://github.com/Maronato/vue-toastification/
 export const install: UserModule = ({ app, router, isClient }) => {
   if (isClient) {
@@ -30,5 +43,12 @@ export const install: UserModule = ({ app, router, isClient }) => {
       toastApp.use(router)
     }
     app.use(Toast, options)
+    
+    // Make toast available globally
+    const toast = app.config.globalProperties.$toast
+    if (toast) {
+      // Store toast instance for use in pinia
+      (window as any).__vueToast = toast
+    }
   }
 }

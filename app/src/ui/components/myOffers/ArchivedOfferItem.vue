@@ -43,7 +43,7 @@ function unarchive() {
 }
 
 onBeforeMount(async () => {
-  await client.updateFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  // Price updates handled by backend/oracle
 })
 </script>
 

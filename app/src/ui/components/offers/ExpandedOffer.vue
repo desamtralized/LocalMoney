@@ -213,7 +213,7 @@ onMounted(async () => {
   })
 })
 
-const tradeCountIcon = computed(() => props.offerResponse.profile.released_trades_count > 0)
+const tradeCountIcon = computed(() => props.offerResponse.profile?.released_trades_count > 0)
 
 onUnmounted(() => {
   clearInterval(refreshRateInterval)
@@ -237,7 +237,7 @@ onUnmounted(() => {
               stroke-linejoin="round"
             />
           </svg>
-          <p>{{ formatTradesCountInfo(offerResponse.profile.released_trades_count) }}</p>
+          <p>{{ formatTradesCountInfo(offerResponse.profile?.released_trades_count || 0) }}</p>
         </div>
       </div>
 

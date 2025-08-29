@@ -338,9 +338,17 @@ contract Profile is
      * @dev SECURITY FIX: Added timelock requirement via Hub
      */
     function _authorizeUpgrade(address newImplementation) internal view override {
-        require(msg.sender == admin, "Only admin can upgrade");
-        // Timelock is enforced at the Hub level
-        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized or timelock not met");
+        // SECURITY FIX UPG-003: Strict validation
+        require(newImplementation != address(0), "Invalid implementation");
+        require(newImplementation != address(this), "Cannot upgrade to same implementation");
+        
+        // SECURITY FIX UPG-003: Only timelock can authorize upgrades
+        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized through timelock");
+        
+        // SECURITY FIX UPG-003: Additional check - ensure caller is the timelock
+        address timelockController = hub.getTimelockController();
+        require(timelockController != address(0), "Timelock controller not configured");
+        require(msg.sender == timelockController, "Only timelock controller can execute upgrades");
     }
 
     /**

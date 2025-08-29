@@ -11,6 +11,7 @@ import { DEV_CONFIG, DEV_HUB_INFO } from './cosmos/config/dev'
 import { TERRA_CONFIG, TERRA_HUB_INFO } from './cosmos/config/terra'
 import { MANTRA_CONFIG, MANTRA_HUB_INFO } from './cosmos/config/mantra'
 import { COSMOSHUB_CONFIG, COSMOSHUB_HUB_INFO } from './cosmos/config/cosmoshub'
+import { BSC_MAINNET_CONFIG, BSC_MAINNET_HUB_INFO, BSC_TESTNET_CONFIG, BSC_TESTNET_HUB_INFO } from './evm/config/bsc'
 import type {
   Addr,
   Arbitrator,
@@ -27,13 +28,16 @@ import type {
   TradeInfo,
 } from '~/types/components.interface'
 import { CosmosChain } from '~/network/cosmos/CosmosChain'
+import { EVMChain } from '~/network/evm/EVMChain'
 
 export interface Chain {
   init(): void
 
   getName(): string
 
-  connectWallet(): Promise<void>
+  getChainType(): string
+
+  connectWallet(walletType?: any): Promise<void>
 
   disconnectWallet(): Promise<void>
 
@@ -82,6 +86,14 @@ export interface Chain {
   batchUpdateFiatPrices(fiats: FiatCurrency[], denom: Denom): Promise<DenomFiatPrice[]>
 
   fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number>
+  
+  /**
+   * Format raw fiat price from the chain's price oracle to a standardized format
+   * @param rawPrice The raw price value from the chain (string for EVM, number for Cosmos)
+   * @returns Number of fiat units per 1 USD as a decimal value
+   * Example: Returns 4051.88 for COP (meaning 1 USD = 4051.88 COP)
+   */
+  formatFiatPrice(rawPrice: string | number): number
 
   acceptTradeRequest(tradeId: number, makerContact: string): Promise<void>
 
@@ -111,6 +123,8 @@ export enum ChainClient {
   neutron = 'NEUTRON',
   mantra = 'MANTRA',
   cosmoshub = 'COSMOSHUB',
+  bscMainnet = 'BSC_MAINNET',
+  bscTestnet = 'BSC_TESTNET',
 }
 
 // Centralized place to instantiate chain client and inject dependencies if needed
@@ -132,5 +146,9 @@ export function chainFactory(client: ChainClient): Chain {
       return new CosmosChain(MANTRA_CONFIG, MANTRA_HUB_INFO)
     case ChainClient.cosmoshub:
       return new CosmosChain(COSMOSHUB_CONFIG, COSMOSHUB_HUB_INFO)
+    case ChainClient.bscMainnet:
+      return new EVMChain(BSC_MAINNET_CONFIG, BSC_MAINNET_HUB_INFO)
+    case ChainClient.bscTestnet:
+      return new EVMChain(BSC_TESTNET_CONFIG, BSC_TESTNET_HUB_INFO)
   }
 }

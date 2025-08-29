@@ -83,5 +83,20 @@
     "icon": "/flags/sgd.png",
     "display": "SGD",
     "code": "SGD"
+  },
+  "ZAR": {
+    "icon": "/flags/zar.png",
+    "display": "ZAR",
+    "code": "ZAR"
+  },
+  "EGP": {
+    "icon": "/flags/egp.png",
+    "display": "EGP",
+    "code": "EGP"
+  },
+  "KES": {
+    "icon": "/flags/kes.png",
+    "display": "KES",
+    "code": "KES"
   }
 }

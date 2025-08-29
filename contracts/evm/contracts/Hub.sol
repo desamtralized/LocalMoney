@@ -12,6 +12,20 @@ import "./interfaces/IHub.sol";
  * @title Hub
  * @notice Central orchestrator contract for the LocalMoney protocol
  * @dev Manages configuration, access control, and circuit breakers for all protocol contracts
+ * 
+ * SECURITY FIX AUTH-002: STRICT TIMELOCK ENFORCEMENT IMPLEMENTED
+ * The contract now enforces strict timelock requirements for all upgrades:
+ * 1. ONLY the timelock controller can authorize contract upgrades
+ * 2. Admin role has been REMOVED from the upgrade authorization function
+ * 3. No bypass mechanism exists - timelock enforcement is mandatory
+ * 
+ * DEPLOYMENT REQUIREMENTS:
+ * - Timelock controller MUST be deployed and configured before upgrades
+ * - Recommended minimum delay: 48 hours for production
+ * - Consider multi-sig as timelock proposer/executor for additional security
+ * 
+ * @dev This implementation addresses the AUTH-002 high severity finding
+ *      Upgrades now strictly require: msg.sender == address(timelockController)
  * @author LocalMoney Protocol Team
  */
 contract Hub is 
@@ -30,6 +44,14 @@ contract Hub is
     uint256 public constant MAX_TRADE_EXPIRATION_TIMER = 7 days;
     uint256 public constant MAX_TRADE_DISPUTE_TIMER = 7 days;
     uint256 public constant MIN_TIMER_VALUE = 1 hours;
+    
+    // SECURITY FIX: Maximum fee limits for individual fee types
+    uint16 public constant MAX_BURN_FEE = 500;      // 5% max
+    uint16 public constant MAX_CHAIN_FEE = 300;     // 3% max  
+    uint16 public constant MAX_WARCHEST_FEE = 300;  // 3% max
+    uint16 public constant MAX_CONVERSION_FEE = 500; // 5% max
+    uint16 public constant MAX_ARBITRATOR_FEE = 200; // 2% max
+    uint16 public constant MAX_TOTAL_FEE = 1000;     // 10% max total
     
     // Phase 4: Operation Constants for Circuit Breaker
     bytes32 public constant OP_CREATE_OFFER = keccak256("CREATE_OFFER");
@@ -130,13 +152,30 @@ contract Hub is
     /**
      * @notice Update hub configuration
      * @param _newConfig New configuration to apply
-     * @dev Only callable by admin role
+     * @dev SECURITY FIX: Requires timelock for fee changes
      */
     function updateConfig(HubConfig memory _newConfig) 
         external 
         onlyRole(ADMIN_ROLE)
         nonReentrant
     {
+        // SECURITY FIX: Check if this is a fee update
+        bool isFeeUpdate = (
+            _newConfig.burnFeePct != _config.burnFeePct ||
+            _newConfig.chainFeePct != _config.chainFeePct ||
+            _newConfig.warchestFeePct != _config.warchestFeePct ||
+            _newConfig.conversionFeePct != _config.conversionFeePct ||
+            _newConfig.arbitratorFeePct != _config.arbitratorFeePct
+        );
+        
+        // If fee update, require timelock
+        if (isFeeUpdate) {
+            require(
+                msg.sender == address(timelockController),
+                "Fee updates must go through timelock"
+            );
+        }
+        
         _validateAndSetConfig(_newConfig);
         emit ConfigUpdated(_newConfig);
     }
@@ -416,17 +455,24 @@ contract Hub is
     /**
      * @notice Validate and set configuration
      * @param _newConfig Configuration to validate and set
-     * @dev Internal function to validate all configuration parameters
+     * @dev SECURITY FIX: Added individual fee limits validation
      */
     function _validateAndSetConfig(HubConfig memory _newConfig) internal {
-        // Validate fee percentages
+        // SECURITY FIX: Validate individual fee limits
+        require(_newConfig.burnFeePct <= MAX_BURN_FEE, "Burn fee exceeds maximum");
+        require(_newConfig.chainFeePct <= MAX_CHAIN_FEE, "Chain fee exceeds maximum");
+        require(_newConfig.warchestFeePct <= MAX_WARCHEST_FEE, "Warchest fee exceeds maximum");
+        require(_newConfig.conversionFeePct <= MAX_CONVERSION_FEE, "Conversion fee exceeds maximum");
+        require(_newConfig.arbitratorFeePct <= MAX_ARBITRATOR_FEE, "Arbitrator fee exceeds maximum");
+        
+        // Validate total fee percentages
         uint32 totalFees = uint32(_newConfig.burnFeePct) + 
                           uint32(_newConfig.chainFeePct) + 
-                          uint32(_newConfig.warchestFeePct);
+                          uint32(_newConfig.warchestFeePct) +
+                          uint32(_newConfig.conversionFeePct) +
+                          uint32(_newConfig.arbitratorFeePct);
         
-        if (totalFees > MAX_PLATFORM_FEE) {
-            revert InvalidPlatformFee(totalFees, MAX_PLATFORM_FEE);
-        }
+        require(totalFees <= MAX_TOTAL_FEE, "Total fees exceed maximum");
 
         // Validate timer constraints
         if (_newConfig.tradeExpirationTimer < MIN_TIMER_VALUE || 
@@ -463,29 +509,38 @@ contract Hub is
     }
 
     /**
-     * @notice Authorize upgrade with timelock protection (UUPS pattern)
+     * @notice Authorize upgrade with STRICT timelock enforcement (UUPS pattern)
      * @param newImplementation Address of the new implementation
-     * @dev SECURITY FIX UPG-012: Requires admin role and timelock controller
+     * 
+     * SECURITY FIX AUTH-002: STRICT TIMELOCK ENFORCEMENT
+     * This function now enforces that ONLY the timelock controller can authorize upgrades.
+     * The ADMIN_ROLE modifier has been REMOVED to prevent any bypass mechanism.
+     * 
+     * Requirements:
+     * - Timelock controller must be configured (not zero address)
+     * - Caller MUST be the timelock controller (no exceptions)
+     * - No admin role can bypass this requirement
+     * 
+     * @dev This fix addresses the AUTH-002 high severity finding from security audit
      */
     function _authorizeUpgrade(address newImplementation) 
         internal 
         override 
-        onlyRole(ADMIN_ROLE) 
     {
-        // SECURITY FIX UPG-012: Ensure upgrade goes through timelock
+        // Basic validation
         require(newImplementation != address(0), "Invalid implementation");
+        require(newImplementation != address(this), "Cannot upgrade to same implementation");
         
-        // Verify the upgrade has been scheduled through the timelock
-        if (address(timelockController) != address(0)) {
-            // Check if the caller is the timelock controller or if the operation is pending
-            require(
-                msg.sender == address(timelockController) || 
-                timelockController.isOperationPending(
-                    keccak256(abi.encode(address(this), newImplementation))
-                ),
-                "Upgrade must go through timelock"
-            );
-        }
+        // SECURITY FIX AUTH-002: Strict timelock enforcement
+        // Timelock MUST be configured - no zero address allowed
+        require(address(timelockController) != address(0), "Timelock controller not configured");
+        
+        // SECURITY FIX AUTH-002: ONLY timelock can execute upgrades
+        // Removed onlyRole(ADMIN_ROLE) modifier to prevent any admin bypass
+        require(
+            msg.sender == address(timelockController),
+            "Only timelock controller can execute upgrades"
+        );
         
         emit UpgradeAuthorized(newImplementation, msg.sender);
     }
@@ -509,6 +564,7 @@ contract Hub is
     /**
      * @notice Check if an upgrade is authorized
      * @dev SECURITY FIX: Uses TimelockController for upgrade authorization
+     * @dev SECURITY FIX UPG-003: Strict enforcement - no admin bypass allowed
      * @param contractAddress Contract being upgraded
      * @param newImplementation New implementation address
      * @return authorized Whether the upgrade is authorized
@@ -517,13 +573,20 @@ contract Hub is
         address contractAddress,
         address newImplementation
     ) external view override returns (bool authorized) {
-        // Check if the caller is the timelock controller
-        // In production, upgrades should be scheduled through the timelock
-        if (address(timelockController) != address(0)) {
-            return msg.sender == address(timelockController);
+        // SECURITY FIX UPG-003: Timelock is mandatory for all upgrades
+        require(address(timelockController) != address(0), "Timelock controller not configured");
+        
+        // Validate parameters
+        if (contractAddress == address(0) || newImplementation == address(0)) {
+            return false;
         }
-        // Fallback to admin if timelock not set (should not happen in production)
-        return msg.sender == _admin;
+        
+        if (contractAddress == newImplementation) {
+            return false; // Cannot upgrade to same implementation
+        }
+        
+        // Only timelock controller can authorize upgrades - no bypass allowed
+        return msg.sender == address(timelockController);
     }
 
     /**
@@ -535,14 +598,22 @@ contract Hub is
     }
 
     /**
-     * @notice Update the timelock controller (only callable by current timelock or admin)
+     * @notice Update the timelock controller (only callable by current timelock)
      * @param _newTimelock New timelock controller address
+     * @dev SECURITY FIX AUTH-002: Only current timelock can transfer control
      */
     function setTimelockController(address _newTimelock) 
         external 
-        onlyRole(ADMIN_ROLE) 
     {
         require(_newTimelock != address(0), "Invalid timelock address");
+        
+        // SECURITY FIX AUTH-002: Only current timelock can change timelock
+        // Prevents admin from bypassing timelock by changing the controller
+        require(
+            msg.sender == address(timelockController),
+            "Only current timelock can transfer control"
+        );
+        
         address oldTimelock = address(timelockController);
         timelockController = TimelockController(payable(_newTimelock));
         emit TimelockControllerUpdated(oldTimelock, _newTimelock);

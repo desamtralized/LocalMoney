@@ -23,6 +23,7 @@ examples/*
 # EVM build artifacts and dependencies
 contracts/evm/cache/
 contracts/evm/.deps/
+contracts/evm/contracts/.deps/
 
 # Solana keypairs
 contracts/solana/**/*keypair*.json

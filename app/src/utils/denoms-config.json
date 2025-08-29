@@ -40,5 +40,15 @@
       "display":"USDC",
       "icon": "/tokens/usdc.svg"
     }
+  },
+  "bsc": {
+    "usdt": {
+      "display": "USDT",
+      "icon": "/tokens/usdt.png"
+    },
+    "usdc": {
+      "display": "USDC",
+      "icon": "/tokens/usdc.png"
+    }
   }
 }

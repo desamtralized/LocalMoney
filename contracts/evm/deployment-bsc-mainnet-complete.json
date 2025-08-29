@@ -1,0 +1,42 @@
+{
+  "network": "BSC Mainnet",
+  "chainId": "56",
+  "timestamp": "2025-08-28T18:19:53.591Z",
+  "deployer": "0x5f6acb320B94b2A954dC0C28e037D5A761C76571",
+  "contracts": {
+    "Hub": "0x696F771E329DF4550044686C995AB9028fD3a724",
+    "Profile": "0x9a1AD40c90E5f282152Aa9F56d18B99F31794B68",
+    "PriceOracle": "0x09e65e3a9028f7B8d59F85b9A6933C6eF6e092ca",
+    "Offer": "0x5B1E3C79A6A84BD436Fe2141A13E1767C178E621",
+    "Trade": "0xe0cdc4bDb60fCeC0ED1FFedcbbFb86839206862f",
+    "Escrow": "0xA07BfE2A3eE903Dde4e62ADc76cC32b57B0e0Cd2",
+    "ArbitratorManager": "0xA5200aa4a78391b296a8315d6825426fE403BC31"
+  },
+  "config": {
+    "offerContract": "0x5B1E3C79A6A84BD436Fe2141A13E1767C178E621",
+    "tradeContract": "0xe0cdc4bDb60fCeC0ED1FFedcbbFb86839206862f",
+    "profileContract": "0x9a1AD40c90E5f282152Aa9F56d18B99F31794B68",
+    "priceContract": "0x09e65e3a9028f7B8d59F85b9A6933C6eF6e092ca",
+    "treasury": "0x5f6acb320B94b2A954dC0C28e037D5A761C76571",
+    "localMarket": "0x5f6acb320B94b2A954dC0C28e037D5A761C76571",
+    "priceProvider": "0x5f6acb320B94b2A954dC0C28e037D5A761C76571",
+    "localTokenAddress": "0x0000000000000000000000000000000000000000",
+    "chainFeeCollector": "0x5f6acb320B94b2A954dC0C28e037D5A761C76571",
+    "swapRouter": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    "burnFeePct": 100,
+    "chainFeePct": 200,
+    "warchestFeePct": 300,
+    "conversionFeePct": 50,
+    "arbitratorFeePct": 100,
+    "minTradeAmount": "10000000",
+    "maxTradeAmount": "10000000000",
+    "maxActiveOffers": 10,
+    "maxActiveTrades": 5,
+    "tradeExpirationTimer": 86400,
+    "tradeDisputeTimer": 604800,
+    "globalPause": false,
+    "pauseNewTrades": false,
+    "pauseDeposits": false,
+    "pauseWithdrawals": false
+  }
+}

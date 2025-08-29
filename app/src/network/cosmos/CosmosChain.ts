@@ -52,6 +52,10 @@ export class CosmosChain implements Chain {
     return this.config.chainName
   }
 
+  getChainType() {
+    return 'cosmos'
+  }
+
   async connectWallet() {
     if (!window.getOfflineSigner || !window.keplr || !window.getOfflineSignerAuto) {
       throw new WalletNotInstalled()
@@ -529,75 +533,113 @@ export class CosmosChain implements Chain {
   }
 
   async fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number> {
-    // TODO: fix init
     if (!this.cwClient) {
       await this.init()
     }
     
     // If it's already USD, return 1:1 rate
-    if (fiat === FiatCurrency.USD) {
+    if (fiat === FiatCurrency.USD || fiat === 'USD') {
       return 100 // 100 cents = 1 USD
+    }
+    
+    // Check if price oracle is configured
+    if (!this.hubInfo.hubConfig.price_addr) {
+      console.warn(`[CosmosChain.fetchFiatToUsdRate] Price oracle address not configured for ${this.config.chainName}`)
+      return 0
     }
     
     try {
       const queryMsg = { get_fiat_price: { currency: fiat } }
-      console.log(`Querying fiat price for ${fiat}:`, queryMsg)
+      console.log(`[CosmosChain.fetchFiatToUsdRate] Querying fiat price for ${fiat} on ${this.config.chainName}:`, queryMsg)
+      console.log(`[CosmosChain.fetchFiatToUsdRate] Price oracle address: ${this.hubInfo.hubConfig.price_addr}`)
       
       const response = await this.cwClient!.queryContractSmart(
         this.hubInfo.hubConfig.price_addr,
         queryMsg
       )
       
-      console.log(`Got fiat price response for ${fiat}:`, response)
+      console.log(`[CosmosChain.fetchFiatToUsdRate] Got fiat price response for ${fiat}:`, response)
       
       if (response && response.usd_price) {
-        // response.usd_price is how many cents of the fiat currency equal 1 USD
-        // For example, if 1 USD = 4000 COP, then usd_price = 4000
+        // Cosmos returns how many cents of fiat equal 1 USD (with 2 decimals)
+        // For example, COP = 405188 means 1 USD = 4051.88 COP
+        // This is already in the correct format for our use
         const rate = Number(response.usd_price)
-        console.log(`Exchange rate for ${fiat}: ${rate} (${rate/100} ${fiat} = 1 USD)`)
-        return rate
+        if (rate > 0) {
+          console.log(`[CosmosChain.fetchFiatToUsdRate] Exchange rate for ${fiat}: ${rate} cents (${rate/100} ${fiat} = 1 USD)`)
+          return rate
+        }
       }
       
-      // No price found in contract
-      console.warn(`No USD exchange rate found for ${fiat} in contract`)
+      // No valid price found in contract
+      console.warn(`[CosmosChain.fetchFiatToUsdRate] No valid USD exchange rate found for ${fiat} in contract (response: ${JSON.stringify(response)})`)
       return 0 // Return 0 to indicate no rate available
-    } catch (e) {
-      console.error(`Failed to fetch ${fiat}/USD exchange rate:`, e)
+    } catch (e: any) {
+      console.error(`[CosmosChain.fetchFiatToUsdRate] Failed to fetch ${fiat}/USD exchange rate:`, {
+        chain: this.config.chainName,
+        priceAddr: this.hubInfo.hubConfig.price_addr,
+        error: e?.message || e,
+        fiat
+      })
       // Return 0 to indicate no exchange rate is available
       // The frontend should handle this case appropriately
       return 0
     }
   }
 
+  formatFiatPrice(rawPrice: string | number): number {
+    // Cosmos returns prices with 2 decimal places (cents)
+    // Example: 405607 means 1 USD = 4056.07 COP
+    // Example: 86 means 1 USD = 0.86 EUR
+    const priceAsNumber = typeof rawPrice === 'string' ? parseInt(rawPrice) : rawPrice
+    return priceAsNumber / 100 // Convert cents to decimal value
+  }
+
   async updateFiatPrice(fiat: FiatCurrency, denom: Denom): Promise<DenomFiatPrice> {
-    // TODO: fix init
     if (!this.cwClient) {
       await this.init()
     }
+    
+    // Check if price oracle is configured
+    if (!this.hubInfo.hubConfig.price_addr) {
+      console.warn(`[CosmosChain.updateFiatPrice] Price oracle address not configured for ${this.config.chainName}`)
+      throw new Error('Price oracle not configured')
+    }
+    
     try {
       const queryMsg = { price: { fiat, denom } }
+      console.log(`[CosmosChain.updateFiatPrice] Querying price for ${fiat} with denom`, denom, 'on', this.config.chainName)
+      console.log(`[CosmosChain.updateFiatPrice] Query message:`, queryMsg)
+      console.log(`[CosmosChain.updateFiatPrice] Price oracle address: ${this.hubInfo.hubConfig.price_addr}`)
+      
       const response = (await this.cwClient!.queryContractSmart(
         this.hubInfo.hubConfig.price_addr,
         queryMsg
       )) as DenomFiatPrice
-      console.log('response >>> ', response)
+      
+      console.log(`[CosmosChain.updateFiatPrice] Price response for ${fiat}:`, response)
       return response
     } catch (e: any) {
+      console.log(`[CosmosChain.updateFiatPrice] Price query failed, checking for USDC special case...`)
+      
       // Handle USDC special case: 1 USDC = 1 USD
       const denomStr = 'native' in denom ? denom.native : denom.cw20
       const isUSDC = denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
                      denomStr === 'usdc' ||
                      denomStr?.toLowerCase().includes('usdc')
       
+      console.log(`[CosmosChain.updateFiatPrice] Denom string: ${denomStr}, is USDC: ${isUSDC}`)
+      
       if (isUSDC && (e.message?.includes('No price route') || e.message?.includes('not found'))) {
-        console.log(`No price route for USDC, handling as 1:1 with USD`)
+        console.log(`[CosmosChain.updateFiatPrice] No price route for USDC, handling as 1:1 with USD`)
         
         // For USDC, we know 1 USDC = 1 USD = 100 cents
         let price = 100 // 100 cents = 1 USD
         
         // If the requested fiat is not USD, we need to convert
-        if (fiat !== FiatCurrency.USD) {
+        if (fiat !== FiatCurrency.USD && fiat !== 'USD') {
           try {
+            console.log(`[CosmosChain.updateFiatPrice] Converting USDC price to ${fiat}`)
             // Get the exchange rate from USD to the target fiat
             const exchangeRate = await this.fetchFiatToUsdRate(fiat)
             if (exchangeRate > 0) {
@@ -605,10 +647,12 @@ export class CosmosChain implements Chain {
               // exchangeRate tells us how many cents of target fiat = 100 cents USD
               // So 1 USDC (100 cents USD) = exchangeRate cents of target fiat
               price = exchangeRate
-              console.log(`Converted USDC price from USD to ${fiat}: ${price} cents (rate: ${exchangeRate})`)
+              console.log(`[CosmosChain.updateFiatPrice] Converted USDC price from USD to ${fiat}: ${price} cents (rate: ${exchangeRate})`)
+            } else {
+              console.warn(`[CosmosChain.updateFiatPrice] No exchange rate available for ${fiat}, using USD price`)
             }
           } catch (err) {
-            console.error(`Failed to get exchange rate for ${fiat}, using USD price`)
+            console.error(`[CosmosChain.updateFiatPrice] Failed to get exchange rate for ${fiat}, using USD price:`, err)
           }
         }
         
@@ -619,32 +663,54 @@ export class CosmosChain implements Chain {
         } as DenomFiatPrice
       }
       
+      console.error(`[CosmosChain.updateFiatPrice] Failed to fetch price for ${fiat}:`, {
+        chain: this.config.chainName,
+        priceAddr: this.hubInfo.hubConfig.price_addr,
+        denom,
+        error: e?.message || e
+      })
       throw DefaultError.fromError(e)
     }
   }
 
   async batchUpdateFiatPrices(fiats: FiatCurrency[], denom: Denom): Promise<DenomFiatPrice[]> {
-    // TODO: fix init
     if (!this.cwClient) {
       await this.init()
     }
     
+    // Check if price oracle is configured
+    if (!this.hubInfo.hubConfig.price_addr) {
+      console.warn(`[CosmosChain.batchUpdateFiatPrices] Price oracle address not configured for ${this.config.chainName}`)
+      return []
+    }
+    
+    console.log(`[CosmosChain.batchUpdateFiatPrices] Fetching prices for ${fiats.length} fiats with denom`, denom, 'on', this.config.chainName)
+    console.log(`[CosmosChain.batchUpdateFiatPrices] Price oracle address: ${this.hubInfo.hubConfig.price_addr}`)
+    
     // Create batch of query promises - these will be executed in parallel
     const queryPromises = fiats.map(fiat => {
       const queryMsg = { price: { fiat, denom } }
+      console.log(`[CosmosChain.batchUpdateFiatPrices] Querying ${fiat}:`, queryMsg)
+      
       return this.cwClient!.queryContractSmart(
         this.hubInfo.hubConfig.price_addr,
         queryMsg
       ).then(result => {
+        console.log(`[CosmosChain.batchUpdateFiatPrices] Success for ${fiat}:`, result)
         return result
       }).catch(e => {
+        console.log(`[CosmosChain.batchUpdateFiatPrices] Failed for ${fiat}, checking USDC special case:`, e.message)
+        
         // Handle USDC special case: 1 USDC = 1 USD
         const denomStr = 'native' in denom ? denom.native : denom.cw20
         const isUSDC = denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
                       denomStr === 'usdc' ||
                       denomStr?.toLowerCase().includes('usdc')
         
+        console.log(`[CosmosChain.batchUpdateFiatPrices] Denom string: ${denomStr}, is USDC: ${isUSDC}`)
+        
         if (isUSDC && (e.message?.includes('No price route') || e.message?.includes('not found'))) {
+          console.log(`[CosmosChain.batchUpdateFiatPrices] Using USDC special handling for ${fiat}`)
           // For USDC, we know 1 USDC = 1 USD
           // We need to use the exchange rate we already fetched
           if (fiat === FiatCurrency.USD || fiat === 'USD') {
@@ -662,7 +728,12 @@ export class CosmosChain implements Chain {
         }
         
         // Return null for other errors
-        console.error(`Failed to fetch price for ${fiat}:`, e.message || e)
+        console.error(`[CosmosChain.batchUpdateFiatPrices] Failed to fetch price for ${fiat}:`, {
+          chain: this.config.chainName,
+          priceAddr: this.hubInfo.hubConfig.price_addr,
+          denom,
+          error: e.message || e
+        })
         return null
       })
     })
@@ -670,14 +741,15 @@ export class CosmosChain implements Chain {
     // Execute all queries in parallel
     const results = await Promise.all(queryPromises)
     
-    // If all results are null, return empty array to trigger fallback
-    if (results.every(r => r === null)) {
-      console.warn('All price queries failed - check contract query format')
-      return []
-    }
-    
     // Filter out null results and return
     const validResults = results.filter(r => r !== null) as DenomFiatPrice[]
+    
+    console.log(`[CosmosChain.batchUpdateFiatPrices] Returning ${validResults.length} valid results out of ${results.length} queries`)
+    
+    // If all results are null, log warning but still return empty array to trigger fallback
+    if (results.every(r => r === null)) {
+      console.warn(`[CosmosChain.batchUpdateFiatPrices] All price queries failed - check contract query format and oracle configuration`)
+    }
     
     return validResults
   }

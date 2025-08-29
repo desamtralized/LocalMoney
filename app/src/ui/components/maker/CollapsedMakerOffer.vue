@@ -31,7 +31,7 @@ const offerPrice = computed(() => {
   const fiatPrice = calculateFiatPriceByRate(baseFiatPrice * 100, props.offerResponse.offer.rate) / 100
   return `${props.offerResponse.offer.fiat_currency} ${formatAmount(fiatPrice, false)}`
 })
-const tradeCountIcon = computed(() => props.offerResponse.profile.released_trades_count > 0)
+const tradeCountIcon = computed(() => props.offerResponse.profile?.released_trades_count > 0)
 
 // Fetch exchange rate for non-USD currencies
 onBeforeMount(async () => {

@@ -30,7 +30,7 @@ onBeforeMount(async () => {
   if (props.offer.fiat_currency !== 'USD') {
     await client.fetchFiatToUsdRate(props.offer.fiat_currency)
   }
-  await client.updateFiatPrice(props.offer.fiat_currency, props.offer.denom)
+  // Price updates handled by backend/oracle
 })
 </script>
 

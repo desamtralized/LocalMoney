@@ -205,7 +205,7 @@ onMounted(async () => {
   })
 })
 
-const tradeCountIcon = computed(() => props.offerResponse.profile.released_trades_count > 0)
+const tradeCountIcon = computed(() => props.offerResponse.profile?.released_trades_count > 0)
 
 onUnmounted(() => {
   clearInterval(refreshRateInterval)

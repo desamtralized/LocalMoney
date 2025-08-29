@@ -69,9 +69,9 @@ export const useClientStore = defineStore({
         await this.connectWallet()
       }
     },
-    async connectWallet() {
+    async connectWallet(walletType?: any) {
       try {
-        await this.client.connectWallet()
+        await this.client.connectWallet(walletType)
         const address = this.client.getWalletAddress()
         await this.syncSecrets(address)
         this.userWallet = { isConnected: true, address }
@@ -379,10 +379,18 @@ export const useClientStore = defineStore({
           
           // Store the fetched prices in the state
           for (const priceData of prices) {
+            // Use chain-specific formatting method to handle different decimal formats
+            // This returns the number of fiat units per 1 USD as a decimal value
+            const fiatPerUSD = this.client.formatFiatPrice(priceData.price)
+            
+            // Convert to cents for consistency in storage (100 cents = 1 USD)
+            // Example: if fiatPerUSD is 4051.88 (COP), store as 405188 cents
+            const priceValue = Math.round(fiatPerUSD * 100)
+            
             if (this.fiatPrices.has(priceData.fiat)) {
-              this.fiatPrices.get(priceData.fiat)?.set(denomToValue(denom), priceData.price)
+              this.fiatPrices.get(priceData.fiat)?.set(denomToValue(denom), priceValue)
             } else {
-              const priceForDenom = new Map([[denomToValue(denom), priceData.price]])
+              const priceForDenom = new Map([[denomToValue(denom), priceValue]])
               this.fiatPrices.set(priceData.fiat, priceForDenom)
             }
           }
@@ -410,16 +418,20 @@ export const useClientStore = defineStore({
       }
     },
     async individualPriceFetch(fiats: FiatCurrency[], denom: Denom) {
-      // For USDC, we can calculate prices using exchange rates
+      // For stablecoins, we can calculate prices using exchange rates
       const denomStr = denomToValue(denom)
-      const isUSDC = denomStr?.toLowerCase().includes('usdc')
+      const isStablecoin = denomStr?.toLowerCase().includes('usdc') || 
+                          denomStr?.toLowerCase().includes('usdt') ||
+                          denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013'
       
-      if (isUSDC) {
-        console.log('Using exchange rates for USDC pricing')
-        // For USDC, use exchange rates directly (1 USDC = 1 USD)
+      console.log(`[individualPriceFetch] Processing ${fiats.length} fiats for denom ${denomStr}, isStablecoin: ${isStablecoin}`)
+      
+      if (isStablecoin) {
+        console.log('[individualPriceFetch] Using exchange rates for stablecoin pricing')
+        // For stablecoins, use exchange rates directly (1 USDC/USDT = 1 USD)
         const results = fiats.map(fiat => {
           if (fiat === 'USD') {
-            // 1 USDC = 1 USD = 100 cents
+            // 1 USDC/USDT = 1 USD = 100 cents
             const price = 100
             if (this.fiatPrices.has(fiat)) {
               this.fiatPrices.get(fiat)?.set(denomStr, price)
@@ -430,56 +442,68 @@ export const useClientStore = defineStore({
           } else {
             // Use the exchange rate if we have it
             const rate = this.fiatExchangeRates.get(fiat)
-            console.log(`Exchange rate for ${fiat}: ${rate}`)
+            console.log(`[individualPriceFetch] Exchange rate for ${fiat}: ${rate}`)
             if (rate && rate > 0) {
-              // rate is how many cents of the fiat currency equal 1 USD
-              // Since 1 USDC = 1 USD, the price is the same as the rate
+              // rate is now in actual currency units (e.g., 4051.88 COP per USD)
+              // Convert to cents for storage consistency (405188 cents)
+              const rateInCents = Math.round(rate * 100)
               if (this.fiatPrices.has(fiat)) {
-                this.fiatPrices.get(fiat)?.set(denomStr, rate)
+                this.fiatPrices.get(fiat)?.set(denomStr, rateInCents)
               } else {
-                this.fiatPrices.set(fiat, new Map([[denomStr, rate]]))
+                this.fiatPrices.set(fiat, new Map([[denomStr, rateInCents]]))
               }
-              return { fiat, price: rate, success: true }
+              console.log(`[individualPriceFetch] Stored price for ${fiat}: ${rateInCents} cents`)
+              return { fiat, price: rateInCents, success: true }
             }
-            console.log(`No exchange rate for ${fiat}`)
+            console.log(`[individualPriceFetch] No exchange rate for ${fiat}`)
             return { fiat, price: 0, success: false }
           }
         })
-        console.log('USDC price results:', results)
+        console.log('[individualPriceFetch] Stablecoin price results:', results)
         return results.filter(r => r.success)
       }
       
-      // For non-USDC denoms, try to fetch prices from the contract
+      // For non-stablecoin denoms, try to fetch prices from the contract
+      console.log('[individualPriceFetch] Fetching prices from contract for non-stablecoin')
       const pricePromises = fiats.map(async (fiat) => {
         try {
           const price = await this.client.updateFiatPrice(fiat, denom)
+          console.log(`[individualPriceFetch] Got price for ${fiat}:`, price)
+          
+          const priceValue = typeof price.price === 'string' ? parseInt(price.price) : price.price
           if (this.fiatPrices.has(fiat)) {
-            this.fiatPrices.get(fiat)?.set(denomToValue(denom), price.price)
+            this.fiatPrices.get(fiat)?.set(denomToValue(denom), priceValue)
           } else {
-            const priceForDenom = new Map([[denomToValue(denom), price.price]])
+            const priceForDenom = new Map([[denomToValue(denom), priceValue]])
             this.fiatPrices.set(fiat, priceForDenom)
           }
-          return { fiat, price: price.price, success: true }
+          return { fiat, price: priceValue, success: true }
         } catch (e) {
-          console.error(`Failed to fetch price for ${fiat}:`, e)
+          console.error(`[individualPriceFetch] Failed to fetch price for ${fiat}:`, e)
           return { fiat, price: 0, success: false }
         }
       })
       
       const results = await Promise.allSettled(pricePromises)
-      return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean)
+      const finalResults = results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean)
+      console.log(`[individualPriceFetch] Final results:`, finalResults)
+      return finalResults
     },
     async fetchFiatPriceForDenom(fiat: FiatCurrency, denom: Denom) {
       return await this.client.updateFiatPrice(fiat, denom)
     },
     async fetchFiatToUsdRate(fiat: FiatCurrency): Promise<number> {
       try {
-        const rate = await this.client.fetchFiatToUsdRate(fiat)
-        // Store the exchange rate for future use only if valid
-        if (rate > 0) {
-          this.fiatExchangeRates.set(fiat, rate)
+        const rawRate = await this.client.fetchFiatToUsdRate(fiat)
+        // Use the chain's formatFiatPrice method to handle different decimal formats
+        // This converts from chain-specific format (2 or 8 decimals) to actual value
+        const formattedRate = this.client.formatFiatPrice(rawRate)
+        
+        // Store the formatted rate (in actual currency units, not cents)
+        if (formattedRate > 0) {
+          this.fiatExchangeRates.set(fiat, formattedRate)
         }
-        return rate
+        return formattedRate
       } catch (e) {
         console.error(`Failed to fetch ${fiat}/USD rate:`, e)
         return 0 // Return 0 to indicate no rate available
@@ -604,39 +628,49 @@ export const useClientStore = defineStore({
       }
     },
     getFiatPrice(fiatCurrency: FiatCurrency, denom: Denom): number {
-      // Check if this is USDC
+      // Check if this is a USD stablecoin (USDC, USDT, BUSD, etc.)
       const denomStr = denomToValue(denom)
-      const isUSDC = denomStr === 'usdc' || 
+      const isUSDStablecoin = denomStr === 'usdc' || 
                      denomStr === 'ibc/F663521BF1836B00F5F177680F74BFB9A8B5654A694D0D2BC249E03CF2509013' ||
                      denomStr === 'ibc/295548A78785A1007F232DE286149A6FF512F180AF5657780FC89C009E2C348F' ||
-                     denomStr?.toLowerCase().includes('usdc')
+                     denomStr?.toLowerCase().includes('usdc') ||
+                     denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
+                     denomStr?.toLowerCase().includes('usdt') ||
+                     denomStr?.toLowerCase().includes('busd')
       
-      if (isUSDC) {
-        // For USDC, 1 USDC = 1 USD
+      console.log(`[getFiatPrice] Getting price for ${fiatCurrency} with denom ${denomStr}, isUSDStablecoin: ${isUSDStablecoin}`)
+      
+      if (isUSDStablecoin) {
+        // For USD stablecoins, 1 token = 1 USD
         if (fiatCurrency === 'USD') {
+          console.log(`[getFiatPrice] Returning 1:1 USD rate for stablecoin`)
           return 1.00 // 1 USDC = 1 USD
         }
         
         // For other fiat currencies, convert using exchange rate
         const exchangeRate = this.fiatExchangeRates.get(fiatCurrency)
+        console.log(`[getFiatPrice] Exchange rate for ${fiatCurrency}: ${exchangeRate}`)
         if (exchangeRate && exchangeRate > 0) {
-          // exchangeRate is in cents of the fiat currency that equal 1 USD
-          // For COP: if 1 USD = 4000 COP, then exchangeRate = 400000 cents (since 1 COP = 100 cents)
-          // But we want to return the price in the fiat currency (not cents)
-          // So we divide by 100 to get the actual currency value
-          return exchangeRate / 100
+          // exchangeRate is now already in actual currency units (not cents)
+          // For COP: if 1 USD = 4051.88 COP, then exchangeRate = 4051.88
+          // This is the price in the fiat currency for 1 USD
+          return exchangeRate
         }
         
         // No exchange rate available - return 0 to indicate price unavailable
-        console.warn(`No exchange rate found for ${fiatCurrency}, price unavailable`)
+        console.warn(`[getFiatPrice] No exchange rate found for ${fiatCurrency}, price unavailable`)
         return 0
       }
       
       // For other denoms, use the price from the map
       const fiatPrice = this.fiatPrices.get(fiatCurrency)?.get(denomStr) ?? 0
+      console.log(`[getFiatPrice] Retrieved stored price for ${fiatCurrency}/${denomStr}: ${fiatPrice}`)
       try {
-        return fiatPrice / 100
+        const finalPrice = fiatPrice / 100
+        console.log(`[getFiatPrice] Final price after division by 100: ${finalPrice}`)
+        return finalPrice
       } catch (e) {
+        console.error(`[getFiatPrice] Error calculating price:`, e)
         return 0
       }
     },

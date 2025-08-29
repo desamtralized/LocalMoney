@@ -103,6 +103,9 @@ export const FiatCurrency = {
   VND: 'VND',
   MYR: 'MYR',
   SGD: 'SGD',
+  ZAR: 'ZAR',
+  EGP: 'EGP',
+  KES: 'KES',
 } as const
 
 export type FiatCurrency = typeof FiatCurrency[keyof typeof FiatCurrency]
@@ -241,6 +244,7 @@ export interface Arbitrator {
 
 export interface DenomFiatPrice {
   denom: Denom
-  fiat: FiatCurrency
-  price: number
+  fiat?: FiatCurrency
+  price: number | string
+  success?: boolean
 }

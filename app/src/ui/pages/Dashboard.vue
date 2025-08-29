@@ -60,6 +60,9 @@ const supportedFiats = [
   FiatCurrency.VND,
   FiatCurrency.MYR,
   FiatCurrency.SGD,
+  FiatCurrency.ZAR,
+  FiatCurrency.EGP,
+  FiatCurrency.KES,
 ]
 
 const denomOptions = [
@@ -94,9 +97,24 @@ async function fetchAllPrices() {
         // Find the result for this fiat currency
         const result = results.find(r => r && r.fiat === fiat)
         if (result && result.success) {
+          let priceValue = typeof result.price === 'string' ? parseInt(result.price) : result.price
+          
+          // Check if we're on an EVM chain or Cosmos chain by checking the client type
+          const isEVMChain = client.client.constructor.name === 'EVMChain'
+          
+          if (isEVMChain) {
+            // EVM returns prices with 8 decimals where 100000000 = 1 unit
+            // Convert from 8 decimals to cents (100 = $1)
+            priceValue = Math.round(priceValue / 1000000)
+          } else {
+            // Cosmos returns prices already in cents (2 decimals where 100 = $1)
+            // No conversion needed, price is already in cents
+            priceValue = priceValue
+          }
+          
           return {
             fiat: fiat as string,
-            price: result.price,
+            price: priceValue,
             loading: false,
           }
         }

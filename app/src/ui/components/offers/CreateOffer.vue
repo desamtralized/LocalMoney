@@ -59,8 +59,7 @@ watch(selectedFiat, async (newFiat) => {
   if (newFiat !== 'USD') {
     await client.fetchFiatToUsdRate(newFiat)
   }
-  const denom: Denom = { native: selectedDenom.value }
-  await client.updateFiatPrice(newFiat, denom)
+  // Price updates handled by backend/oracle
 })
 
 // TODO - Make isMobile global
@@ -85,8 +84,7 @@ onBeforeMount(async () => {
     await client.fetchFiatToUsdRate(selectedFiat.value)
   }
   
-  const denom: Denom = { native: selectedDenom.value }
-  await client.updateFiatPrice(selectedFiat.value, denom)
+  // Price updates handled by backend/oracle
 })
 onUnmounted(() => {
   window.removeEventListener('resize', listener)
@@ -160,12 +158,11 @@ watch(margin, () => {
   calculateMarginRate()
 })
 async function updateFiatPrice() {
+  // Price updates handled by backend/oracle
   // Validate denom before querying price
   if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {
     selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
   }
-  const denom: Denom = { native: selectedDenom.value }
-  await client.updateFiatPrice(selectedFiat.value, denom)
 }
 watch(selectedDenom, async () => {
   await updateFiatPrice()

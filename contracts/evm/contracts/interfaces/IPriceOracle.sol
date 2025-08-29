@@ -28,7 +28,7 @@ interface IPriceOracle {
     function setPriceProvider(address _provider) external;
     
     function getFiatPrice(string memory _currency) external view returns (uint256);
-    function getTokenPriceInFiat(address _token, string memory _fiatCurrency, uint256 _amount) external view returns (uint256);
+    function getTokenPriceInFiat(address _token, string memory _fiatCurrency, uint256 _amount) external returns (uint256);
     function getTokenPriceInUSD(address _token) external returns (uint256);
     function isPriceValid(string memory _currency) external view returns (bool);
     function getPriceAge(string memory _currency) external view returns (uint256);

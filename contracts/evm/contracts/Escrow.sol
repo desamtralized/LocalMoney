@@ -85,7 +85,8 @@ contract Escrow is
         
         require(_hub != address(0), "Invalid hub address");
         require(_priceOracle != address(0), "Invalid price oracle address");
-        require(_tradeContract != address(0), "Invalid trade contract address");
+        // Allow zero address for trade contract initially
+        // require(_tradeContract != address(0), "Invalid trade contract address");
         
         hub = IHub(_hub);
         priceOracle = IPriceOracle(_priceOracle);
@@ -94,7 +95,9 @@ contract Escrow is
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(EMERGENCY_ROLE, msg.sender);
-        _grantRole(TRADE_CONTRACT_ROLE, _tradeContract);
+        if (_tradeContract != address(0)) {
+            _grantRole(TRADE_CONTRACT_ROLE, _tradeContract);
+        }
         
         // Initialize slippage tolerance
         slippageTolerance = DEFAULT_SLIPPAGE_BPS;
@@ -232,21 +235,22 @@ contract Escrow is
     /**
      * @notice Withdraw pending ETH payments
      * @dev SECURITY FIX EXT-021 & DOS-054: Pull payment pattern implementation
+     * @dev AUDIT FIX: Fixed reentrancy vulnerability - state cleared before external call
      */
     function withdraw() external nonReentrant {
         uint256 amount = pendingWithdrawals[msg.sender];
         if (amount == 0) revert NothingToWithdraw();
         
-        // EFFECTS: Clear pending withdrawal before external call
+        // EFFECTS: Clear pending withdrawal before external call (CEI pattern)
+        // AUDIT FIX: Never restore this state after external call to prevent reentrancy
         pendingWithdrawals[msg.sender] = 0;
         
         // INTERACTIONS: Transfer ETH
         (bool success, ) = msg.sender.call{value: amount}("");
-        if (!success) {
-            // Revert state if transfer fails
-            pendingWithdrawals[msg.sender] = amount;
-            revert WithdrawalFailed(msg.sender, amount);
-        }
+        
+        // AUDIT FIX: Use require to ensure successful transfer
+        // Users must use contracts that can receive ETH or use EOAs
+        require(success, "Withdrawal failed: recipient cannot receive ETH");
         
         emit Withdrawn(msg.sender, amount);
     }
@@ -284,7 +288,7 @@ contract Escrow is
 
     /**
      * @notice Swap tokens to LOCAL and burn them with slippage protection
-     * @dev SECURITY FIX: Added slippage protection and circuit breaker
+     * @dev SECURITY FIX: CEI pattern applied - state updates before external calls
      * @param fromToken Token to swap from
      * @param amount Amount to swap and burn
      * @param config Hub configuration
@@ -294,6 +298,7 @@ contract Escrow is
         uint256 amount,
         IHub.HubConfig memory config
     ) internal {
+        // CHECKS - all validations first
         if (fromToken == config.localTokenAddress) {
             // Already LOCAL token, just burn directly
             ILocalToken(config.localTokenAddress).burn(amount);
@@ -301,36 +306,78 @@ contract Escrow is
             return;
         }
         
+        // Circuit breaker and router checks
+        bool fallbackToTreasury = false;
+        string memory fallbackReason = "";
+        
         if (config.swapRouter == address(0)) {
-            // No swap router configured, send to treasury as fallback
-            _safeTransfer(fromToken, config.treasury, amount);
-            emit BurnFallbackToTreasury(fromToken, amount, "No swap router configured");
+            fallbackToTreasury = true;
+            fallbackReason = "No swap router configured";
+        } else if (_checkCircuitBreaker(fromToken)) {
+            fallbackToTreasury = true;
+            fallbackReason = "Circuit breaker activated";
+        }
+        
+        // EFFECTS - update state BEFORE external calls
+        if (fallbackToTreasury) {
+            // Transfer to pending withdrawals FIRST to prevent reentrancy
+            pendingWithdrawals[config.treasury] += amount;
+            emit BurnFallbackToTreasury(fromToken, amount, fallbackReason);
             return;
         }
         
-        // Check circuit breaker
-        if (_checkCircuitBreaker(fromToken)) {
-            _safeTransfer(fromToken, config.treasury, amount);
-            emit BurnFallbackToTreasury(fromToken, amount, "Circuit breaker activated");
-            return;
-        }
-        
-        // Calculate minimum output with slippage protection
+        // Calculate minimum output
         uint256 minAmountOut = _calculateMinimumOutput(fromToken, config.localTokenAddress, amount);
         
-        // Perform swap with slippage protection
-        try this.performSwapAndBurn(
-            fromToken, 
-            amount, 
-            config.localTokenAddress, 
+        // INTERACTIONS - external calls LAST
+        bool swapSuccess = false;
+        uint256 amountOut = 0;
+        
+        // Use internal function to prevent reentrancy
+        (swapSuccess, amountOut) = _executeSwapAndBurn(
+            fromToken,
+            amount,
+            config.localTokenAddress,
             config.swapRouter,
             minAmountOut
-        ) returns (uint256 amountOut) {
-            emit TokensBurned(fromToken, config.localTokenAddress, amount, amountOut);
-        } catch {
-            // Swap failed, send to treasury as fallback
-            _safeTransfer(fromToken, config.treasury, amount);
+        );
+        
+        if (!swapSuccess) {
+            pendingWithdrawals[config.treasury] += amount;
             emit BurnFallbackToTreasury(fromToken, amount, "Swap failed");
+        } else {
+            emit TokensBurned(fromToken, config.localTokenAddress, amount, amountOut);
+        }
+    }
+
+    /**
+     * @notice Execute swap and burn with proper error handling
+     * @dev SECURITY FIX: New internal function for CEI pattern compliance
+     * @param fromToken Token to swap from
+     * @param amount Amount to swap
+     * @param localToken LOCAL token address
+     * @param swapRouter Swap router address
+     * @param minAmountOut Minimum amount to receive
+     * @return success Whether swap succeeded
+     * @return amountOut Amount of LOCAL tokens received and burned
+     */
+    function _executeSwapAndBurn(
+        address fromToken,
+        uint256 amount,
+        address localToken,
+        address swapRouter,
+        uint256 minAmountOut
+    ) private returns (bool success, uint256 amountOut) {
+        try this.performSwapAndBurn(
+            fromToken,
+            amount,
+            localToken,
+            swapRouter,
+            minAmountOut
+        ) returns (uint256 _amountOut) {
+            return (true, _amountOut);
+        } catch {
+            return (false, 0);
         }
     }
 
@@ -529,13 +576,38 @@ contract Escrow is
     }
 
     /**
+     * @notice Set trade contract address (admin only)
+     * @dev Used to set trade contract address after deployment to resolve circular dependencies
+     * @param _tradeContract Trade contract address
+     */
+    function setTradeContract(address _tradeContract) external onlyRole(ADMIN_ROLE) {
+        require(_tradeContract != address(0), "Invalid trade contract address");
+        require(!hasRole(TRADE_CONTRACT_ROLE, _tradeContract), "Trade contract already set");
+        _grantRole(TRADE_CONTRACT_ROLE, _tradeContract);
+        emit TradeContractUpdated(_tradeContract);
+    }
+
+    // Event for trade contract updates
+    event TradeContractUpdated(address indexed tradeContract);
+
+    /**
      * @notice Authorize upgrade with timelock
      * @dev SECURITY FIX: Added timelock for upgrades
+     * @dev SECURITY FIX UPG-003: Strict timelock enforcement - no admin bypass
      * @param newImplementation Address of the new implementation
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(ADMIN_ROLE) {
-        // Timelock is enforced at the Hub level
-        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized");
+        // SECURITY FIX UPG-003: Strict validation
+        require(newImplementation != address(0), "Invalid implementation");
+        require(newImplementation != address(this), "Cannot upgrade to same implementation");
+        
+        // SECURITY FIX UPG-003: Only timelock can authorize upgrades
+        require(hub.isUpgradeAuthorized(address(this), newImplementation), "Upgrade not authorized through timelock");
+        
+        // SECURITY FIX UPG-003: Additional check - ensure caller is the timelock
+        address timelockController = hub.getTimelockController();
+        require(timelockController != address(0), "Timelock controller not configured");
+        require(msg.sender == timelockController, "Only timelock controller can execute upgrades");
     }
 
     /**

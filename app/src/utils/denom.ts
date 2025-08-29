@@ -13,6 +13,8 @@ export function denomsAvailable(chainClient: ChainClient): Map<string, MicroDeno
       return new Map<string, MicroDenom>(Object.entries(denomList.mantra_dukong))
     case ChainClient.cosmoshub:
       return new Map<string, MicroDenom>(Object.entries(denomList.cosmos_hub))
+    case ChainClient.bscMainnet:
+      return new Map<string, MicroDenom>(Object.entries(denomList.bsc))
     default:
       return new Map<string, MicroDenom>(Object.entries(denomList.kujira_testnet))
   }
