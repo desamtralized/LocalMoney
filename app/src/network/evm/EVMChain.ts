@@ -120,15 +120,15 @@ function mapOfferType(type: number): OfferType {
 
 function mapTradeState(state: number): TradeState {
   const stateMap = {
-    0: 'request_created' as TradeState,
-    1: 'request_accepted' as TradeState,
-    2: 'fiat_deposited' as TradeState,
-    3: 'escrow_released' as TradeState,
-    4: 'escrow_refunded' as TradeState,
-    5: 'request_cancelled' as TradeState,
-    6: 'request_expired' as TradeState,
-    7: 'dispute_opened' as TradeState,
-    8: 'dispute_settled' as TradeState,
+    0: 'request_created' as TradeState,    // RequestCreated
+    1: 'request_accepted' as TradeState,   // RequestAccepted
+    2: 'escrow_funded' as TradeState,      // EscrowFunded
+    3: 'fiat_deposited' as TradeState,     // FiatDeposited
+    4: 'escrow_released' as TradeState,    // EscrowReleased
+    5: 'escrow_cancelled' as TradeState,   // EscrowCancelled
+    6: 'escrow_refunded' as TradeState,    // EscrowRefunded
+    7: 'escrow_disputed' as TradeState,    // EscrowDisputed
+    8: 'settled_for_maker' as TradeState,  // DisputeResolved - will need additional logic to determine winner
   }
   return stateMap[state] || 'request_cancelled'
 }
@@ -178,15 +178,32 @@ export class EVMChain implements Chain {
 
       // Update hubConfig with actual contract values
       if (config) {
+        // Convert fee values from contract (basis points) to decimal
+        const burnFeePct = Number(config.burnFeePct || 0) / 10000
+        const chainFeePct = Number(config.chainFeePct || 0) / 10000
+        const warchestFeePct = Number(config.warchestFeePct || 0) / 10000
+        const arbitrationFeePct = Number(config.arbitratorFeePct || 0) / 10000
+        
         this.hubInfo.hubConfig = {
           ...this.hubInfo.hubConfig,
           profile_addr: config.profileContract,
           offer_addr: config.offerContract,
           trade_addr: config.tradeContract,
           escrow_addr: this.hubInfo.escrowAddress, // Use the address from config since Hub doesn't have escrow
+          price_addr: config.priceContract,
           price_oracle_addr: config.priceContract,
+          price_provider_addr: config.priceProvider || '',
           local_market_addr: config.localMarket,
-          platform_fee: Number(config.burnFeePct || 0) + Number(config.chainFeePct || 0) + Number(config.warchestFeePct || 0), // Sum of fees
+          chain_fee_collector_addr: config.chainFeeCollector || '',
+          warchest_addr: config.treasury || '',
+          arbitration_fee_pct: arbitrationFeePct,
+          burn_fee_pct: burnFeePct,
+          chain_fee_pct: chainFeePct,
+          warchest_fee_pct: warchestFeePct,
+          active_offers_limit: Number(config.maxActiveOffers || 100),
+          active_trades_limit: Number(config.maxActiveTrades || 100),
+          trade_expiration_timer: Number(config.tradeExpirationTimer || 86400),
+          platform_fee: Number(config.burnFeePct || 0) + Number(config.chainFeePct || 0) + Number(config.warchestFeePct || 0), // Sum of fees in basis points
           platform_fee_recipient: config.treasury,
         }
 
@@ -727,6 +744,24 @@ export class EVMChain implements Chain {
     }
 
     try {
+      // Handle description update using the new updateOfferDescription function
+      if (updateOffer.description !== undefined) {
+        console.log('[EVMChain] Updating offer description')
+        const { request } = await this.publicClient.simulateContract({
+          account: this.account,
+          address: this.hubInfo.offerAddress as Address,
+          abi: OfferABI,
+          functionName: 'updateOfferDescription',
+          args: [
+            BigInt(updateOffer.id),
+            updateOffer.description,
+          ],
+        })
+
+        const hash = await this.walletClient.writeContract(request)
+        await this.publicClient.waitForTransactionReceipt({ hash })
+      }
+
       // Handle state changes
       if (updateOffer.state) {
         const functionName = updateOffer.state === 'active' ? 'activateOffer' : 
@@ -786,6 +821,9 @@ export class EVMChain implements Chain {
     }
 
     try {
+      // Convert amount from micro-units (1e6) to wei (1e18) for contract
+      const amountInWei = BigInt(trade.amount) * BigInt(1e12)
+      
       const { request } = await this.publicClient.simulateContract({
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
@@ -793,7 +831,7 @@ export class EVMChain implements Chain {
         functionName: 'createTrade',
         args: [
           BigInt(trade.offer_id),
-          BigInt(trade.amount),
+          amountInWei,
           trade.taker_contact,
         ],
       })
@@ -1059,33 +1097,45 @@ export class EVMChain implements Chain {
           price: '100000000', // 1 USD with 8 decimals
           fiat,
         }
-      } else {
-        // Validate price oracle address
-        if (!this.hubInfo.priceOracleAddress || this.hubInfo.priceOracleAddress === '0x0000000000000000000000000000000000000000') {
-          console.warn(`[EVMChain.updateFiatPrice] Price oracle address not configured for ${this.config.chainName}`)
-          throw new Error('Price oracle not configured')
+      } else if (isStablecoin) {
+        // For other fiats with stablecoin denoms, prefer using fiat/USD exchange rate
+        const fiatToUsdRate = await this.fetchFiatToUsdRate(fiat)
+        if (fiatToUsdRate > 0) {
+          return {
+            denom,
+            price: fiatToUsdRate.toString(),
+            fiat,
+          }
         }
-        
-        console.log(`[EVMChain.updateFiatPrice] Price oracle address: ${this.hubInfo.priceOracleAddress}`)
-        
-        // Get fiat/USD exchange rate from oracle
-        const fiatPrice = await this.publicClient.readContract({
-          address: this.hubInfo.priceOracleAddress as Address,
-          abi: PriceOracleABI,
-          functionName: 'getFiatPrice',
-          args: [fiat],
-        })
-        
-        console.log(`[EVMChain.updateFiatPrice] Price response for ${fiat}:`, fiatPrice.toString())
-        
-        return {
-          denom,
-          price: fiatPrice.toString(),
-          fiat,
-        }
+        console.warn(`[EVMChain.updateFiatPrice] No exchange rate for ${fiat}; falling back to oracle query`)
+      }
+      
+      // For non-stablecoins or when stablecoin fallback fails, query oracle
+      // Validate price oracle address
+      if (!this.hubInfo.priceOracleAddress || this.hubInfo.priceOracleAddress === '0x0000000000000000000000000000000000000000') {
+        console.warn(`[EVMChain.updateFiatPrice] Price oracle address not configured for ${this.config.chainName}`)
+        throw new Error('Price oracle not configured')
+      }
+      
+      console.log(`[EVMChain.updateFiatPrice] Price oracle address: ${this.hubInfo.priceOracleAddress}`)
+      
+      // Get fiat/USD exchange rate from oracle
+      const fiatPrice = await this.publicClient.readContract({
+        address: this.hubInfo.priceOracleAddress as Address,
+        abi: PriceOracleABI,
+        functionName: 'getFiatPrice',
+        args: [fiat],
+      })
+      
+      console.log(`[EVMChain.updateFiatPrice] Price response for ${fiat}:`, fiatPrice.toString())
+      
+      return {
+        denom,
+        price: fiatPrice.toString(),
+        fiat,
       }
     } catch (error: any) {
-      console.log(`[EVMChain.updateFiatPrice] Price query failed for ${fiat}, checking for stablecoin special case...`)
+      console.log(`[EVMChain.updateFiatPrice] Price query failed for ${fiat}, checking for stablecoin fallback...`)
       
       // Handle stablecoin special case: 1 USDC/USDT = 1 USD
       const denomStr = denomToValue(denom).toLowerCase()
@@ -1097,39 +1147,16 @@ export class EVMChain implements Chain {
       console.log(`[EVMChain.updateFiatPrice] Denom string: ${denomStr}, is USDC/USDT: ${isStablecoin}`)
       
       if (isStablecoin && this.isFiatPriceNotFoundError(error)) {
-        console.log(`[EVMChain.updateFiatPrice] No price route for stablecoin, handling as 1:1 with USD`)
-        
-        // For stablecoins, we know 1 USDC/USDT = 1 USD
+        // Use exchange rate path for stablecoins
         if (fiat === 'USD') {
-          return {
-            denom,
-            price: '100000000', // 1 USD with 8 decimals
-            fiat,
-          }
+          return { denom, price: '100000000', fiat }
         }
-        
-        // For other fiats, fetch the USD/fiat exchange rate
-        console.log(`[EVMChain.updateFiatPrice] Fetching ${fiat}/USD rate for stablecoin`)
         const fiatToUsdRate = await this.fetchFiatToUsdRate(fiat)
-        
         if (fiatToUsdRate > 0) {
-          // fiatToUsdRate is how many units of fiat equal 1 USD (with 8 decimals)
-          // For example, COP = 405187890000 means 1 USD = 4051.8789 COP
-          console.log(`[EVMChain.updateFiatPrice] Got ${fiat}/USD rate: ${fiatToUsdRate}, returning for stablecoin`)
-          return {
-            denom,
-            price: fiatToUsdRate.toString(),
-            fiat,
-          }
+          return { denom, price: fiatToUsdRate.toString(), fiat }
         }
-        
-        // Only use fallback if we couldn't get the exchange rate
-        console.log(`[EVMChain.updateFiatPrice] Could not get ${fiat}/USD rate, using fallback`)
-        return {
-          denom,
-          price: '100000000', // 1 USD equivalent with 8 decimals
-          fiat,
-        }
+        // Fallback to 1:1 if no rate is available
+        return { denom, price: '100000000', fiat }
       }
       
       // Don't log errors for known missing prices
@@ -1142,12 +1169,8 @@ export class EVMChain implements Chain {
         })
       }
       
-      // Return fallback price
-      return {
-        denom,
-        price: '100000000', // Default price (1 USD equivalent)
-        fiat,
-      }
+      // Return fallback price (1 USD equivalent)
+      return { denom, price: '100000000', fiat }
     }
   }
 
@@ -1190,56 +1213,40 @@ export class EVMChain implements Chain {
       try {
         console.log(`[EVMChain.batchUpdateFiatPrices] Querying ${fiat}`)
         
-        if (fiat === 'USD' && isStablecoin) {
-          // For USD stablecoins, price is always 1:1
-          console.log(`[EVMChain.batchUpdateFiatPrices] Using 1:1 USD rate for stablecoin`)
-          results.push({
-            denom,
-            price: '100000000', // 1 USD with 8 decimals
-            fiat,
-            success: true,
-          })
+        if (isStablecoin) {
+          if (fiat === 'USD') {
+            // 1:1 for USD
+            results.push({ denom, price: '100000000', fiat, success: true })
+          } else {
+            // Use exchange rate for other fiats
+            const rate = await this.fetchFiatToUsdRate(fiat)
+            if (rate > 0) {
+              results.push({ denom, price: rate.toString(), fiat, success: true })
+            } else {
+              // Fallback to 1 USD equivalent if no rate available
+              results.push({ denom, price: '100000000', fiat, success: false })
+            }
+          }
         } else {
-          // Get fiat/USD exchange rate from oracle
+          // Non-stablecoin: query oracle directly
           const fiatPrice = await this.publicClient.readContract({
             address: this.hubInfo.priceOracleAddress as Address,
             abi: PriceOracleABI,
             functionName: 'getFiatPrice',
             args: [fiat],
           })
-          
           console.log(`[EVMChain.batchUpdateFiatPrices] Success for ${fiat}:`, fiatPrice.toString())
-          
-          // For stablecoins, the price in fiat is just the fiat/USD rate
-          // Since 1 USDT = 1 USD, and we have X fiat = 1 USD
-          // So 1 USDT = X fiat
-          results.push({
-            denom,
-            price: fiatPrice.toString(),
-            fiat,
-            success: true,
-          })
+          results.push({ denom, price: fiatPrice.toString(), fiat, success: true })
         }
       } catch (err: any) {
-        console.log(`[EVMChain.batchUpdateFiatPrices] Failed for ${fiat}:`, err?.message || err)
-        
-        // Don't skip any currencies - log the error and continue
-        // The error might be temporary or network-related
-        console.error(`[EVMChain.batchUpdateFiatPrices] Error fetching price for ${fiat}:`, {
+        console.warn(`[EVMChain.batchUpdateFiatPrices] Error fetching price for ${fiat}`, {
           chain: this.config.chainName,
           priceOracleAddr: this.hubInfo.priceOracleAddress,
           denom,
           error: err?.message || err
         })
-        
-        // Return a fallback price
-        const fallbackPrice = isStablecoin ? '100000000' : '100000000' // 1 USD with 8 decimals
-        results.push({
-          denom,
-          price: fallbackPrice,
-          fiat,
-          success: false,
-        })
+        // Return a generic fallback price
+        results.push({ denom, price: '100000000', fiat, success: false })
       }
     }
 
@@ -1369,10 +1376,56 @@ export class EVMChain implements Chain {
       throw new WalletNotConnected()
     }
     try {
-      // Determine if native token is used; if so, send value
-      const trade = await this.fetchTradeDetail(Number(tradeInfo.trade.id))
-      const isNative = true // assume native unless token address mapping available in UI
-      const value = isNative ? BigInt(trade.trade.amount) : BigInt(0)
+      // Read on-chain trade to determine token type and exact amount (in base units)
+      const onchainTrade: any = await this.publicClient.readContract({
+        address: this.hubInfo.tradeAddress as Address,
+        abi: TradeABI,
+        functionName: 'getTrade',
+        args: [BigInt(tradeInfo.trade.id)],
+      })
+
+      const tokenAddress = (onchainTrade.tokenAddress as string).toLowerCase()
+      const zeroAddress = '0x0000000000000000000000000000000000000000'
+      const isNative = tokenAddress === zeroAddress
+      const amount: bigint = onchainTrade.amount as bigint
+      const value = isNative ? amount : 0n
+
+      // If ERC20, ensure allowance to Trade contract is sufficient
+      if (!isNative) {
+        const owner = this.account as Address
+        const spender = this.hubInfo.tradeAddress as Address
+        const currentAllowance = await this.publicClient.readContract({
+          address: tokenAddress as Address,
+          abi: ERC20ABI,
+          functionName: 'allowance',
+          args: [owner, spender],
+        }) as bigint
+
+        if (currentAllowance < amount) {
+          // Some tokens (e.g., USDT/BEP20) require allowance reset to 0 before setting new value
+          if (currentAllowance > 0n) {
+            const { request: resetReq } = await this.publicClient.simulateContract({
+              account: this.account,
+              address: tokenAddress as Address,
+              abi: ERC20ABI,
+              functionName: 'approve',
+              args: [spender, 0n],
+            })
+            const resetHash = await this.walletClient.writeContract(resetReq)
+            await this.publicClient.waitForTransactionReceipt({ hash: resetHash })
+          }
+
+          const { request: approveReq } = await this.publicClient.simulateContract({
+            account: this.account,
+            address: tokenAddress as Address,
+            abi: ERC20ABI,
+            functionName: 'approve',
+            args: [spender, amount],
+          })
+          const approveHash = await this.walletClient.writeContract(approveReq)
+          await this.publicClient.waitForTransactionReceipt({ hash: approveHash })
+        }
+      }
 
       const { request } = await this.publicClient.simulateContract({
         account: this.account,

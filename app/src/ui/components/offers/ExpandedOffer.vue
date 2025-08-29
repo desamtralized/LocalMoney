@@ -10,7 +10,7 @@ import {
   removeTelegramHandlePrefix,
   scrollToElement,
 } from '~/shared'
-import { OfferType } from '~/types/components.interface'
+import { OfferType, LoadingState } from '~/types/components.interface'
 import type { OfferResponse } from '~/types/components.interface'
 import { useClientStore } from '~/stores/client'
 import { denomToValue, microDenomToDisplay } from '~/utils/denom'
@@ -115,6 +115,30 @@ const minMaxCryptoStr = computed(() => {
 })
 
 async function newTrade() {
+  // Check if wallet is connected first
+  if (!client.userWallet.isConnected) {
+    // Show a message prompting to connect wallet
+    client.loadingState = LoadingState.show('Please connect your wallet to open a trade')
+    
+    // Prompt wallet connection
+    try {
+      await client.connectWallet()
+      
+      // If wallet connection was successful, dismiss the loading state and continue
+      client.loadingState = LoadingState.dismiss()
+      
+      // Check if now connected
+      if (!client.userWallet.isConnected) {
+        // User cancelled wallet connection
+        return
+      }
+    } catch (error) {
+      console.error('Failed to connect wallet:', error)
+      client.loadingState = LoadingState.dismiss()
+      return
+    }
+  }
+  
   try {
     const telegramHandle = removeTelegramHandlePrefix(telegram.value) as string
     if (!telegramHandle) {
@@ -356,7 +380,13 @@ onUnmounted(() => {
       </div>
       <div class="wrap-btns">
         <button class="secondary" @click="emit('cancel')">cancel</button>
-        <button class="primary bg-gray300" :disabled="!valid" @click="newTrade()">open trade</button>
+        <button 
+          class="primary bg-gray300" 
+          :disabled="!valid && client.userWallet.isConnected" 
+          @click="newTrade()"
+        >
+          {{ !client.userWallet.isConnected ? 'connect wallet to trade' : 'open trade' }}
+        </button>
       </div>
     </footer>
   </div>

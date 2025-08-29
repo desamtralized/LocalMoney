@@ -65,11 +65,6 @@ async function fetchMoreOffers() {
   )
 }
 
-async function updateFiatPrice() {
-  // Price updates should be handled by backend/oracle, not frontend
-  // Removed direct price update call
-}
-
 onBeforeMount(() => {
   // Check if stored denom is valid for current chain
   if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {

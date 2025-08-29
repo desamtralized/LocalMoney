@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { ChainClient } from '~/network/Chain'
 import { useClientStore } from '~/stores/client'
-import { ChainType, WalletProvider, WalletService } from '~/services/wallet'
+import { ChainType, WalletService } from '~/services/wallet'
 
 const client = useClientStore()
 const showDropdown = ref(false)
@@ -78,15 +78,16 @@ function handleClickOutside(event: MouseEvent) {
       <svg 
         class="dropdown-arrow"
         :class="{ 'rotate': showDropdown }"
-        width="12" 
-        height="12" 
-        viewBox="0 0 12 12" 
-        fill="none"
+        xmlns="http://www.w3.org/2000/svg" 
+        width="14" 
+        height="8" 
+        viewBox="0 0 14 8"
       >
         <path 
-          d="M3 4.5L6 7.5L9 4.5" 
+          d="M1 1L7 7L13 1"
+          fill="none" 
           stroke="currentColor" 
-          stroke-width="1.5" 
+          stroke-width="2" 
           stroke-linecap="round" 
           stroke-linejoin="round"
         />
@@ -114,8 +115,6 @@ function handleClickOutside(event: MouseEvent) {
         </button>
       </div>
 
-      <!-- Testnets removed - only mainnet chains available -->
-
       <div v-if="walletsForChain.length > 0" class="wallet-info">
         <div class="info-label">Compatible Wallets:</div>
         <div class="wallet-list">
@@ -138,27 +137,35 @@ function handleClickOutside(event: MouseEvent) {
 .chain-button {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: $bg-secondary;
-  border: 1px solid $border;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 8px 8px;
+  background: $surface;
+  border: 1px solid #33363c;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
+  height: 40px;
+  min-width: 64px;
+
+  @media only screen and (max-width: $mobile) {
+    height: 48px;
+  }
 
   &:hover {
-    background: $bg-hover;
-    border-color: $primary;
+    background: $gray300;
   }
 
   .chain-icon {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     object-fit: contain;
   }
 
   .dropdown-arrow {
-    transition: transform 0.2s;
+    transition: transform 0.15s cubic-bezier(1, -0.115, 0.975, 0.855);
+    transition-timing-function: cubic-bezier(1, 0.005, 0.24, 1);
+    color: $gray600;
     
     &.rotate {
       transform: rotate(180deg);
@@ -168,13 +175,13 @@ function handleClickOutside(event: MouseEvent) {
 
 .dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 4px);
   right: 0;
   min-width: 280px;
-  background: $bg-primary;
-  border: 1px solid $border;
-  border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  background: $surface;
+  border: 1px solid #33363c;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
   z-index: 1000;
   overflow: hidden;
 
@@ -182,7 +189,8 @@ function handleClickOutside(event: MouseEvent) {
     padding: 12px 16px;
     font-weight: 600;
     border-bottom: 1px solid $border;
-    color: $text-primary;
+    color: $base-text;
+    font-size: 14px;
   }
 
   .chain-group {
@@ -192,18 +200,19 @@ function handleClickOutside(event: MouseEvent) {
       padding: 8px 16px;
       font-size: 12px;
       font-weight: 500;
-      color: $text-secondary;
+      color: $gray600;
       text-transform: uppercase;
-      background: $bg-secondary;
+      background: transparent;
     }
   }
 
   .chain-option {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    padding: 12px 16px;
+    padding: 8px 12px;
+    margin: 4px 0;
     background: transparent;
     border: none;
     cursor: pointer;
@@ -211,31 +220,33 @@ function handleClickOutside(event: MouseEvent) {
     text-align: left;
 
     &:hover {
-      background: $bg-hover;
+      background: $gray300;
     }
 
     &.selected {
-      background: $bg-selected;
+      background: $gray300;
     }
 
     .chain-icon {
-      width: 18px;
-      height: 18px;
+      width: 24px;
+      height: 24px;
       object-fit: contain;
     }
 
     .chain-name {
       flex: 1;
-      color: $text-primary;
-      font-weight: 500;
+      color: $base-text;
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 1;
     }
 
     .chain-type {
       font-size: 10px;
       padding: 2px 6px;
       border-radius: 4px;
-      background: $bg-secondary;
-      color: $text-secondary;
+      background: $background;
+      color: $gray700;
       font-weight: 600;
     }
 
@@ -246,12 +257,12 @@ function handleClickOutside(event: MouseEvent) {
 
   .wallet-info {
     padding: 12px 16px;
-    background: $bg-secondary;
+    background: $background;
     border-top: 1px solid $border;
 
     .info-label {
       font-size: 12px;
-      color: $text-secondary;
+      color: $gray600;
       margin-bottom: 8px;
     }
 
@@ -262,11 +273,11 @@ function handleClickOutside(event: MouseEvent) {
 
       .wallet-chip {
         padding: 4px 8px;
-        background: $bg-primary;
+        background: $surface;
         border: 1px solid $border;
         border-radius: 6px;
         font-size: 12px;
-        color: $text-primary;
+        color: $base-text;
       }
     }
   }

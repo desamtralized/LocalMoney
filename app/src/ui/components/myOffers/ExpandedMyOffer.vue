@@ -10,6 +10,7 @@ import {
 import { microDenomToDisplay } from '~/utils/denom'
 import type { GetOffer } from '~/types/components.interface'
 import { useClientStore } from '~/stores/client'
+import { ChainClient } from '~/network/Chain'
 import { CRYPTO_DECIMAL_PLACES } from '~/utils/constants'
 
 const props = defineProps<{ offer: GetOffer }>()
@@ -34,6 +35,13 @@ const maxAmount = ref(Number(props.offer.max_amount) / decimalPlaces)
 const description = ref(updatedOffer.value.description)
 const rate = ref(props.offer.rate)
 const valid = ref(true)
+
+// EVM chains now support description updates
+// Keeping this computed property for potential future use
+const isEVMChain = computed(() => {
+  return client.chainClient === ChainClient.bscMainnet || 
+         client.chainClient === ChainClient.bscTestnet
+})
 
 // watch min amount and max amount and update their respective values in the props.offer
 watch(minAmount, (val) => {
@@ -185,7 +193,7 @@ function update() {
           <div class="wrap">
             <div class="wrap-label">
               <label>Edit offer description</label>
-              <IconTooltip content="Here you can write the payment options you will be accepting for this offer." />
+              <IconTooltip :content="'Here you can write the payment options you will be accepting for this offer.'" />
             </div>
             <textarea
               v-model="description"
@@ -346,6 +354,19 @@ function update() {
         }
         textarea {
           background-color: $background;
+          
+          &.disabled-field {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: $gray100;
+          }
+        }
+        
+        .warning-text {
+          font-size: 12px;
+          color: $secondary;
+          margin-top: 8px;
+          font-style: italic;
         }
       }
       .wrap-btns {

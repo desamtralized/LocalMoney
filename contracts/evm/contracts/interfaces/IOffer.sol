@@ -32,6 +32,7 @@ interface IOffer {
     event OfferStateChanged(uint256 indexed offerId, OfferState indexed oldState, OfferState indexed newState);
     event OfferRateUpdated(uint256 indexed offerId, uint256 oldRate, uint256 newRate);
     event OfferAmountsUpdated(uint256 indexed offerId, uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
+    event OfferDescriptionUpdated(uint256 indexed offerId, string newDescription);
 
     // Custom errors (defined in implementation)
 
@@ -57,6 +58,7 @@ interface IOffer {
     function pauseOffer(uint256 _offerId) external;
     function activateOffer(uint256 _offerId) external;
     function archiveOffer(uint256 _offerId) external;
+    function updateOfferDescription(uint256 _offerId, string memory _newDescription) external;
 
     // Query functions with pagination
     function getOffersByType(

@@ -282,6 +282,32 @@ contract Offer is IOffer, Initializable, UUPSUpgradeable, ReentrancyGuardUpgrade
     }
 
     /**
+     * @notice Update offer description
+     * @param _offerId Offer ID to update
+     * @param _newDescription New description for the offer
+     * @dev Only offer owner can update description
+     */
+    function updateOfferDescription(uint256 _offerId, string memory _newDescription) external nonReentrant {
+        // Check system pause
+        if (hub.isPaused()) revert SystemPaused();
+        
+        // Validate description length
+        if (bytes(_newDescription).length > MAX_DESCRIPTION_LENGTH) {
+            revert DescriptionTooLong(bytes(_newDescription).length, MAX_DESCRIPTION_LENGTH);
+        }
+        
+        // Get offer and verify ownership
+        OfferData storage offer = _getOfferForUpdate(_offerId);
+        
+        // Update description
+        offer.description = _newDescription;
+        offer.updatedAt = block.timestamp;
+        
+        // Emit event
+        emit OfferDescriptionUpdated(_offerId, _newDescription);
+    }
+
+    /**
      * @notice Get offers by type with pagination
      * @param _type Offer type to filter by
      * @param _fiatCurrency Fiat currency to filter by

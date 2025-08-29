@@ -4,7 +4,6 @@ import NavMobile from './NavMobile.vue'
 import ChainSelector from './commons/ChainSelector.vue'
 import MultiWalletButton from './commons/MultiWalletButton.vue'
 import { useClientStore } from '~/stores/client'
-import { ChainClient } from '~/network/Chain'
 
 const client = useClientStore()
 const badge = computed(() => client.client.getName())

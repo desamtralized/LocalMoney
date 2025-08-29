@@ -4,7 +4,7 @@ async function main() {
   console.log("Querying prices from PriceOracle contract...");
 
   // Get the deployed PriceOracle contract
-  const PRICE_ORACLE_ADDRESS = "0x3f8f71c3A10907A196F427A3C98e01045f6008de";
+  const PRICE_ORACLE_ADDRESS = "0xCc0f796822c58eed5F58BDf72DfC8433AdE66345";
   
   const PriceOracle = await hre.ethers.getContractAt("PriceOracle", PRICE_ORACLE_ADDRESS);
 

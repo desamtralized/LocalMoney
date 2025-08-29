@@ -157,18 +157,14 @@ async function createOffer() {
 watch(margin, () => {
   calculateMarginRate()
 })
-async function updateFiatPrice() {
-  // Price updates handled by backend/oracle
-  // Validate denom before querying price
+watch(selectedDenom, async () => {
+  // Validate denom when changed
   if (!checkMicroDenomAvailable(selectedDenom.value, client.chainClient)) {
     selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
   }
-}
-watch(selectedDenom, async () => {
-  await updateFiatPrice()
 })
 watch(selectedFiat, async () => {
-  await updateFiatPrice()
+  // Price updates handled by backend/oracle
 })
 </script>
 

@@ -197,6 +197,16 @@ export const OfferABI = [
     type: 'function',
   },
   {
+    inputs: [
+      { name: '_offerId', type: 'uint256' },
+      { name: '_newDescription', type: 'string' },
+    ],
+    name: 'updateOfferDescription',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
     inputs: [{ name: 'owner', type: 'address' }],
     name: 'getOffersByOwner',
     outputs: [

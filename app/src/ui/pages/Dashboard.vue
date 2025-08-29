@@ -103,9 +103,11 @@ async function fetchAllPrices() {
           const isEVMChain = client.client.constructor.name === 'EVMChain'
           
           if (isEVMChain) {
-            // EVM returns prices with 8 decimals where 100000000 = 1 unit
-            // Convert from 8 decimals to cents (100 = $1)
-            priceValue = Math.round(priceValue / 1000000)
+            // EVM returns raw prices with 8 decimals
+            // Use the chain's formatFiatPrice method to convert properly
+            const formattedPrice = client.client.formatFiatPrice(priceValue)
+            // Convert to cents for consistent storage (100 cents = 1 USD)
+            priceValue = Math.round(formattedPrice * 100)
           } else {
             // Cosmos returns prices already in cents (2 decimals where 100 = $1)
             // No conversion needed, price is already in cents
