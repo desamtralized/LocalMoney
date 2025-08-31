@@ -37,6 +37,9 @@ const availableWallets = computed(() => {
 async function connectWithWallet(provider: WalletProvider) {
   showWalletSelector.value = false
   
+  // Track wallet selection
+  trackWalletConnection(WalletEvents.select_wallet, { wallet: provider })
+  
   try {
     const chainType = client.client.getChainType()
     

@@ -27,7 +27,7 @@ import type { Secrets } from '~/utils/crypto'
 import { encryptData, generateKeys } from '~/utils/crypto'
 import { denomToValue } from '~/utils/denom'
 import { CRYPTO_DECIMAL_PLACES } from '~/utils/constants'
-import { OfferEvents, TradeEvents, toOfferData, toTradeData, trackOffer, trackTrade } from '~/analytics/analytics'
+import { OfferEvents, TradeEvents, WalletEvents, toOfferData, toTradeData, trackOffer, trackTrade, trackWalletConnection } from '~/analytics/analytics'
 
 const LIMIT_ITEMS_PER_PAGE = 10
 
@@ -71,6 +71,8 @@ export const useClientStore = defineStore({
       }
       // Emit chain change event for subscribers
       if (previousChain !== chainClient) {
+        // Track chain selection
+        trackWalletConnection(WalletEvents.select_chain, { chain: chainClient })
         this.$patch({ chainClient })
       }
     },

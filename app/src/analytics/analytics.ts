@@ -23,12 +23,16 @@ export function trackPage(page: Page, data?: AppData) {
   }
 }
 
-export function trackWalletConnection(events: WalletEvents, address?: string) {
+export function trackWalletConnection(events: WalletEvents, data?: string | Record<string, any>) {
   if (isInitialized) {
-    if (address) {
-      mixpanel.identify(address)
+    if (typeof data === 'string') {
+      // Legacy support: if data is a string, treat it as address for connected/disconnected events
+      mixpanel.identify(data)
+      mixpanel.track(events)
+    } else {
+      // New: support data object for wallet/chain selection events
+      mixpanel.track(events, data)
     }
-    mixpanel.track(events)
   }
 }
 
@@ -155,6 +159,8 @@ export function toOfferData(offerId: number, offer: PostOffer | PatchOffer, chai
 export enum WalletEvents {
   connected = 'wallet_connected',
   disconnected = 'wallet_disconnected',
+  select_wallet = 'wallet_selected',
+  select_chain = 'chain_selected',
 }
 
 export enum ClickLinkEvents {

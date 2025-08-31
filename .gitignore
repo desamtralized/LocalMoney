@@ -25,6 +25,7 @@ PRPs/
 contracts/evm/cache/
 contracts/evm/.deps/
 contracts/evm/contracts/.deps/
+contracts/evm/deployments/
 
 # Solana keypairs
 contracts/solana/**/*keypair*.json

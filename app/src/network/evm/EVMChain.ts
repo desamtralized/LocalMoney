@@ -547,7 +547,7 @@ export class EVMChain implements Chain {
               denom: offerData.tokenAddress === '0x0000000000000000000000000000000000000000' 
                 ? { native: 'bnb' } 
                 : { native: this.mapTokenAddressToDenom(offerData.tokenAddress) },
-              terms: offerData.description,
+              description: offerData.description,
               timestamp: offerData.createdAt.toString(),
             },
             profile: null, // Profile needs to be fetched separately if needed
@@ -644,7 +644,7 @@ export class EVMChain implements Chain {
               denom: offerData.tokenAddress === '0x0000000000000000000000000000000000000000' 
                 ? { native: 'bnb' } 
                 : { native: this.mapTokenAddressToDenom(offerData.tokenAddress) },
-              terms: offerData.description,
+              description: offerData.description,
               timestamp: offerData.createdAt.toString(),
             },
             profile: null, // Profile needs to be fetched separately if needed
@@ -723,7 +723,7 @@ export class EVMChain implements Chain {
           minAmountInWei,
           maxAmountInWei,
           BigInt(postOffer.rate),
-          postOffer.description || postOffer.terms || '',
+          postOffer.description || '',
         ],
       })
 
