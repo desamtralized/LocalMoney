@@ -18,6 +18,7 @@ import { bsc, bscTestnet } from 'viem/chains'
 import type { Coin } from '@cosmjs/stargate'
 import type { Chain } from '~/network/Chain'
 import { DefaultError, WalletNotConnected, WalletNotInstalled } from '~/network/chain-error'
+import { sanitizeTokenSymbol, sanitizeNumber } from '~/utils/sanitize'
 import type {
   Addr,
   Arbitrator,
@@ -47,6 +48,14 @@ import {
   ArbitratorManagerABI,
   ERC20ABI,
 } from './abi'
+
+// Constants for chain detection and calculations
+const EVM_CHAINS = ['BSC', 'ETH', 'POLYGON'] as const
+type EVMChainType = typeof EVM_CHAINS[number]
+
+// Basis points constant for fee calculations
+// 1 basis point = 0.01%, so 10000 basis points = 100%
+const BASIS_POINTS = 10000n
 import { TOKEN_ADDRESSES } from './tokenAddresses'
 
 export interface EVMConfig {
@@ -154,6 +163,28 @@ export class EVMChain implements Chain {
            error?.message?.includes('0x8686a196') ||
            error?.message?.includes('revert') ||
            error?.data?.errorName === 'FiatPriceNotFound'
+  }
+
+  private getChainNativeToken(): string {
+    // Map chain ID to native token symbol
+    switch (this.config.chainId) {
+      case 56:     // BSC Mainnet
+      case 97:     // BSC Testnet
+        return 'BNB'
+      case 1:      // Ethereum Mainnet
+      case 5:      // Goerli
+      case 11155111: // Sepolia
+        return 'ETH'
+      case 137:    // Polygon Mainnet
+      case 80001:  // Mumbai
+        return 'MATIC'
+      default:
+        return 'ETH' // Default fallback
+    }
+  }
+
+  private isEVMChain(chainType: string): boolean {
+    return EVM_CHAINS.includes(chainType as EVMChainType)
   }
 
   async init() {
@@ -824,7 +855,7 @@ export class EVMChain implements Chain {
       // Convert amount from micro-units (1e6) to wei (1e18) for contract
       const amountInWei = BigInt(trade.amount) * BigInt(1e12)
       
-      const { request } = await this.publicClient.simulateContract({
+      const { request, result } = await this.publicClient.simulateContract({
         account: this.account,
         address: this.hubInfo.tradeAddress as Address,
         abi: TradeABI,
@@ -839,9 +870,9 @@ export class EVMChain implements Chain {
       const hash = await this.walletClient.writeContract(request)
       const receipt = await this.publicClient.waitForTransactionReceipt({ hash })
       
-      // TODO: extract real tradeId from event logs if available
-      // For now, return a placeholder to keep flow working
-      return Date.now()
+      // The createTrade function returns the trade ID as a uint256
+      // Convert bigint to number for the trade ID
+      return Number(result)
     } catch (error) {
       throw DefaultError.fromError(error)
     }
@@ -1387,7 +1418,71 @@ export class EVMChain implements Chain {
       const tokenAddress = (onchainTrade.tokenAddress as string).toLowerCase()
       const zeroAddress = '0x0000000000000000000000000000000000000000'
       const isNative = tokenAddress === zeroAddress
-      const amount: bigint = onchainTrade.amount as bigint
+      let amount: bigint = onchainTrade.amount as bigint
+      
+      // If current user is the maker (seller in a sell offer), add the platform fee to the amount
+      // The maker pays the fees, so they need to fund: base_amount + fees
+      const hubConfig = this.hubInfo.hubConfig
+      if (tradeInfo.offer.offer.owner?.toLowerCase() === this.account?.toLowerCase()) {
+        // Calculate platform fees (in basis points, converted to percentage)
+        const platformFeeBps = BigInt(Math.round(
+          (hubConfig.warchest_fee_pct + hubConfig.burn_fee_pct + hubConfig.chain_fee_pct) * Number(BASIS_POINTS)
+        ))
+        const platformFee = (amount * platformFeeBps) / BASIS_POINTS
+        amount = amount + platformFee
+      }
+      
+      // Check user balance before attempting transaction
+      if (isNative) {
+        const balance = await this.publicClient.getBalance({ address: this.account })
+        if (balance < amount) {
+          const tokenSymbol = this.getChainNativeToken()
+          const needed = sanitizeNumber((amount / 10n**18n).toString())
+          const have = sanitizeNumber((balance / 10n**18n).toString())
+          throw new Error(`Insufficient ${tokenSymbol} balance. You need ${needed} ${tokenSymbol} but only have ${have} ${tokenSymbol}.`)
+        }
+      } else {
+        const balance = await this.publicClient.readContract({
+          address: tokenAddress as Address,
+          abi: ERC20ABI,
+          functionName: 'balanceOf',
+          args: [this.account],
+        }) as bigint
+        
+        if (balance < amount) {
+          // Get token symbol and decimals for better error message
+          let tokenSymbol = 'tokens'
+          let decimals = 18n // Default to 18 if query fails
+          
+          try {
+            const rawSymbol = await this.publicClient.readContract({
+              address: tokenAddress as Address,
+              abi: ERC20ABI,
+              functionName: 'symbol',
+              args: [],
+            }) as string
+            tokenSymbol = sanitizeTokenSymbol(rawSymbol)
+          } catch (error) {
+            console.warn(`Failed to fetch token symbol for ${tokenAddress}:`, error)
+          }
+          
+          try {
+            decimals = BigInt(await this.publicClient.readContract({
+              address: tokenAddress as Address,
+              abi: ERC20ABI,
+              functionName: 'decimals',
+              args: [],
+            }) as number)
+          } catch (error) {
+            console.warn(`Failed to fetch token decimals for ${tokenAddress}, using default 18:`, error)
+          }
+          
+          const amountFormatted = sanitizeNumber(Number(amount / 10n**(decimals-6n)) / 1000000)
+          const balanceFormatted = sanitizeNumber(Number(balance / 10n**(decimals-6n)) / 1000000)
+          throw new Error(`Insufficient ${tokenSymbol} balance. You need ${amountFormatted} ${tokenSymbol} (including fees) but only have ${balanceFormatted} ${tokenSymbol}.`)
+        }
+      }
+      
       const value = isNative ? amount : 0n
 
       // If ERC20, ensure allowance to Trade contract is sufficient
@@ -1438,7 +1533,13 @@ export class EVMChain implements Chain {
 
       const hash = await this.walletClient.writeContract(request)
       await this.publicClient.waitForTransactionReceipt({ hash })
-    } catch (error) {
+    } catch (error: any) {
+      // Check for insufficient balance errors
+      if (error?.message?.includes('transfer amount exceeds balance') || 
+          error?.message?.includes('insufficient balance') ||
+          error?.message?.includes('BEP20: transfer amount exceeds balance')) {
+        throw new Error('Insufficient balance. Please ensure you have enough tokens to fund this trade including platform fees.')
+      }
       throw DefaultError.fromError(error)
     }
   }

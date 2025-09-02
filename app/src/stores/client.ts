@@ -6,6 +6,7 @@ import { ListResult } from './ListResult'
 import { ChainClient, chainFactory } from '~/network/Chain'
 import type { ChainError } from '~/network/chain-error'
 import { WalletNotConnected } from '~/network/chain-error'
+import { showCustomToast } from '~/utils/toast'
 import type {
   Addr,
   Arbitrator,
@@ -55,6 +56,32 @@ export const useClientStore = defineStore({
     }
   },
   actions: {
+    // Helper method to show errors as toasts
+    showError(e: any) {
+      const message = (e as ChainError).message || e?.message || 'An unexpected error occurred'
+      console.error(message, e)
+      
+      // Try to use toast from window if available
+      const toast = (window as any).__vueToast
+      if (toast && toast.error) {
+        toast.error(message)
+      } else {
+        // Fallback to custom toast implementation
+        this.showCustomToast(message, 'error')
+      }
+    },
+    // Helper method to show success messages
+    showSuccess(message: string) {
+      // Try to use toast from window if available
+      const toast = (window as any).__vueToast
+      if (toast && toast.success) {
+        toast.success(message)
+      } else {
+        console.log('Success:', message)
+        // Use custom toast fallback from shared utility
+        showCustomToast(message, 'success')
+      }
+    },
     /**
      * Set the blockchain
      * @param {ChainClient} chainClient - The Blockchain backend to connect to
@@ -87,7 +114,7 @@ export const useClientStore = defineStore({
         await this.fetchArbitrators()
       } catch (e) {
         this.userWallet = { isConnected: false, address: 'undefined' }
-        this.handle.error(e)
+        this.showError(e)
       }
     },
     async fetchBalances() {
@@ -179,7 +206,7 @@ export const useClientStore = defineStore({
         const offers = await this.client.fetchOffers(offersArgs, LIMIT_ITEMS_PER_PAGE, last)
         this.offers.addMoreItems(offers, LIMIT_ITEMS_PER_PAGE)
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       }
     },
     async fetchMyOffers() {
@@ -198,7 +225,7 @@ export const useClientStore = defineStore({
         const myOffers = await this.client.fetchMyOffers(LIMIT_ITEMS_PER_PAGE, last)
         this.myOffers.addMoreItems(myOffers, LIMIT_ITEMS_PER_PAGE)
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       }
     },
     async createOffer(param: {
@@ -232,7 +259,7 @@ export const useClientStore = defineStore({
         await this.fetchProfile()
         await this.fetchMyOffers()
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -244,7 +271,7 @@ export const useClientStore = defineStore({
         trackOffer(OfferEvents.updated, toOfferData(updateOffer.id, updateOffer, this.chainClient))
         await this.fetchMyOffers()
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -257,7 +284,7 @@ export const useClientStore = defineStore({
         trackOffer(OfferEvents.unarchived, toOfferData(updateOffer.id, updateOffer, this.chainClient))
         await this.fetchMyOffers()
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -307,7 +334,7 @@ export const useClientStore = defineStore({
         const route = isNaN(trade_id) ? { name: 'Trades' } : { name: 'TradeDetail', params: { id: trade_id } }
         await this.router.push(route)
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -327,7 +354,7 @@ export const useClientStore = defineStore({
         const trades = await this.client.fetchTrades(LIMIT_ITEMS_PER_PAGE, last)
         this.trades.addMoreItems(trades, LIMIT_ITEMS_PER_PAGE)
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       }
     },
     async fetchTradeDetail(tradeId: number) {
@@ -556,7 +583,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.accepted, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.request_accepted })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -569,7 +596,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.canceled, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.request_canceled })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -582,7 +609,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.funded, toTradeData(trade.trade, trade.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.escrow_funded })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -595,7 +622,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.paid, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.fiat_deposited })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -608,7 +635,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.released, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.escrow_released })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -620,7 +647,7 @@ export const useClientStore = defineStore({
         const tradeInfo = await this.fetchTradeDetail(tradeId)
         trackTrade(TradeEvents.refunded, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -633,7 +660,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.disputed, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.escrow_disputed })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }
@@ -646,7 +673,7 @@ export const useClientStore = defineStore({
         trackTrade(TradeEvents.dispute_settled, toTradeData(tradeInfo.trade, tradeInfo.offer.offer, this.chainClient))
         this.notifyOnBot({ ...tradeInfo.trade, state: TradeState.settled_for_maker })
       } catch (e) {
-        this.handle.error(e)
+        this.showError(e)
       } finally {
         this.loadingState = LoadingState.dismiss()
       }

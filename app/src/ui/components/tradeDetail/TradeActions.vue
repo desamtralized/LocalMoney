@@ -35,6 +35,16 @@ const lastTradeState = computed(() => {
   return props.tradeInfo.trade.state_history[lastIndex].state
 })
 
+const isTradeExpired = computed(() => {
+  const currentTime = Date.now()
+  const expiresAt = (props.tradeInfo.trade.expires_at ?? 0) * 1000
+  return expiresAt > 0 && currentTime > expiresAt
+})
+
+const isEVM = computed(() => {
+  return client.chainClient.includes('BSC') || client.chainClient.includes('ETH') || client.chainClient.includes('POLYGON')
+})
+
 function getMaker(): string {
   return props.tradeInfo.offer.offer.owner
 }
@@ -92,8 +102,12 @@ async function fundEscrow(tradeInfo: TradeInfo) {
       const ownerContact = await encryptData(buyerPubKey, decryptedContact)
       await client.fundEscrow(tradeInfo, ownerContact)
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error('Failed to fund escrow:', e)
+    // Pass through specific error messages for balance issues
+    if (e?.message?.includes('Insufficient') || e?.message?.includes('balance')) {
+      throw e
+    }
     throw new Error('Failed to fund escrow. Please check your encryption keys and try again.')
   }
 }
@@ -224,7 +238,15 @@ async function settleDispute(winner: string) {
         message="Trade finished successfully"
       />
       <!-- expired state -->
-      <TradeAction v-if="tradeInfo.trade.state === TradeState.request_expired" message="This trade has expired" />
+      <TradeAction 
+        v-if="tradeInfo.trade.state === TradeState.request_expired || (isTradeExpired && tradeInfo.trade.state !== TradeState.escrow_funded)" 
+        message="This trade has expired" 
+      />
+      <!-- expired state with funds in escrow (EVM chains - buyer can't dispute from this state) -->
+      <TradeAction 
+        v-if="isTradeExpired && tradeInfo.trade.state === TradeState.escrow_funded" 
+        message="This trade has expired. The seller needs to claim their refund." 
+      />
       <!-- Trade canceled -->
       <TradeAction
         v-if="['request_canceled', 'escrow_canceled', 'escrow_refunded'].includes(tradeInfo.trade.state)"
@@ -296,10 +318,10 @@ async function settleDispute(winner: string) {
         message="Trade finished successfully"
       />
       <!-- Expired state -->
-      <template v-if="tradeInfo.trade.state === TradeState.request_expired">
+      <template v-if="tradeInfo.trade.state === TradeState.request_expired || (isTradeExpired && tradeInfo.trade.state === TradeState.escrow_funded)">
         <!-- With funds -->
         <TradeAction
-          v-if="lastTradeState === TradeState.escrow_funded"
+          v-if="lastTradeState === TradeState.escrow_funded || tradeInfo.trade.state === TradeState.escrow_funded"
           message="This trade has expired. You have funds to be claimed."
           :buttons="[
             {
@@ -385,6 +407,7 @@ async function settleDispute(winner: string) {
       <p>Please note that requesting to cancel the transaction could impact on your reputation.</p>
       <p class="btn-action" @click="cancelTradeRequest(tradeInfo.trade.id)">Request cancel</p>
     </div>
+    <!-- Show dispute option for trades in fiat_deposited state -->
     <template v-if="tradeInfo.trade.state === 'fiat_deposited'">
       <div v-if="timeToEnableDispute.getTime() > 0" class="wrap">
         <p>
@@ -397,6 +420,45 @@ async function settleDispute(winner: string) {
         <p>
           If you run into problems with the transaction you can request to open a dispute. Only do this if you already
           tried to contact the other trader without success.
+        </p>
+        <p class="btn-action" @click="openDispute(tradeInfo.trade.id)">Request dispute</p>
+      </div>
+    </template>
+    <!-- Show dispute option for expired trades (EVM chains: only from fiat_deposited state) -->
+    <template v-if="(tradeInfo.trade.state === 'request_expired' || isTradeExpired) && tradeInfo.trade.state === 'fiat_deposited'">
+      <div v-if="timeToEnableDispute.getTime() > 0" class="wrap">
+        <p>
+          This trade has expired. A dispute option will be available in
+          {{ formatTimer(timeToEnableDispute, '00h 00m 00s') }}.
+        </p>
+      </div>
+      <div v-else class="wrap">
+        <p>
+          This trade has expired. You can open a dispute to resolve this issue.
+        </p>
+        <p class="btn-action" @click="openDispute(tradeInfo.trade.id)">Request dispute</p>
+      </div>
+    </template>
+    <!-- Show dispute option for expired trades (Cosmos chains: also from escrow_funded) -->
+    <template v-if="!isEVM && (tradeInfo.trade.state === 'request_expired' || isTradeExpired) && tradeInfo.trade.state === 'escrow_funded'">
+      <div v-if="timeToEnableDispute.getTime() > 0" class="wrap">
+        <p>
+          This trade has expired with funds in escrow. A dispute option will be available in
+          {{ formatTimer(timeToEnableDispute, '00h 00m 00s') }}.
+        </p>
+      </div>
+      <div v-else class="wrap">
+        <p>
+          This trade has expired with funds in escrow. You can open a dispute to resolve this issue.
+        </p>
+        <p class="btn-action" @click="openDispute(tradeInfo.trade.id)">Request dispute</p>
+      </div>
+    </template>
+    <!-- Show dispute option for escrow_funded state after dispute deadline (Cosmos only, non-expired) -->
+    <template v-if="!isEVM && tradeInfo.trade.state === 'escrow_funded' && !isTradeExpired && isSeller && timeToEnableDispute.getTime() <= 0">
+      <div class="wrap">
+        <p>
+          The buyer has not marked the payment as complete. You can open a dispute to resolve this issue.
         </p>
         <p class="btn-action" @click="openDispute(tradeInfo.trade.id)">Request dispute</p>
       </div>

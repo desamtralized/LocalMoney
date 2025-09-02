@@ -3,6 +3,7 @@ import type { Router } from 'vue-router'
 import { type UserModule } from '~/types'
 import type { FeedbackHandler } from '~/stores/FeedbackHandler'
 import useFeedbackHandle from '~/stores/FeedbackHandler'
+import { showCustomToast } from '~/utils/toast'
 
 // Setup Pinia
 // https://pinia.esm.dev/
@@ -10,12 +11,9 @@ import useFeedbackHandle from '~/stores/FeedbackHandler'
 declare module 'pinia' {
   export interface PiniaCustomProperties {
     router: Router
-    handle: FeedbackHandler
+    handle?: FeedbackHandler  // Made optional since stores now use showError directly
   }
 }
-
-// Access useToast from the global app instance after vue-toastification is installed
-let useToast: any
 
 export const install: UserModule = ({ isClient, initialState, app }) => {
   const pinia = createPinia()
@@ -23,56 +21,32 @@ export const install: UserModule = ({ isClient, initialState, app }) => {
   pinia.use(({ store }) => {
     const router = useRouter()
     
-    // Get toast instance - it should be available after toast module is installed
-    let toast: any = null
-    
-    if (isClient) {
-      // Try multiple ways to get the toast instance
-      const globalProps = app.config.globalProperties
-      
-      // Check for toast in different locations
-      toast = globalProps.$toast || (window as any).__vueToast
-      
-      // If still not available, create a working fallback using native notifications or console
-      if (!toast) {
-        toast = {
-          success: (msg: string) => {
-            console.log('✅ Success:', msg)
-            // Try to show native notification if available
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('Success', { body: msg })
-            }
-          },
-          error: (msg: string) => {
-            console.error('❌ Error:', msg)
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('Error', { body: msg })
-            }
-          },
-          warning: (msg: string) => {
-            console.warn('⚠️ Warning:', msg)
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('Warning', { body: msg })
-            }
-          },
-          info: (msg: string) => {
-            console.info('ℹ️ Info:', msg)
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('Info', { body: msg })
-            }
-          },
-          clear: () => {},
-        }
-      }
-    } else {
+    // Create toast interface using our custom implementation
+    const toast = isClient ? {
+      success: (msg: string) => {
+        console.log('✅ Success:', msg)
+        showCustomToast(msg, 'success')
+      },
+      error: (msg: string) => {
+        console.error('❌ Error:', msg)
+        showCustomToast(msg, 'error')
+      },
+      warning: (msg: string) => {
+        console.warn('⚠️ Warning:', msg)
+        showCustomToast(msg, 'warning')
+      },
+      info: (msg: string) => {
+        console.info('ℹ️ Info:', msg)
+        showCustomToast(msg, 'info')
+      },
+      clear: () => {},
+    } : {
       // Server-side: provide a no-op toast
-      toast = {
-        success: () => {},
-        error: () => {},
-        warning: () => {},
-        info: () => {},
-        clear: () => {},
-      }
+      success: () => {},
+      error: () => {},
+      warning: () => {},
+      info: () => {},
+      clear: () => {},
     }
     
     store.router = markRaw(router)
