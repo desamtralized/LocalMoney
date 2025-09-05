@@ -207,7 +207,7 @@ export class EVMChain implements Chain {
 
       console.log('Hub config received:', config)
 
-      // Update hubConfig with actual contract values
+      // Update hubConfig and hubInfo addresses with actual contract values
       if (config) {
         // Convert fee values from contract (basis points) to decimal
         const burnFeePct = Number(config.burnFeePct || 0) / 10000
@@ -215,12 +215,19 @@ export class EVMChain implements Chain {
         const warchestFeePct = Number(config.warchestFeePct || 0) / 10000
         const arbitrationFeePct = Number(config.arbitratorFeePct || 0) / 10000
         
+        // Update the hubInfo addresses with fetched values
+        this.hubInfo.profileAddress = config.profileContract
+        this.hubInfo.offerAddress = config.offerContract
+        this.hubInfo.tradeAddress = config.tradeContract
+        this.hubInfo.priceOracleAddress = config.priceContract
+        // Escrow and ArbitratorManager addresses remain from env config
+        
         this.hubInfo.hubConfig = {
           ...this.hubInfo.hubConfig,
           profile_addr: config.profileContract,
           offer_addr: config.offerContract,
           trade_addr: config.tradeContract,
-          escrow_addr: this.hubInfo.escrowAddress, // Use the address from config since Hub doesn't have escrow
+          escrow_addr: this.hubInfo.escrowAddress, // Use the address from env config since Hub doesn't have escrow
           price_addr: config.priceContract,
           price_oracle_addr: config.priceContract,
           price_provider_addr: config.priceProvider || '',
@@ -274,18 +281,12 @@ export class EVMChain implements Chain {
     } catch (error: any) {
       // Check if it's a revert error (contract not initialized)
       if (error?.message?.includes('reverted') || error?.message?.includes('0x')) {
-        console.warn('Hub contract not initialized yet, using provided addresses')
-        // Use the addresses from the constructor
-        this.hubInfo.hubConfig = {
-          ...this.hubInfo.hubConfig,
-          profile_addr: this.hubInfo.profileAddress,
-          offer_addr: this.hubInfo.offerAddress,
-          trade_addr: this.hubInfo.tradeAddress,
-          escrow_addr: this.hubInfo.escrowAddress,
-          price_oracle_addr: this.hubInfo.priceOracleAddress,
-        }
+        console.error('Hub contract not initialized or configuration not available')
+        // Cannot proceed without Hub config since we don't have contract addresses
+        throw new Error('Failed to fetch Hub configuration. Please ensure the Hub contract is properly deployed and initialized.')
       } else {
         console.error('Failed to fetch hub config:', error)
+        throw new Error('Failed to fetch Hub configuration: ' + error?.message)
       }
     }
   }
@@ -404,6 +405,11 @@ export class EVMChain implements Chain {
     if (!this.publicClient) {
       await this.init()
     }
+    
+    // Ensure we have the profile address from Hub config
+    if (!this.hubInfo.profileAddress) {
+      throw new Error('Profile address not available. Hub config may not be loaded.')
+    }
 
     const address = profile_addr || this.getWalletAddress()
     if (address === 'undefined') {
@@ -481,6 +487,11 @@ export class EVMChain implements Chain {
     if (!this.publicClient) {
       await this.init()
     }
+    
+    // Ensure we have the offer address from Hub config
+    if (!this.hubInfo.offerAddress) {
+      throw new Error('Offer address not available. Hub config may not be loaded.')
+    }
 
     try {
       const result = await this.publicClient.readContract({
@@ -521,7 +532,18 @@ export class EVMChain implements Chain {
 
   async fetchAllOffers(limit: number, last?: number): Promise<OfferResponse[]> {
     if (!this.publicClient) {
-      await this.init()
+      try {
+        await this.init()
+      } catch (error) {
+        console.error('Failed to initialize EVMChain:', error)
+        return []
+      }
+    }
+    
+    // Ensure we have the offer address from Hub config
+    if (!this.hubInfo.offerAddress) {
+      console.debug('Offer address not available. Hub config may not be loaded yet.')
+      return []
     }
 
     try {
@@ -636,7 +658,18 @@ export class EVMChain implements Chain {
 
   async fetchMakerOffers(maker: Addr): Promise<OfferResponse[]> {
     if (!this.publicClient) {
-      await this.init()
+      try {
+        await this.init()
+      } catch (error) {
+        console.error('Failed to initialize EVMChain:', error)
+        return []
+      }
+    }
+    
+    // Ensure we have the offer address from Hub config
+    if (!this.hubInfo.offerAddress) {
+      console.debug('Offer address not available. Hub config may not be loaded yet.')
+      return []
     }
 
     try {
@@ -726,6 +759,11 @@ export class EVMChain implements Chain {
     if (!this.walletClient || !this.account) {
       throw new WalletNotConnected()
     }
+    
+    // Ensure we have the offer address from Hub config
+    if (!this.hubInfo.offerAddress) {
+      throw new Error('Offer address not available. Hub config may not be loaded.')
+    }
 
     try {
       // Map denom to token address
@@ -772,6 +810,11 @@ export class EVMChain implements Chain {
   async updateOffer(updateOffer: PatchOffer): Promise<void> {
     if (!this.walletClient || !this.account) {
       throw new WalletNotConnected()
+    }
+    
+    // Ensure we have the offer address from Hub config
+    if (!this.hubInfo.offerAddress) {
+      throw new Error('Offer address not available. Hub config may not be loaded.')
     }
 
     try {
@@ -850,6 +893,11 @@ export class EVMChain implements Chain {
     if (!this.walletClient || !this.account) {
       throw new WalletNotConnected()
     }
+    
+    // Ensure we have the trade address from Hub config
+    if (!this.hubInfo.tradeAddress) {
+      throw new Error('Trade address not available. Hub config may not be loaded.')
+    }
 
     try {
       // Convert amount from micro-units (1e6) to wei (1e18) for contract
@@ -881,6 +929,12 @@ export class EVMChain implements Chain {
   async fetchTrades(limit: number, last?: number): Promise<TradeInfo[]> {
     if (!this.account || !this.publicClient) {
       throw new WalletNotConnected()
+    }
+    
+    // Ensure we have the trade address from Hub config
+    if (!this.hubInfo.tradeAddress) {
+      console.error('Trade address not available. Hub config may not be loaded.')
+      return []
     }
 
     try {
@@ -1298,21 +1352,16 @@ export class EVMChain implements Chain {
 
     // Check if oracle is configured
     if (!this.hubInfo.priceOracleAddress || this.hubInfo.priceOracleAddress === '0x0000000000000000000000000000000000000000') {
-      console.warn(`[EVMChain.fetchFiatToUsdRate] Price oracle not configured for ${this.config.chainName}`)
       return 0
     }
 
     try {
-      console.log(`[EVMChain.fetchFiatToUsdRate] Fetching ${fiat}/USD rate from oracle: ${this.hubInfo.priceOracleAddress}`)
-      
       const rate = await this.publicClient.readContract({
         address: this.hubInfo.priceOracleAddress as Address,
         abi: PriceOracleABI,
         functionName: 'getFiatPrice',
         args: [fiat],
       })
-
-      console.log(`[EVMChain.fetchFiatToUsdRate] Raw rate for ${fiat}:`, rate.toString())
 
       // PriceOracle returns how many units of fiat equal 1 USD (with 8 decimals)
       // For example, COP = 405187890000 means 1 USD = 4051.8789 COP
@@ -1322,8 +1371,6 @@ export class EVMChain implements Chain {
       // Don't log FiatPriceNotFound errors - use defaults silently
       if (!this.isFiatPriceNotFoundError(error)) {
         console.error(`[EVMChain.fetchFiatToUsdRate] Failed to fetch ${fiat}/USD rate:`, error)
-      } else {
-        console.log(`[EVMChain.fetchFiatToUsdRate] No price route found for ${fiat}`)
       }
       // Return 0 to indicate no rate available, not 1 which would be incorrectly formatted
       return 0

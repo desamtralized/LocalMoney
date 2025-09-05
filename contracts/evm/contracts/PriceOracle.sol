@@ -57,8 +57,9 @@ contract PriceOracle is
     // AUDIT-ACKNOWLEDGED: 1-hour staleness is INTENTIONAL for fiat feeds (NOT a vulnerability)
     // Fiat currencies have ~0.1-2% daily volatility vs crypto's 5-20%
     // Production will implement dynamic staleness based on currency pair volatility
-    uint256 public constant MAX_PRICE_AGE = 3600; // 1 hour - industry standard for forex
     uint256 public constant MIN_PRICE_STALENESS = 300; // 5 minutes
+    uint256 public constant MAX_PRICE_STALENESS = 86400; // 24 hours max
+    uint256 public constant DEFAULT_PRICE_AGE = 3600; // 1 hour - industry standard for forex
     address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2; // Mainnet WETH
     
     // Chainlink heartbeat constants for common feeds (in seconds)
@@ -109,9 +110,12 @@ contract PriceOracle is
     address public swapRouter; // Uniswap V3 SwapRouter address
     bool public emergencyPause;
     IHub public hub; // Hub contract for timelock integration
+    
+    // Configurable price staleness threshold
+    uint256 public maxPriceAge;
 
-    // Storage gap for upgrades (reduced by 1 for hub storage)
-    uint256[45] private __gap;
+    // Storage gap for upgrades (reduced by 2 for hub storage and maxPriceAge)
+    uint256[44] private __gap;
 
     // Events
     event FiatPriceUpdated(string indexed currency, uint256 price, uint256 timestamp);
@@ -125,6 +129,7 @@ contract PriceOracle is
     event CircuitBreakerReset(address indexed token);
     event CircuitBreakerDeviationUpdated(uint256 oldDeviation, uint256 newDeviation);
     event FeedHeartbeatUpdated(address indexed feedAddress, uint256 heartbeat);
+    event MaxPriceAgeUpdated(uint256 oldMaxAge, uint256 newMaxAge);
 
     // Custom errors
     error PriceNotFound(address token);
@@ -165,10 +170,12 @@ contract PriceOracle is
      * @notice Initialize the PriceOracle contract
      * @param _admin Admin address for role management
      * @param _swapRouter Uniswap V3 SwapRouter address
+     * @param _maxPriceAge Maximum price staleness threshold in seconds (0 uses default)
      */
     function initialize(
         address _admin,
-        address _swapRouter
+        address _swapRouter,
+        uint256 _maxPriceAge
     ) external initializer {
         __UUPSUpgradeable_init();
         __AccessControl_init();
@@ -187,6 +194,16 @@ contract PriceOracle is
         
         // Initialize circuit breaker with default threshold
         circuitBreakerDeviationBps = DEFAULT_DEVIATION_BPS;
+        
+        // Initialize configurable price age - use provided value or default
+        if (_maxPriceAge == 0) {
+            maxPriceAge = DEFAULT_PRICE_AGE;
+        } else {
+            if (_maxPriceAge < MIN_PRICE_STALENESS || _maxPriceAge > MAX_PRICE_STALENESS) {
+                revert InvalidInput();
+            }
+            maxPriceAge = _maxPriceAge;
+        }
     }
 
     /**
@@ -345,8 +362,8 @@ contract PriceOracle is
     {
         PriceData memory cachedPrice = tokenPricesCache[_token];
         if (!cachedPrice.isValid) revert PriceNotFound(_token);
-        if (block.timestamp > cachedPrice.updatedAt + MAX_PRICE_AGE) {
-            revert StalePriceError(_token, block.timestamp - cachedPrice.updatedAt, MAX_PRICE_AGE);
+        if (block.timestamp > cachedPrice.updatedAt + maxPriceAge) {
+            revert StalePriceError(_token, block.timestamp - cachedPrice.updatedAt, maxPriceAge);
         }
         return cachedPrice.usdPrice;
     }
@@ -389,8 +406,8 @@ contract PriceOracle is
         if (!priceData.isValid) revert FiatPriceNotFound(_currency);
         
         // Check if price is stale
-        if (block.timestamp > priceData.updatedAt + MAX_PRICE_AGE) {
-            revert StalePriceError(address(0), block.timestamp - priceData.updatedAt, MAX_PRICE_AGE);
+        if (block.timestamp > priceData.updatedAt + maxPriceAge) {
+            revert StalePriceError(address(0), block.timestamp - priceData.updatedAt, maxPriceAge);
         }
         
         return priceData.usdPrice;
@@ -405,7 +422,7 @@ contract PriceOracle is
         PriceData memory priceData = tokenPricesCache[_token];
         
         if (!priceData.isValid) return false;
-        if (block.timestamp > priceData.updatedAt + MAX_PRICE_AGE) return false;
+        if (block.timestamp > priceData.updatedAt + maxPriceAge) return false;
         
         return true;
     }
@@ -445,6 +462,22 @@ contract PriceOracle is
         emit SwapRouterUpdated(oldRouter, _newRouter);
     }
 
+    /**
+     * @notice Update maximum price age threshold
+     * @dev Configurable price staleness threshold for different market conditions
+     * @param _newMaxAge New maximum price age in seconds
+     */
+    function setMaxPriceAge(uint256 _newMaxAge) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_newMaxAge < MIN_PRICE_STALENESS || _newMaxAge > MAX_PRICE_STALENESS) {
+            revert InvalidInput();
+        }
+        
+        uint256 oldMaxAge = maxPriceAge;
+        maxPriceAge = _newMaxAge;
+        
+        emit MaxPriceAgeUpdated(oldMaxAge, _newMaxAge);
+    }
+
     // Internal functions
 
     /**
@@ -457,7 +490,7 @@ contract PriceOracle is
         // Return cached price if valid and fresh
         PriceData memory cachedPrice = tokenPricesCache[_token];
         if (cachedPrice.isValid && 
-            block.timestamp <= cachedPrice.updatedAt + MAX_PRICE_AGE) {
+            block.timestamp <= cachedPrice.updatedAt + maxPriceAge) {
             return cachedPrice.usdPrice;
         }
 
@@ -540,8 +573,8 @@ contract PriceOracle is
         }
         
         // 6. Additional staleness check for safety
-        if (timeSinceUpdate > MAX_PRICE_AGE) {
-            revert StalePriceError(_feedAddress, timeSinceUpdate, MAX_PRICE_AGE);
+        if (timeSinceUpdate > maxPriceAge) {
+            revert StalePriceError(_feedAddress, timeSinceUpdate, maxPriceAge);
         }
         
         // 7. Validate startedAt for additional safety
@@ -608,8 +641,8 @@ contract PriceOracle is
             // SECURITY FIX: Check staleness of the observation
             uint256 timeSinceLastUpdate = block.timestamp - blockTimestamp;
             
-            // Use appropriate staleness threshold (default to MAX_PRICE_AGE if not configured)
-            uint256 maxStaleness = _route.twapPeriod > 0 ? uint256(_route.twapPeriod) : MAX_PRICE_AGE;
+            // Use appropriate staleness threshold (default to maxPriceAge if not configured)
+            uint256 maxStaleness = _route.twapPeriod > 0 ? uint256(_route.twapPeriod) : maxPriceAge;
             
             // SECURITY FIX: Enforce staleness validation - reject stale prices
             if (timeSinceLastUpdate > maxStaleness) {
@@ -739,7 +772,7 @@ contract PriceOracle is
         PriceData memory priceData = fiatPrices[_currency];
         
         if (!priceData.isValid) return false;
-        if (block.timestamp > priceData.updatedAt + MAX_PRICE_AGE) return false;
+        if (block.timestamp > priceData.updatedAt + maxPriceAge) return false;
         
         return true;
     }

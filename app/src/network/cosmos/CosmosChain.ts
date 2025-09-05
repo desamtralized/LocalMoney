@@ -544,21 +544,16 @@ export class CosmosChain implements Chain {
     
     // Check if price oracle is configured
     if (!this.hubInfo.hubConfig.price_addr) {
-      console.warn(`[CosmosChain.fetchFiatToUsdRate] Price oracle address not configured for ${this.config.chainName}`)
       return 0
     }
     
     try {
       const queryMsg = { get_fiat_price: { currency: fiat } }
-      console.log(`[CosmosChain.fetchFiatToUsdRate] Querying fiat price for ${fiat} on ${this.config.chainName}:`, queryMsg)
-      console.log(`[CosmosChain.fetchFiatToUsdRate] Price oracle address: ${this.hubInfo.hubConfig.price_addr}`)
       
       const response = await this.cwClient!.queryContractSmart(
         this.hubInfo.hubConfig.price_addr,
         queryMsg
       )
-      
-      console.log(`[CosmosChain.fetchFiatToUsdRate] Got fiat price response for ${fiat}:`, response)
       
       if (response && response.usd_price) {
         // Cosmos returns how many cents of fiat equal 1 USD (with 2 decimals)
@@ -566,21 +561,13 @@ export class CosmosChain implements Chain {
         // This is already in the correct format for our use
         const rate = Number(response.usd_price)
         if (rate > 0) {
-          console.log(`[CosmosChain.fetchFiatToUsdRate] Exchange rate for ${fiat}: ${rate} cents (${rate/100} ${fiat} = 1 USD)`)
           return rate
         }
       }
       
       // No valid price found in contract
-      console.warn(`[CosmosChain.fetchFiatToUsdRate] No valid USD exchange rate found for ${fiat} in contract (response: ${JSON.stringify(response)})`)
       return 0 // Return 0 to indicate no rate available
     } catch (e: any) {
-      console.error(`[CosmosChain.fetchFiatToUsdRate] Failed to fetch ${fiat}/USD exchange rate:`, {
-        chain: this.config.chainName,
-        priceAddr: this.hubInfo.hubConfig.price_addr,
-        error: e?.message || e,
-        fiat
-      })
       // Return 0 to indicate no exchange rate is available
       // The frontend should handle this case appropriately
       return 0

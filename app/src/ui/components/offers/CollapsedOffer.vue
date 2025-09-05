@@ -43,13 +43,6 @@ const offerPrice = computed(() => {
 })
 const tradeCountIcon = computed(() => props.offerResponse.profile?.released_trades_count > 0)
 
-// Fetch exchange rate for non-USD currencies
-onBeforeMount(async () => {
-  const offer = props.offerResponse.offer
-  if (offer.fiat_currency !== 'USD') {
-    await client.fetchFiatToUsdRate(offer.fiat_currency)
-  }
-})
 </script>
 
 <template>

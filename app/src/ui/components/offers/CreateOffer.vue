@@ -54,12 +54,9 @@ const offerPrice = computed(() => {
 })
 const fiatLabel = computed(() => (selectedType.value === 'sell' ? 'receive' : 'pay'))
 
-// Watch for fiat currency changes and fetch exchange rate
-watch(selectedFiat, async (newFiat) => {
-  if (newFiat !== 'USD') {
-    await client.fetchFiatToUsdRate(newFiat)
-  }
-  // Price updates handled by backend/oracle
+// Price updates handled by backend/oracle
+watch(selectedFiat, () => {
+  // Exchange rates will be fetched when needed during price calculations
 })
 
 // TODO - Make isMobile global
@@ -79,10 +76,6 @@ onBeforeMount(async () => {
     selectedDenom.value = defaultMicroDenomAvailable(client.chainClient)
   }
   
-  // Fetch exchange rate for non-USD currencies
-  if (selectedFiat.value !== 'USD') {
-    await client.fetchFiatToUsdRate(selectedFiat.value)
-  }
   
   // Price updates handled by backend/oracle
 })

@@ -142,7 +142,6 @@ async function fetchAllPrices() {
         }
       })
     }
-    console.log('Fetched prices:', currencyPrices.value.filter(p => p.price > 0).length, 'out of', currencyPrices.value.length)
   } catch (error) {
     console.error('Failed to fetch prices:', error)
     // Set all currencies to not loading on error
@@ -175,7 +174,6 @@ async function fetchStats() {
         await client.fetchMyOffers()
         userActiveOffers = myOffers.value.data.filter(o => o.offer.state === OfferState.active).length
       } catch (e) {
-        console.log('Could not fetch user offers:', e)
       }
       
       try {
@@ -186,7 +184,6 @@ async function fetchStats() {
           t.trade.state === TradeState.fiat_deposited
         ).length
       } catch (e) {
-        console.log('Could not fetch user trades:', e)
       }
     }
     

@@ -36,13 +36,6 @@ const offerPrice = computed(() => {
   )}`
 })
 
-onBeforeMount(async () => {
-  // Fetch exchange rate for non-USD currencies
-  if (props.offer.fiat_currency !== 'USD') {
-    await client.fetchFiatToUsdRate(props.offer.fiat_currency)
-  }
-  // Price updates handled by backend/oracle
-})
 </script>
 
 <template>

@@ -38,6 +38,7 @@ export const useClientStore = defineStore({
     return {
       chainClient: ChainClient.cosmoshub,
       client: chainFactory(ChainClient.cosmoshub),
+      hubInitialized: false,
       applicationConnected: useLocalStorage('walletAlreadyConnected', false),
       userWallet: <UserWallet>{ isConnected: false, address: 'undefined' },
       secrets: useLocalStorage('secrets', new Map<string, Secrets>()),
@@ -92,7 +93,16 @@ export const useClientStore = defineStore({
       // TODO disconnect old chain adapter
       this.chainClient = chainClient
       this.client = chainFactory(this.chainClient)
-      await this.client.init()
+      
+      try {
+        await this.client.init()
+        this.hubInitialized = true
+      } catch (error) {
+        console.error('Failed to initialize hub:', error)
+        this.hubInitialized = false
+        // Don't throw here - let the UI handle the loading state
+      }
+      
       if (this.applicationConnected) {
         await this.connectWallet()
       }
@@ -163,6 +173,14 @@ export const useClientStore = defineStore({
     },
     async fetchMakerOffers(maker: Addr) {
       this.makerOffers = ListResult.loading()
+      
+      // Wait for hub to be initialized before fetching offers
+      const isHubReady = await this.waitForHubInitialization()
+      if (!isHubReady) {
+        this.makerOffers = ListResult.error(new Error('Hub is not available. Please try again later.'))
+        return
+      }
+      
       try {
         let offers = await this.client.fetchMakerOffers(maker)
         offers = offers.filter(({ offer }) => offer.state === OfferState.active)
@@ -183,8 +201,23 @@ export const useClientStore = defineStore({
         this.makerOffers = ListResult.error(e as ChainError)
       }
     },
+    async waitForHubInitialization(maxWaitTime: number = 10000): Promise<boolean> {
+      const startTime = Date.now()
+      while (!this.hubInitialized && (Date.now() - startTime) < maxWaitTime) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      return this.hubInitialized
+    },
     async fetchOffers(offersArgs: FetchOffersArgs) {
       this.offers = ListResult.loading()
+      
+      // Wait for hub to be initialized before fetching offers
+      const isHubReady = await this.waitForHubInitialization()
+      if (!isHubReady) {
+        this.offers = ListResult.error(new Error('Hub is not available. Please try again later.'))
+        return
+      }
+      
       try {
         const offers = await this.client.fetchOffers(offersArgs, LIMIT_ITEMS_PER_PAGE)
         
@@ -412,7 +445,6 @@ export const useClientStore = defineStore({
         
         await Promise.allSettled(exchangeRatePromises)
         
-        console.log('Exchange rates available:', Array.from(this.fiatExchangeRates.entries()))
         
         // Check if batch method is available, otherwise fall back to individual queries
         if (this.client.batchUpdateFiatPrices) {
@@ -439,7 +471,6 @@ export const useClientStore = defineStore({
           
           // If no prices were returned, fall back to individual queries
           if (!prices || prices.length === 0) {
-            console.log('No prices from batch method, using individual queries')
             return await this.individualPriceFetch(fiats, denom)
           }
           
@@ -468,10 +499,8 @@ export const useClientStore = defineStore({
                           denomStr === '0x55d398326f99059ff775485246999027b3197955' || // USDT on BSC
                           denomStr === '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'    // USDC on BSC
       
-      console.log(`[individualPriceFetch] Processing ${fiats.length} fiats for denom ${denomStr}, isStablecoin: ${isStablecoin}`)
       
       if (isStablecoin) {
-        console.log('[individualPriceFetch] Using exchange rates for stablecoin pricing')
         // For stablecoins, use exchange rates directly (1 USDC/USDT = 1 USD)
         const results = fiats.map(fiat => {
           if (fiat === 'USD') {
@@ -486,7 +515,6 @@ export const useClientStore = defineStore({
           } else {
             // Use the exchange rate if we have it
             const rate = this.fiatExchangeRates.get(fiat)
-            console.log(`[individualPriceFetch] Exchange rate for ${fiat}: ${rate}`)
             if (rate && rate > 0) {
               // rate is now in actual currency units (e.g., 4051.88 COP per USD)
               // Convert to cents for storage consistency (405188 cents)
@@ -496,23 +524,18 @@ export const useClientStore = defineStore({
               } else {
                 this.fiatPrices.set(fiat, new Map([[denomStr, rateInCents]]))
               }
-              console.log(`[individualPriceFetch] Stored price for ${fiat}: ${rateInCents} cents`)
               return { fiat, price: rateInCents, success: true }
             }
-            console.log(`[individualPriceFetch] No exchange rate for ${fiat}`)
             return { fiat, price: 0, success: false }
           }
         })
-        console.log('[individualPriceFetch] Stablecoin price results:', results)
         return results.filter(r => r.success)
       }
       
       // For non-stablecoin denoms, try to fetch prices from the contract
-      console.log('[individualPriceFetch] Fetching prices from contract for non-stablecoin')
       const pricePromises = fiats.map(async (fiat) => {
         try {
           const price = await this.client.updateFiatPrice(fiat, denom)
-          console.log(`[individualPriceFetch] Got price for ${fiat}:`, price)
           
           // Convert the raw price to decimal value using the chain's formatter
           const formattedPrice = this.client.formatFiatPrice(price.price)
@@ -534,7 +557,6 @@ export const useClientStore = defineStore({
       
       const results = await Promise.allSettled(pricePromises)
       const finalResults = results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean)
-      console.log(`[individualPriceFetch] Final results:`, finalResults)
       return finalResults
     },
     async fetchFiatPriceForDenom(fiat: FiatCurrency, denom: Denom) {
@@ -705,18 +727,15 @@ export const useClientStore = defineStore({
                      denomStr?.toLowerCase().includes('usdt') ||
                      denomStr?.toLowerCase().includes('busd')
       
-      console.log(`[getFiatPrice] Getting price for ${fiatCurrency} with denom ${denomStr}, isUSDStablecoin: ${isUSDStablecoin}`)
       
       if (isUSDStablecoin) {
         // For USD stablecoins, 1 token = 1 USD
         if (fiatCurrency === 'USD') {
-          console.log(`[getFiatPrice] Returning 1:1 USD rate for stablecoin`)
           return 1.00 // 1 USDC = 1 USD
         }
         
         // For other fiat currencies, convert using exchange rate
         const exchangeRate = this.fiatExchangeRates.get(fiatCurrency)
-        console.log(`[getFiatPrice] Exchange rate for ${fiatCurrency}: ${exchangeRate}`)
         if (exchangeRate && exchangeRate > 0) {
           // exchangeRate is now already in actual currency units (not cents)
           // For COP: if 1 USD = 4051.88 COP, then exchangeRate = 4051.88
@@ -725,16 +744,13 @@ export const useClientStore = defineStore({
         }
         
         // No exchange rate available - return 0 to indicate price unavailable
-        console.warn(`[getFiatPrice] No exchange rate found for ${fiatCurrency}, price unavailable`)
         return 0
       }
       
       // For other denoms, use the price from the map
       const fiatPrice = this.fiatPrices.get(fiatCurrency)?.get(denomStr) ?? 0
-      console.log(`[getFiatPrice] Retrieved stored price for ${fiatCurrency}/${denomStr}: ${fiatPrice}`)
       try {
         const finalPrice = fiatPrice / 100
-        console.log(`[getFiatPrice] Final price after division by 100: ${finalPrice}`)
         return finalPrice
       } catch (e) {
         console.error(`[getFiatPrice] Error calculating price:`, e)

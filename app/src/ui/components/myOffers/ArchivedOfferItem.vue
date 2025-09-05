@@ -34,12 +34,6 @@ const limit = computed(() => {
   return `${parseFloat(min)} - ${parseFloat(max)} ${denom}`
 })
 
-// Fetch exchange rate for non-USD currencies
-onBeforeMount(async () => {
-  if (props.offer.fiat_currency !== 'USD') {
-    await client.fetchFiatToUsdRate(props.offer.fiat_currency)
-  }
-})
 const type = computed(() => (props.offer.offer_type === OfferType.buy ? 'Buying' : 'Selling'))
 
 function unarchive() {
