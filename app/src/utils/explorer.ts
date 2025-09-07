@@ -1,6 +1,16 @@
-import { ChainClient } from '~/network/Chain'
+import { ChainClient, chainFactory } from '~/network/Chain'
+import type { EVMChain } from '~/network/evm/EVMChain'
 
 export function getExplorerUrl(chainClient: ChainClient, address: string): string {
+  // Check if this is an EVM chain
+  const evmChains = [ChainClient.bscMainnet, ChainClient.bscTestnet]
+  if (evmChains.includes(chainClient)) {
+    // Get the chain instance to access the config
+    const chain = chainFactory(chainClient) as EVMChain
+    return `${chain.config.blockExplorerUrl}/address/${address}`
+  }
+  
+  // Handle Cosmos chains
   switch (chainClient) {
     case ChainClient.kujiraMainnet:
       return `https://finder.kujira.app/kaiyo-1/address/${address}`
