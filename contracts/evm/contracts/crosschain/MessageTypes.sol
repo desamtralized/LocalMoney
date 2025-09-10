@@ -18,7 +18,11 @@ library MessageTypes {
         DISPUTE_TRADE,     // Initiate dispute resolution
         UPDATE_PROFILE,    // Update user profile across chains
         QUERY_STATUS,      // Query status of offer/trade
-        BATCH_OPERATION    // Batch multiple operations
+        BATCH_OPERATION,   // Batch multiple operations
+        TOKEN_DEPOSIT,     // Cross-chain token deposit
+        TOKEN_RELEASE,     // Cross-chain token release
+        TOKEN_BRIDGE,      // Bridge tokens between chains
+        TOKEN_REFUND       // Refund tokens to sender
     }
     
     /**
@@ -81,6 +85,39 @@ library MessageTypes {
     }
     
     /**
+     * @notice Token deposit message payload structure
+     */
+    struct TokenDepositPayload {
+        address depositor;
+        address token;
+        uint256 amount;
+        bytes32 tradeId;
+        uint256 destinationChainId;
+    }
+    
+    /**
+     * @notice Token release message payload structure
+     */
+    struct TokenReleasePayload {
+        bytes32 tradeId;
+        address recipient;
+        address token;
+        uint256 amount;
+        uint256 destinationChainId;
+    }
+    
+    /**
+     * @notice Token bridge message payload structure
+     */
+    struct TokenBridgePayload {
+        address token;
+        uint256 amount;
+        address sender;
+        address recipient;
+        bytes32 referenceId;
+    }
+    
+    /**
      * @notice Validates message format and data
      * @param message The cross-chain message to validate
      * @return bool Whether the message is valid
@@ -92,7 +129,7 @@ library MessageTypes {
         if (message.payload.length == 0) return false;
         
         // Validate message type specific requirements
-        if (uint8(message.messageType) > uint8(MessageType.BATCH_OPERATION)) {
+        if (uint8(message.messageType) > uint8(MessageType.TOKEN_REFUND)) {
             return false;
         }
         

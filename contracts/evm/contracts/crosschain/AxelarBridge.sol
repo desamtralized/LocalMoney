@@ -8,6 +8,8 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./MessageTypes.sol";
 import "./interfaces/IAxelarBridge.sol";
+import "./interfaces/ICrossChainEscrow.sol";
+import "./ITSTokenRegistry.sol";
 import "../interfaces/IHub.sol";
 
 /**
@@ -34,6 +36,8 @@ contract AxelarBridge is
     IHub public hub;
     address public gasService;
     address public axelarHandler; // The non-upgradeable AxelarHandler contract
+    ICrossChainEscrow public crossChainEscrow;
+    ITSTokenRegistry public tokenRegistry;
     
     mapping(bytes32 => bool) public processedMessages;
     mapping(string => bool) public registeredChains;
@@ -48,8 +52,8 @@ contract AxelarBridge is
     mapping(bytes32 => MessageTypes.CrossChainMessage) public failedMessages;
     mapping(bytes32 => string) public failedMessageReasons;
     
-    // Storage gap for upgrades
-    uint256[43] private __gap;
+    // Storage gap for upgrades (reduced by 2 for new state variables)
+    uint256[41] private __gap;
     
     /**
      * @notice Initialize the bridge contract
@@ -159,6 +163,14 @@ contract AxelarBridge is
             _handleQueryStatus(message, sourceChain);
         } else if (message.messageType == MessageTypes.MessageType.BATCH_OPERATION) {
             _handleBatchOperation(message, sourceChain);
+        } else if (message.messageType == MessageTypes.MessageType.TOKEN_DEPOSIT) {
+            _handleTokenDeposit(message, sourceChain);
+        } else if (message.messageType == MessageTypes.MessageType.TOKEN_RELEASE) {
+            _handleTokenRelease(message, sourceChain);
+        } else if (message.messageType == MessageTypes.MessageType.TOKEN_BRIDGE) {
+            _handleTokenBridge(message, sourceChain);
+        } else if (message.messageType == MessageTypes.MessageType.TOKEN_REFUND) {
+            _handleTokenRefund(message, sourceChain);
         } else {
             revert("Unknown message type");
         }
@@ -331,6 +343,88 @@ contract AxelarBridge is
     ) internal {
         // Implementation for batch operations
         // Process multiple operations in sequence
+    }
+    
+    // Token operation handlers
+    function _handleTokenDeposit(
+        MessageTypes.CrossChainMessage memory message,
+        string memory sourceChain
+    ) internal {
+        require(address(crossChainEscrow) != address(0), "Escrow not set");
+        
+        MessageTypes.TokenDepositPayload memory payload = abi.decode(
+            message.payload,
+            (MessageTypes.TokenDepositPayload)
+        );
+        
+        // Get source chain ID from registry
+        uint256 sourceChainId = tokenRegistry.chainNameToId(sourceChain);
+        require(sourceChainId > 0, "Unknown source chain");
+        
+        // Forward to cross-chain escrow
+        crossChainEscrow.depositFromChain(
+            sourceChainId,
+            payload.depositor,
+            payload.token,
+            payload.amount,
+            payload.tradeId
+        );
+    }
+    
+    function _handleTokenRelease(
+        MessageTypes.CrossChainMessage memory message,
+        string memory sourceChain
+    ) internal {
+        require(address(crossChainEscrow) != address(0), "Escrow not set");
+        
+        MessageTypes.TokenReleasePayload memory payload = abi.decode(
+            message.payload,
+            (MessageTypes.TokenReleasePayload)
+        );
+        
+        // Forward to cross-chain escrow for release
+        crossChainEscrow.releaseToChain(
+            payload.destinationChainId,
+            payload.recipient,
+            payload.token,
+            payload.amount,
+            payload.tradeId
+        );
+    }
+    
+    function _handleTokenBridge(
+        MessageTypes.CrossChainMessage memory message,
+        string memory sourceChain
+    ) internal {
+        MessageTypes.TokenBridgePayload memory payload = abi.decode(
+            message.payload,
+            (MessageTypes.TokenBridgePayload)
+        );
+        
+        // Process token bridge request
+        // This would typically interact with the TokenBridge contract
+        // Implementation depends on specific requirements
+    }
+    
+    function _handleTokenRefund(
+        MessageTypes.CrossChainMessage memory message,
+        string memory sourceChain
+    ) internal {
+        require(address(crossChainEscrow) != address(0), "Escrow not set");
+        
+        // Decode and process refund
+        // Implementation for emergency refunds
+    }
+    
+    // Configuration functions for token operations
+    function setCrossChainEscrow(address _escrow) external onlyRole(ADMIN_ROLE) {
+        require(_escrow != address(0), "Invalid escrow");
+        crossChainEscrow = ICrossChainEscrow(_escrow);
+    }
+    
+    function setTokenRegistry(address _registry) external onlyRole(ADMIN_ROLE) {
+        require(_registry != address(0), "Invalid registry");
+        tokenRegistry = ITSTokenRegistry(_registry);
     }
     
     // Chain management functions
