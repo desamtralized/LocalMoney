@@ -14,7 +14,7 @@ Deploy lightweight satellite contracts on target chains (Polygon, Avalanche, Bas
 
 ### Target Chains (Phase 1 - Cost Optimized)
 1. **Polygon** - Chain ID: 137, Axelar Name: "Polygon"
-2. **Avalanche** - Chain ID: 43114, Axelar Name: "Avalanche"  
+2. **Avalanche** - Chain ID: 43114, Axelar Name: "Avalanche"
 3. **Base** - Chain ID: 8453, Axelar Name: "base"
 
 ### Existing Infrastructure (From Previous Phases)
@@ -69,22 +69,22 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "../crosschain/MessageTypes.sol";
 
-contract LocalMoneySatellite is 
+contract LocalMoneySatellite is
     Initializable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
     AxelarExecutable
 {
     using MessageTypes for *;
-    
+
     IAxelarGasService public gasService;
     string public constant HUB_CHAIN = "binance";
     string public hubAddress;
-    
+
     // Local cache for gas optimization
     mapping(address => bytes32) public userProfiles;
     mapping(bytes32 => uint256) public offerCache;
-    
+
     function createOffer(
         address token,
         uint256 amount,
@@ -97,10 +97,10 @@ contract LocalMoneySatellite is
             block.chainid,
             abi.encode(token, amount, price, isBuy)
         );
-        
+
         _payGasAndCallContract(payload);
     }
-    
+
     function createTrade(bytes32 offerId, uint256 amount) external payable {
         // Forward to BSC hub
     }
@@ -149,9 +149,9 @@ const chainConfig = require("../config/chains.config");
 async function deploySatellite() {
     const network = "polygon";
     const config = chainConfig.networks[network];
-    
+
     const LocalMoneySatellite = await ethers.getContractFactory("LocalMoneySatellite");
-    
+
     const satellite = await upgrades.deployProxy(LocalMoneySatellite, [
         config.gateway,
         config.gasService,
@@ -160,11 +160,11 @@ async function deploySatellite() {
         initializer: "initialize",
         kind: "uups"
     });
-    
+
     await satellite.waitForDeployment();
-    
+
     console.log(`Satellite deployed on ${network} at: ${await satellite.getAddress()}`);
-    
+
     // Register satellite on BSC hub
     // Verify on explorer
     return satellite;
@@ -203,29 +203,19 @@ async function deploySatellite() {
    - Base deployment script
    - Verification scripts
 
-6. **Deploy to Testnets**
-   - Deploy to Polygon Mumbai
-   - Deploy to Avalanche Fuji
-   - Deploy to Base Goerli
-   - Test cross-chain messages
+6. **Deploy new version of the whole protocol to BSC**
 
-7. **Register Satellites on Hub**
-   - Call registerChain on BSC Hub
-   - Configure chain gateways
-   - Set satellite addresses
-   - Test connectivity
-
-8. **Write Tests**
-   - Unit tests for satellite functions
-   - Integration tests with hub
-   - Gas estimation tests
-   - Multi-chain flow tests
-
-9. **Deploy to Mainnets**
+7. **Deploy to Mainnets**
    - Deploy to Polygon mainnet
    - Deploy to Avalanche mainnet
    - Deploy to Base mainnet
    - Verify all contracts
+
+8. **Register Satellites on Hub**
+   - Call registerChain on BSC Hub
+   - Configure chain gateways
+   - Set satellite addresses
+   - Test connectivity
 
 ## Validation Gates
 
@@ -259,7 +249,6 @@ npm run test:multi-chain
    - Retry with higher gas
    - Check network congestion
    - Verify account balance
-   - Use flashbots if needed
 
 2. **Cross-Chain Issues**
    - Verify gateway addresses
@@ -400,7 +389,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "../crosschain/MessageTypes.sol";
 
-contract LocalMoneySatellite is 
+contract LocalMoneySatellite is
     Initializable,
     UUPSUpgradeable,
     AccessControlUpgradeable,
@@ -408,23 +397,23 @@ contract LocalMoneySatellite is
     AxelarExecutable
 {
     using MessageTypes for *;
-    
+
     // Roles
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
-    
+
     // Configuration
     IAxelarGasService public gasService;
     string public constant HUB_CHAIN = "binance";
     string public hubAddress;
     uint256 public messageNonce;
-    
+
     // Local cache for gas optimization
     mapping(address => bytes32) public userProfiles;
     mapping(bytes32 => OfferCache) public offerCache;
     mapping(bytes32 => TradeCache) public tradeCache;
     mapping(address => uint256) public userNonces;
-    
+
     struct OfferCache {
         address creator;
         address token;
@@ -434,7 +423,7 @@ contract LocalMoneySatellite is
         uint256 lastUpdate;
         bool isActive;
     }
-    
+
     struct TradeCache {
         bytes32 offerId;
         address buyer;
@@ -443,23 +432,23 @@ contract LocalMoneySatellite is
         uint8 status; // 0: Created, 1: Funded, 2: Completed, 3: Disputed, 4: Cancelled
         uint256 lastUpdate;
     }
-    
+
     // Gas management
     uint256 public baseGasAmount = 300000;
     uint256 public gasMultiplier = 120; // 120% of estimated
-    
+
     // Events
     event MessageSent(bytes32 indexed messageId, MessageTypes.MessageType messageType, address sender);
     event CallbackReceived(bytes32 indexed messageId, bool success, bytes data);
     event OfferCreated(bytes32 indexed offerId, address creator, uint256 amount, uint256 price);
     event TradeInitiated(bytes32 indexed tradeId, bytes32 offerId, address buyer, uint256 amount);
     event CacheUpdated(bytes32 indexed id, uint8 cacheType); // 0: offer, 1: trade
-    
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _gateway) AxelarExecutable(_gateway) {
         _disableInitializers();
     }
-    
+
     function initialize(
         address _gasService,
         string memory _hubAddress
@@ -467,20 +456,20 @@ contract LocalMoneySatellite is
         __UUPSUpgradeable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
-        
+
         require(_gasService != address(0), "Invalid gas service");
         require(bytes(_hubAddress).length > 0, "Invalid hub address");
-        
+
         gasService = IAxelarGasService(_gasService);
         hubAddress = _hubAddress;
-        
+
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(EMERGENCY_ROLE, msg.sender);
     }
-    
+
     // ============ User Functions ============
-    
+
     function createOffer(
         address token,
         uint256 amount,
@@ -490,7 +479,7 @@ contract LocalMoneySatellite is
         require(amount > 0, "Invalid amount");
         require(price > 0, "Invalid price");
         require(msg.value > 0, "Gas payment required");
-        
+
         bytes32 offerId = keccak256(abi.encodePacked(
             msg.sender,
             token,
@@ -500,7 +489,7 @@ contract LocalMoneySatellite is
             block.timestamp,
             messageNonce++
         ));
-        
+
         // Cache locally
         offerCache[offerId] = OfferCache({
             creator: msg.sender,
@@ -511,7 +500,7 @@ contract LocalMoneySatellite is
             lastUpdate: block.timestamp,
             isActive: true
         });
-        
+
         // Prepare message
         bytes memory payload = abi.encode(
             MessageTypes.MessageType.CREATE_OFFER,
@@ -520,12 +509,12 @@ contract LocalMoneySatellite is
             messageNonce - 1,
             abi.encode(offerId, token, amount, price, isBuy)
         );
-        
+
         _payGasAndCallContract(payload);
-        
+
         emit OfferCreated(offerId, msg.sender, amount, price);
     }
-    
+
     function createTrade(
         bytes32 offerId,
         uint256 amount
@@ -533,7 +522,7 @@ contract LocalMoneySatellite is
         require(offerCache[offerId].isActive, "Offer not active");
         require(amount > 0, "Invalid amount");
         require(msg.value > 0, "Gas payment required");
-        
+
         bytes32 tradeId = keccak256(abi.encodePacked(
             offerId,
             msg.sender,
@@ -541,7 +530,7 @@ contract LocalMoneySatellite is
             block.timestamp,
             messageNonce++
         ));
-        
+
         // Cache trade locally
         tradeCache[tradeId] = TradeCache({
             offerId: offerId,
@@ -551,7 +540,7 @@ contract LocalMoneySatellite is
             status: 0, // Created
             lastUpdate: block.timestamp
         });
-        
+
         // Prepare message
         bytes memory payload = abi.encode(
             MessageTypes.MessageType.CREATE_TRADE,
@@ -560,12 +549,12 @@ contract LocalMoneySatellite is
             messageNonce - 1,
             abi.encode(tradeId, offerId, amount)
         );
-        
+
         _payGasAndCallContract(payload);
-        
+
         emit TradeInitiated(tradeId, offerId, msg.sender, amount);
     }
-    
+
     function fundEscrow(
         bytes32 tradeId,
         address token,
@@ -573,9 +562,9 @@ contract LocalMoneySatellite is
     ) external payable nonReentrant {
         require(tradeCache[tradeId].status == 0, "Trade not in correct state");
         require(msg.value > 0, "Gas payment required");
-        
+
         // Token approval should be done to ITS before calling this
-        
+
         bytes memory payload = abi.encode(
             MessageTypes.MessageType.FUND_ESCROW,
             msg.sender,
@@ -583,19 +572,19 @@ contract LocalMoneySatellite is
             messageNonce++,
             abi.encode(tradeId, token, amount)
         );
-        
+
         _payGasAndCallContract(payload);
-        
+
         // Update local cache
         tradeCache[tradeId].status = 1; // Funded
         tradeCache[tradeId].lastUpdate = block.timestamp;
     }
-    
+
     function completeTrade(bytes32 tradeId) external payable nonReentrant {
         require(tradeCache[tradeId].buyer == msg.sender, "Only buyer can complete");
         require(tradeCache[tradeId].status == 1, "Trade not funded");
         require(msg.value > 0, "Gas payment required");
-        
+
         bytes memory payload = abi.encode(
             MessageTypes.MessageType.RELEASE_FUNDS,
             msg.sender,
@@ -603,16 +592,16 @@ contract LocalMoneySatellite is
             messageNonce++,
             abi.encode(tradeId)
         );
-        
+
         _payGasAndCallContract(payload);
-        
+
         // Update local cache optimistically
         tradeCache[tradeId].status = 2; // Completed
         tradeCache[tradeId].lastUpdate = block.timestamp;
     }
-    
+
     // ============ Internal Functions ============
-    
+
     function _payGasAndCallContract(bytes memory payload) internal {
         bytes32 messageId = keccak256(abi.encodePacked(
             address(this),
@@ -621,7 +610,7 @@ contract LocalMoneySatellite is
             payload,
             messageNonce
         ));
-        
+
         // Pay for gas
         gasService.payNativeGasForContractCall{value: msg.value}(
             address(this),
@@ -630,15 +619,15 @@ contract LocalMoneySatellite is
             payload,
             msg.sender
         );
-        
+
         // Call contract
         gateway.callContract(HUB_CHAIN, hubAddress, payload);
-        
+
         emit MessageSent(messageId, MessageTypes.MessageType(uint8(payload[0])), msg.sender);
     }
-    
+
     // ============ Callback Handling ============
-    
+
     function _execute(
         string calldata sourceChain,
         string calldata sourceAddress,
@@ -646,26 +635,26 @@ contract LocalMoneySatellite is
     ) internal override {
         require(keccak256(bytes(sourceChain)) == keccak256(bytes(HUB_CHAIN)), "Invalid source chain");
         require(keccak256(bytes(sourceAddress)) == keccak256(bytes(hubAddress)), "Invalid source");
-        
+
         // Decode callback
         (bool success, bytes32 requestId, bytes memory data) = abi.decode(
             payload,
             (bool, bytes32, bytes)
         );
-        
+
         if (success) {
             _handleSuccessCallback(requestId, data);
         } else {
             _handleFailureCallback(requestId, data);
         }
-        
+
         emit CallbackReceived(requestId, success, data);
     }
-    
+
     function _handleSuccessCallback(bytes32 requestId, bytes memory data) internal {
         // Update local cache based on callback type
         uint8 callbackType = uint8(data[0]);
-        
+
         if (callbackType == 0) { // Offer update
             (bytes32 offerId, bool isActive) = abi.decode(data[1:], (bytes32, bool));
             offerCache[offerId].isActive = isActive;
@@ -678,14 +667,14 @@ contract LocalMoneySatellite is
             emit CacheUpdated(tradeId, 1);
         }
     }
-    
+
     function _handleFailureCallback(bytes32 requestId, bytes memory data) internal {
         // Revert optimistic updates if needed
         // Log failure for monitoring
     }
-    
+
     // ============ Admin Functions ============
-    
+
     function setGasConfig(
         uint256 _baseGasAmount,
         uint256 _gasMultiplier
@@ -693,19 +682,19 @@ contract LocalMoneySatellite is
         baseGasAmount = _baseGasAmount;
         gasMultiplier = _gasMultiplier;
     }
-    
+
     function updateHubAddress(string memory _hubAddress) external onlyRole(ADMIN_ROLE) {
         hubAddress = _hubAddress;
     }
-    
-    function _authorizeUpgrade(address newImplementation) 
-        internal 
-        override 
-        onlyRole(ADMIN_ROLE) 
+
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        override
+        onlyRole(ADMIN_ROLE)
     {}
-    
+
     // ============ View Functions ============
-    
+
     function estimateGasFee() external view returns (uint256) {
         return gasService.estimateGasFee(
             HUB_CHAIN,
@@ -713,11 +702,11 @@ contract LocalMoneySatellite is
             baseGasAmount
         ) * gasMultiplier / 100;
     }
-    
+
     function getOfferDetails(bytes32 offerId) external view returns (OfferCache memory) {
         return offerCache[offerId];
     }
-    
+
     function getTradeDetails(bytes32 tradeId) external view returns (TradeCache memory) {
         return tradeCache[tradeId];
     }
@@ -758,23 +747,23 @@ const BSC_HUB_ADDRESS = "0x696F771E329DF4550044686C995AB9028fD3a724";
 
 async function deploySatellite(network) {
     console.log(`\n========== Deploying to ${network} ==========`);
-    
+
     const config = CHAIN_CONFIG[network];
     if (!config) {
         throw new Error(`Unknown network: ${network}`);
     }
-    
+
     // Switch to the target network
     await hre.changeNetwork(network);
-    
+
     const [deployer] = await ethers.getSigners();
     console.log("Deployer:", deployer.address);
     console.log("Balance:", ethers.formatEther(await deployer.provider.getBalance(deployer.address)));
-    
+
     // Deploy LocalMoneySatellite
     console.log("Deploying LocalMoneySatellite...");
     const LocalMoneySatellite = await ethers.getContractFactory("LocalMoneySatellite");
-    
+
     const satellite = await upgrades.deployProxy(
         LocalMoneySatellite,
         [
@@ -790,16 +779,16 @@ async function deploySatellite(network) {
             }
         }
     );
-    
+
     await satellite.waitForDeployment();
     const satelliteAddress = await satellite.getAddress();
-    
+
     console.log(`LocalMoneySatellite deployed to: ${satelliteAddress}`);
-    
+
     // Wait for confirmations
     console.log(`Waiting for ${config.confirmations} confirmations...`);
     await satellite.deploymentTransaction().wait(config.confirmations);
-    
+
     // Verify contract
     console.log("Verifying contract...");
     try {
@@ -811,7 +800,7 @@ async function deploySatellite(network) {
     } catch (error) {
         console.log("Verification failed:", error.message);
     }
-    
+
     return {
         network,
         address: satelliteAddress,
@@ -822,22 +811,22 @@ async function deploySatellite(network) {
 
 async function registerSatelliteOnHub(satelliteDeployments) {
     console.log("\n========== Registering Satellites on BSC Hub ==========");
-    
+
     await hre.changeNetwork("bsc");
-    
+
     const [deployer] = await ethers.getSigners();
-    
+
     // Get AxelarBridge contract on BSC
     const axelarBridge = await ethers.getContractAt(
         "AxelarBridge",
         process.env.AXELAR_BRIDGE_ADDRESS
     );
-    
+
     for (const deployment of satelliteDeployments) {
         const config = CHAIN_CONFIG[deployment.network];
-        
+
         console.log(`Registering ${deployment.network} satellite...`);
-        
+
         const tx = await axelarBridge.registerChain(
             config.axelarName,
             deployment.address,
@@ -845,7 +834,7 @@ async function registerSatelliteOnHub(satelliteDeployments) {
                 gasPrice: ethers.parseUnits("3", "gwei")
             }
         );
-        
+
         await tx.wait(3);
         console.log(`Registered ${deployment.network}: ${deployment.address}`);
     }
@@ -854,13 +843,13 @@ async function registerSatelliteOnHub(satelliteDeployments) {
 async function main() {
     const networks = ["polygon", "avalanche", "base"];
     const deployments = [];
-    
+
     // Deploy to each network
     for (const network of networks) {
         try {
             const deployment = await deploySatellite(network);
             deployments.push(deployment);
-            
+
             // Save deployment info
             const fs = require("fs");
             fs.writeFileSync(
@@ -871,18 +860,18 @@ async function main() {
             console.error(`Failed to deploy to ${network}:`, error);
         }
     }
-    
+
     // Register all satellites on BSC hub
     if (deployments.length > 0) {
         await registerSatelliteOnHub(deployments);
     }
-    
+
     // Print summary
     console.log("\n========== Deployment Summary ==========");
     for (const deployment of deployments) {
         console.log(`${deployment.network}: ${deployment.address}`);
     }
-    
+
     // Generate configuration file
     const config = {
         hubAddress: BSC_HUB_ADDRESS,
@@ -892,7 +881,7 @@ async function main() {
         }, {}),
         timestamp: new Date().toISOString()
     };
-    
+
     require("fs").writeFileSync(
         "deployments/satellite-config.json",
         JSON.stringify(config, null, 2)
@@ -916,17 +905,17 @@ const { expect } = require("chai");
 describe("LocalMoneySatellite", function () {
     let satellite, mockGateway, mockGasService;
     let owner, user1, user2;
-    
+
     beforeEach(async function () {
         [owner, user1, user2] = await ethers.getSigners();
-        
+
         // Deploy mocks
         const MockGateway = await ethers.getContractFactory("MockAxelarGateway");
         mockGateway = await MockGateway.deploy();
-        
+
         const MockGasService = await ethers.getContractFactory("MockAxelarGasService");
         mockGasService = await MockGasService.deploy();
-        
+
         // Deploy satellite
         const LocalMoneySatellite = await ethers.getContractFactory("LocalMoneySatellite");
         satellite = await upgrades.deployProxy(
@@ -941,13 +930,13 @@ describe("LocalMoneySatellite", function () {
             }
         );
     });
-    
+
     describe("Offer Creation", function () {
         it("should create offer and send to hub", async function () {
             const token = ethers.ZeroAddress;
             const amount = ethers.parseEther("100");
             const price = ethers.parseEther("1");
-            
+
             await expect(
                 satellite.connect(user1).createOffer(
                     token,
@@ -957,19 +946,19 @@ describe("LocalMoneySatellite", function () {
                     { value: ethers.parseEther("0.01") }
                 )
             ).to.emit(satellite, "OfferCreated");
-            
+
             // Verify local cache
             const offers = await satellite.queryFilter(
                 satellite.filters.OfferCreated()
             );
             const offerId = offers[0].args[0];
-            
+
             const cachedOffer = await satellite.getOfferDetails(offerId);
             expect(cachedOffer.creator).to.equal(user1.address);
             expect(cachedOffer.amount).to.equal(amount);
             expect(cachedOffer.isActive).to.be.true;
         });
-        
+
         it("should reject offer without gas payment", async function () {
             await expect(
                 satellite.connect(user1).createOffer(
@@ -982,10 +971,10 @@ describe("LocalMoneySatellite", function () {
             ).to.be.revertedWith("Gas payment required");
         });
     });
-    
+
     describe("Trade Creation", function () {
         let offerId;
-        
+
         beforeEach(async function () {
             // Create an offer first
             await satellite.connect(user1).createOffer(
@@ -995,13 +984,13 @@ describe("LocalMoneySatellite", function () {
                 false, // Sell offer
                 { value: ethers.parseEther("0.01") }
             );
-            
+
             const offers = await satellite.queryFilter(
                 satellite.filters.OfferCreated()
             );
             offerId = offers[0].args[0];
         });
-        
+
         it("should create trade from offer", async function () {
             await expect(
                 satellite.connect(user2).createTrade(
@@ -1010,13 +999,13 @@ describe("LocalMoneySatellite", function () {
                     { value: ethers.parseEther("0.01") }
                 )
             ).to.emit(satellite, "TradeInitiated");
-            
+
             // Verify trade cache
             const trades = await satellite.queryFilter(
                 satellite.filters.TradeInitiated()
             );
             const tradeId = trades[0].args[0];
-            
+
             const cachedTrade = await satellite.getTradeDetails(tradeId);
             expect(cachedTrade.offerId).to.equal(offerId);
             expect(cachedTrade.buyer).to.equal(user2.address);
@@ -1024,7 +1013,7 @@ describe("LocalMoneySatellite", function () {
             expect(cachedTrade.status).to.equal(0); // Created
         });
     });
-    
+
     describe("Callback Handling", function () {
         it("should update cache on success callback", async function () {
             // Create offer
@@ -1035,12 +1024,12 @@ describe("LocalMoneySatellite", function () {
                 true,
                 { value: ethers.parseEther("0.01") }
             );
-            
+
             const offers = await satellite.queryFilter(
                 satellite.filters.OfferCreated()
             );
             const offerId = offers[0].args[0];
-            
+
             // Simulate callback from hub
             const callbackData = ethers.AbiCoder.defaultAbiCoder().encode(
                 ["bool", "bytes32", "bytes"],
@@ -1053,7 +1042,7 @@ describe("LocalMoneySatellite", function () {
                     )
                 ]
             );
-            
+
             // Execute callback
             await mockGateway.callExecute(
                 await satellite.getAddress(),
@@ -1061,19 +1050,19 @@ describe("LocalMoneySatellite", function () {
                 "0xBSCHubAddress",
                 callbackData
             );
-            
+
             // Verify cache updated
             const cachedOffer = await satellite.getOfferDetails(offerId);
             expect(cachedOffer.isActive).to.be.false;
         });
     });
-    
+
     describe("Gas Estimation", function () {
         it("should estimate gas fee correctly", async function () {
             await mockGasService.setEstimatedGasFee(ethers.parseEther("0.005"));
-            
+
             const estimatedFee = await satellite.estimateGasFee();
-            
+
             // Should be 120% of base estimate
             expect(estimatedFee).to.equal(
                 ethers.parseEther("0.005") * 120n / 100n
