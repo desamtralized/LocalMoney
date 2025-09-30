@@ -29,3 +29,6 @@ contracts/evm/deployments/
 
 # Solana keypairs
 contracts/solana/**/*keypair*.json
+
+# bridge
+kujira-bsc-bridge/

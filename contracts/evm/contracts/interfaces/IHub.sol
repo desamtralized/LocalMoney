@@ -137,4 +137,69 @@ interface IHub {
      * @return Timelock controller address
      */
     function getTimelockController() external view returns (address);
+
+    // Cross-chain functions
+    /**
+     * @notice Handle cross-chain offer creation from satellite chain
+     * @param sourceChain Name of source chain
+     * @param creator Original offer creator address
+     * @param offerId Unique offer ID from satellite
+     * @param token Token address
+     * @param amount Offer amount
+     * @param price Price in fiat cents
+     * @param isBuy Whether this is a buy offer
+     * @param fiatCurrency Fiat currency code
+     * @return localOfferId The local offer ID created on hub
+     */
+    function handleCrossChainOfferCreation(
+        string memory sourceChain,
+        address creator,
+        bytes32 offerId,
+        address token,
+        uint256 amount,
+        uint256 price,
+        bool isBuy,
+        string memory fiatCurrency
+    ) external returns (uint256 localOfferId);
+
+    /**
+     * @notice Handle cross-chain trade creation from satellite chain
+     * @param sourceChain Name of source chain
+     * @param taker Trade taker address
+     * @param tradeId Unique trade ID from satellite
+     * @param offerId Offer ID being accepted
+     * @param amount Trade amount
+     * @return localTradeId The local trade ID created on hub
+     */
+    function handleCrossChainTradeCreation(
+        string memory sourceChain,
+        address taker,
+        bytes32 tradeId,
+        uint256 offerId,
+        uint256 amount
+    ) external returns (uint256 localTradeId);
+
+    /**
+     * @notice Handle cross-chain escrow funding notification
+     * @param sourceChain Name of source chain
+     * @param tradeId Trade ID
+     * @param amount Amount funded
+     */
+    function handleCrossChainEscrowFunding(
+        string memory sourceChain,
+        bytes32 tradeId,
+        uint256 amount
+    ) external returns (bool);
+
+    /**
+     * @notice Handle cross-chain fund release request
+     * @param sourceChain Name of source chain
+     * @param tradeId Trade ID
+     * @param recipient Recipient address
+     */
+    function handleCrossChainFundRelease(
+        string memory sourceChain,
+        bytes32 tradeId,
+        address recipient
+    ) external returns (bool);
 }

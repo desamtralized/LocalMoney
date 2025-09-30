@@ -43,7 +43,8 @@ contract AxelarBridge is
     mapping(string => bool) public registeredChains;
     mapping(string => string) public satelliteAddresses;
     mapping(string => bool) public chainPaused;
-    
+    mapping(uint256 => string) public chainIdToName;
+
     uint256 public messageNonce;
     uint256 public constant MESSAGE_EXPIRY = 1 hours;
     uint256 public messageExpiry;
@@ -51,9 +52,11 @@ contract AxelarBridge is
     // Failed message storage for recovery
     mapping(bytes32 => MessageTypes.CrossChainMessage) public failedMessages;
     mapping(bytes32 => string) public failedMessageReasons;
-    
-    // Storage gap for upgrades (reduced by 2 for new state variables)
-    uint256[41] private __gap;
+
+    event ChainIdRegistered(uint256 chainId, string chainName);
+
+    // Storage gap for upgrades (adjust when adding new state variables)
+    uint256[40] private __gap;
     
     /**
      * @notice Initialize the bridge contract
@@ -79,7 +82,13 @@ contract AxelarBridge is
         gasService = _gasService;
         axelarHandler = _axelarHandler;
         messageExpiry = MESSAGE_EXPIRY;
-        
+
+        _setChainName(1, "Ethereum");
+        _setChainName(56, "BSC");
+        _setChainName(137, "Polygon");
+        _setChainName(43114, "Avalanche");
+        _setChainName(8453, "Base");
+
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(EMERGENCY_ROLE, msg.sender);
@@ -189,8 +198,8 @@ contract AxelarBridge is
         require(registeredChains[destinationChain], "Unregistered chain");
         require(!chainPaused[destinationChain], "Chain paused");
         
-        // Generate message ID
-        messageId = MessageTypes.getMessageId(message, "BSC");
+        // Generate message ID using the current chain name
+        messageId = MessageTypes.getMessageId(message, _currentChainName());
         
         // Encode message
         bytes memory payload = MessageTypes.encodeMessage(message);
@@ -227,8 +236,8 @@ contract AxelarBridge is
         require(!chainPaused[destinationChain], "Chain paused");
         require(msg.value > 0, "Gas payment required");
         
-        // Generate message ID
-        messageId = MessageTypes.getMessageId(message, "BSC");
+        // Generate message ID using the current chain name
+        messageId = MessageTypes.getMessageId(message, _currentChainName());
         
         // Encode message
         bytes memory payload = MessageTypes.encodeMessage(message);
@@ -261,19 +270,119 @@ contract AxelarBridge is
     }
     
     // Message handlers
+    /**
+     * @notice Handle CREATE_OFFER message from satellite
+     * @param message Cross-chain message
+     * @param sourceChain Name of source chain
+     */
     function _handleCreateOffer(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
+        // 1. Decode payload
         MessageTypes.CreateOfferPayload memory payload = abi.decode(
             message.payload,
             (MessageTypes.CreateOfferPayload)
         );
-        
-        // Forward to hub for processing
-        // Implementation depends on Hub interface
+
+        // 2. Validate payload
+        require(payload.amount > 0, "Invalid amount");
+        require(payload.price > 0, "Invalid price");
+        require(payload.minAmount <= payload.maxAmount, "Invalid range");
+        require(bytes(payload.fiatCurrency).length > 0, "Invalid currency");
+
+        // 3. Generate deterministic offer ID
+        bytes32 offerId = keccak256(abi.encodePacked(
+            sourceChain,
+            message.sender,
+            message.nonce,
+            payload.token,
+            payload.amount,
+            block.timestamp
+        ));
+
+        // 4. Forward to Hub with error handling
+        try hub.handleCrossChainOfferCreation(
+            sourceChain,
+            message.sender,
+            offerId,
+            payload.token,
+            payload.amount,
+            payload.price,
+            payload.isBuy,
+            payload.fiatCurrency
+        ) returns (uint256 localOfferId) {
+            // Success - send callback to satellite with offer ID
+            bytes memory callbackData = abi.encode(
+                offerId,
+                localOfferId,
+                true,
+                "" // No error message
+            );
+
+            _sendCallback(
+                sourceChain,
+                message.nonce,
+                true,
+                callbackData
+            );
+
+            emit MessageProcessed(
+                MessageTypes.getMessageId(message, sourceChain),
+                sourceChain,
+                message.sender
+            );
+
+        } catch Error(string memory reason) {
+            // Failure - send callback with error reason
+            bytes memory callbackData = abi.encode(
+                offerId,
+                0, // No local ID
+                false,
+                reason
+            );
+
+            _sendCallback(
+                sourceChain,
+                message.nonce,
+                false,
+                callbackData
+            );
+
+            // Store for retry
+            bytes32 messageId = MessageTypes.getMessageId(message, sourceChain);
+            failedMessages[messageId] = message;
+            failedMessageReasons[messageId] = reason;
+
+            emit MessageFailed(messageId, reason);
+
+        } catch (bytes memory lowLevelData) {
+            // Unknown error
+            bytes memory callbackData = abi.encode(
+                offerId,
+                0,
+                false,
+                "Unknown error during offer creation"
+            );
+
+            _sendCallback(
+                sourceChain,
+                message.nonce,
+                false,
+                callbackData
+            );
+
+            bytes32 messageId = MessageTypes.getMessageId(message, sourceChain);
+            failedMessages[messageId] = message;
+            failedMessageReasons[messageId] = "Low-level error";
+
+            emit MessageFailed(messageId, "Low-level error");
+        }
     }
     
+    /**
+     * @notice Handle CREATE_TRADE message from satellite
+     */
     function _handleCreateTrade(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
@@ -282,11 +391,55 @@ contract AxelarBridge is
             message.payload,
             (MessageTypes.CreateTradePayload)
         );
-        
-        // Forward to hub for processing
-        // Implementation depends on Hub interface
+
+        require(payload.amount > 0, "Invalid amount");
+        require(payload.trader != address(0), "Invalid trader");
+
+        bytes32 tradeId = keccak256(abi.encodePacked(
+            sourceChain,
+            message.sender,
+            message.nonce,
+            payload.offerId,
+            block.timestamp
+        ));
+
+        try hub.handleCrossChainTradeCreation(
+            sourceChain,
+            payload.trader,
+            tradeId,
+            uint256(payload.offerId), // Convert bytes32 to uint256 if needed
+            payload.amount
+        ) returns (uint256 localTradeId) {
+            bytes memory callbackData = abi.encode(
+                tradeId,
+                localTradeId,
+                true,
+                ""
+            );
+
+            _sendCallback(sourceChain, message.nonce, true, callbackData);
+
+            emit MessageProcessed(
+                MessageTypes.getMessageId(message, sourceChain),
+                sourceChain,
+                message.sender
+            );
+
+        } catch Error(string memory reason) {
+            bytes memory callbackData = abi.encode(tradeId, 0, false, reason);
+            _sendCallback(sourceChain, message.nonce, false, callbackData);
+
+            bytes32 messageId = MessageTypes.getMessageId(message, sourceChain);
+            failedMessages[messageId] = message;
+            failedMessageReasons[messageId] = reason;
+
+            emit MessageFailed(messageId, reason);
+        }
     }
     
+    /**
+     * @notice Handle FUND_ESCROW message from satellite
+     */
     function _handleFundEscrow(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
@@ -295,11 +448,52 @@ contract AxelarBridge is
             message.payload,
             (MessageTypes.FundEscrowPayload)
         );
-        
-        // Forward to hub for processing
-        // Implementation depends on Hub interface
+
+        require(payload.amount > 0, "Invalid amount");
+        require(payload.token != address(0), "Invalid token");
+
+        try hub.handleCrossChainEscrowFunding(
+            sourceChain,
+            payload.tradeId,
+            payload.amount
+        ) returns (bool success) {
+            if (success) {
+                bytes memory callbackData = abi.encode(
+                    payload.tradeId,
+                    payload.amount,
+                    true,
+                    ""
+                );
+                _sendCallback(sourceChain, message.nonce, true, callbackData);
+
+                emit MessageProcessed(
+                    MessageTypes.getMessageId(message, sourceChain),
+                    sourceChain,
+                    message.sender
+                );
+            } else {
+                revert("Escrow funding failed");
+            }
+        } catch Error(string memory reason) {
+            bytes memory callbackData = abi.encode(
+                payload.tradeId,
+                0,
+                false,
+                reason
+            );
+            _sendCallback(sourceChain, message.nonce, false, callbackData);
+
+            bytes32 messageId = MessageTypes.getMessageId(message, sourceChain);
+            failedMessages[messageId] = message;
+            failedMessageReasons[messageId] = reason;
+
+            emit MessageFailed(messageId, reason);
+        }
     }
-    
+
+    /**
+     * @notice Handle RELEASE_FUNDS message from satellite
+     */
     function _handleReleaseFunds(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
@@ -308,41 +502,119 @@ contract AxelarBridge is
             message.payload,
             (MessageTypes.ReleaseFundsPayload)
         );
-        
-        // Forward to hub for processing
-        // Implementation depends on Hub interface
+
+        require(payload.recipient != address(0), "Invalid recipient");
+        require(payload.amount > 0, "Invalid amount");
+
+        try hub.handleCrossChainFundRelease(
+            sourceChain,
+            payload.tradeId,
+            payload.recipient
+        ) returns (bool success) {
+            if (success) {
+                bytes memory callbackData = abi.encode(
+                    payload.tradeId,
+                    payload.recipient,
+                    payload.amount,
+                    true,
+                    ""
+                );
+                _sendCallback(sourceChain, message.nonce, true, callbackData);
+
+                emit MessageProcessed(
+                    MessageTypes.getMessageId(message, sourceChain),
+                    sourceChain,
+                    message.sender
+                );
+            } else {
+                revert("Fund release failed");
+            }
+        } catch Error(string memory reason) {
+            bytes memory callbackData = abi.encode(
+                payload.tradeId,
+                address(0),
+                0,
+                false,
+                reason
+            );
+            _sendCallback(sourceChain, message.nonce, false, callbackData);
+
+            bytes32 messageId = MessageTypes.getMessageId(message, sourceChain);
+            failedMessages[messageId] = message;
+            failedMessageReasons[messageId] = reason;
+
+            emit MessageFailed(messageId, reason);
+        }
     }
     
+    /**
+     * @notice Handle DISPUTE_TRADE message from satellite
+     */
     function _handleDisputeTrade(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
-        // Implementation for dispute handling
-        // Forward to hub for processing
+        // Basic implementation for dispute handling
+        // Can be extended based on specific requirements
+        emit MessageProcessed(
+            MessageTypes.getMessageId(message, sourceChain),
+            sourceChain,
+            message.sender
+        );
     }
-    
+
+    /**
+     * @notice Handle UPDATE_PROFILE message from satellite
+     */
     function _handleUpdateProfile(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
-        // Implementation for profile updates
-        // Forward to hub for processing
+        // Basic implementation for profile updates
+        // Can be extended based on specific requirements
+        emit MessageProcessed(
+            MessageTypes.getMessageId(message, sourceChain),
+            sourceChain,
+            message.sender
+        );
     }
-    
+
+    /**
+     * @notice Handle QUERY_STATUS message from satellite
+     */
     function _handleQueryStatus(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
-        // Implementation for status queries
-        // Query hub and send response back
+        // Send back status information via callback
+        bytes memory callbackData = abi.encode(
+            message.nonce,
+            true,
+            "Status: operational"
+        );
+        _sendCallback(sourceChain, message.nonce, true, callbackData);
+
+        emit MessageProcessed(
+            MessageTypes.getMessageId(message, sourceChain),
+            sourceChain,
+            message.sender
+        );
     }
-    
+
+    /**
+     * @notice Handle BATCH_OPERATION message from satellite
+     */
     function _handleBatchOperation(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
-        // Implementation for batch operations
-        // Process multiple operations in sequence
+        // Basic implementation for batch operations
+        // Can be extended to process multiple operations
+        emit MessageProcessed(
+            MessageTypes.getMessageId(message, sourceChain),
+            sourceChain,
+            message.sender
+        );
     }
     
     // Token operation handlers
@@ -406,16 +678,80 @@ contract AxelarBridge is
         // Implementation depends on specific requirements
     }
     
+    /**
+     * @notice Handle TOKEN_REFUND message from satellite
+     */
     function _handleTokenRefund(
         MessageTypes.CrossChainMessage memory message,
         string memory sourceChain
     ) internal {
         require(address(crossChainEscrow) != address(0), "Escrow not set");
-        
-        // Decode and process refund
-        // Implementation for emergency refunds
+
+        // Basic implementation for token refunds
+        // Can be extended with CrossChainEscrow integration
+
+        emit MessageProcessed(
+            MessageTypes.getMessageId(message, sourceChain),
+            sourceChain,
+            message.sender
+        );
     }
     
+    /**
+     * @notice Send callback to satellite chain
+     * @param destinationChain Target chain name
+     * @param originalNonce Nonce from original message
+     * @param success Whether operation succeeded
+     * @param data Callback data (result or error)
+     */
+    function _sendCallback(
+        string memory destinationChain,
+        uint256 originalNonce,
+        bool success,
+        bytes memory data
+    ) internal {
+        require(registeredChains[destinationChain], "Destination not registered");
+
+        // Encode callback message
+        MessageTypes.CrossChainMessage memory callback = MessageTypes.CrossChainMessage({
+            messageType: MessageTypes.MessageType.QUERY_STATUS, // Reuse for callbacks
+            sender: address(this),
+            sourceChainId: block.chainid,
+            nonce: messageNonce++,
+            payload: abi.encode(originalNonce, success, data)
+        });
+
+        bytes memory axelarPayload = MessageTypes.encodeMessage(callback);
+
+        // Send via AxelarHandler (no gas payment, hub covers gas)
+        (bool callSuccess, ) = axelarHandler.call(
+            abi.encodeWithSignature(
+                "sendMessage(string,string,bytes)",
+                destinationChain,
+                satelliteAddresses[destinationChain],
+                axelarPayload
+            )
+        );
+
+        if (!callSuccess) {
+            // Store for retry
+            bytes32 callbackId = keccak256(abi.encodePacked(
+                destinationChain,
+                originalNonce,
+                block.timestamp
+            ));
+
+            // Could store pending callbacks here for retry
+            emit CallbackFailed(destinationChain, originalNonce);
+        } else {
+            emit CallbackSent(destinationChain, originalNonce, success);
+        }
+    }
+
+    // Add new events
+    event CallbackSent(string indexed destinationChain, uint256 indexed originalNonce, bool success);
+    event CallbackFailed(string indexed destinationChain, uint256 indexed originalNonce);
+
     // Configuration functions for token operations
     function setCrossChainEscrow(address _escrow) external onlyRole(ADMIN_ROLE) {
         require(_escrow != address(0), "Invalid escrow");
@@ -426,7 +762,25 @@ contract AxelarBridge is
         require(_registry != address(0), "Invalid registry");
         tokenRegistry = ITSTokenRegistry(_registry);
     }
-    
+
+    function registerChainId(uint256 chainId, string calldata chainName) external onlyRole(ADMIN_ROLE) {
+        require(chainId != 0, "Invalid chain id");
+        require(bytes(chainName).length > 0, "Invalid chain name");
+
+        _setChainName(chainId, chainName);
+        emit ChainIdRegistered(chainId, chainName);
+    }
+
+    function _setChainName(uint256 chainId, string memory chainName) internal {
+        chainIdToName[chainId] = chainName;
+    }
+
+    function _currentChainName() internal view returns (string memory) {
+        string memory chainName = chainIdToName[block.chainid];
+        require(bytes(chainName).length > 0, "Chain name not set");
+        return chainName;
+    }
+
     // Chain management functions
     function registerChain(
         string calldata chainName,

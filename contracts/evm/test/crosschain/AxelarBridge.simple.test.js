@@ -54,14 +54,19 @@ describe("AxelarBridge Simple Test", function () {
         });
         await hub.waitForDeployment();
         
+        // Deploy AxelarHandler first
+        const AxelarHandler = await ethers.getContractFactory("AxelarHandler");
+        const axelarHandler = await AxelarHandler.deploy(await mockGateway.getAddress());
+        await axelarHandler.waitForDeployment();
+
         // Deploy AxelarBridge
         const AxelarBridge = await ethers.getContractFactory("AxelarBridge");
         axelarBridge = await upgrades.deployProxy(
             AxelarBridge,
-            [await hub.getAddress(), await mockGasService.getAddress()],
+            [await hub.getAddress(), await mockGasService.getAddress(), await axelarHandler.getAddress()],
             {
-                constructorArgs: [await mockGateway.getAddress()],
-                initializer: "initialize"
+                initializer: "initialize",
+                kind: "uups"
             }
         );
         await axelarBridge.waitForDeployment();
@@ -71,7 +76,6 @@ describe("AxelarBridge Simple Test", function () {
         it("should deploy and initialize correctly", async function () {
             expect(await axelarBridge.getHub()).to.equal(await hub.getAddress());
             expect(await axelarBridge.getGasService()).to.equal(await mockGasService.getAddress());
-            expect(await axelarBridge.getGateway()).to.equal(await mockGateway.getAddress());
             expect(await axelarBridge.getMessageExpiry()).to.equal(3600); // 1 hour
         });
         
