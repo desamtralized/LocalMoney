@@ -25,8 +25,11 @@ onUnmounted(() => {
           Trade <span class="text-primary">USDC</span> for Fiat Directly with Your Community in an Open Marketplace.
         </p>
         <div class="wrap-cta">
+          <router-link to="/bridge" class="bridge-btn">
+            🌉 Bridge to BSC
+          </router-link>
           <div class="wrap-btns">
-            
+
             <a href="https://github.com/desamtralized/localmoney" target="_blank" @click="trackSocialLinks(ClickLinkEvents.github)">
               <svg
                 class="social-icon"
@@ -151,6 +154,27 @@ h1 {
   font-weight: 600;
 }
 .wrap-cta {
+  .bridge-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 32px;
+    background-color: $primary;
+    color: $white;
+    font-size: 16px;
+    font-weight: $bold;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    margin-bottom: 16px;
+
+    &:hover {
+      background-color: $secondary;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(239, 97, 0, 0.3);
+    }
+  }
+
   .wrap-btns {
     display: flex;
     align-items: center;

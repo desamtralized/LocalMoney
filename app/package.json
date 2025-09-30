@@ -25,6 +25,7 @@
     "@vueuse/head": "^2.0.0",
     "axios": "^1.7.9",
     "bs58": "^5.0.0",
+    "canvas-confetti": "^1.9.3",
     "dayjs": "^1.11.13",
     "ethers": "^6.15.0",
     "maska": "^2.1.11",

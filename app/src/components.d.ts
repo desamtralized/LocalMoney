@@ -10,6 +10,8 @@ declare module 'vue' {
     Arbitration: typeof import('./ui/pages/Arbitration.vue')['default']
     ArchivedOfferItem: typeof import('./ui/components/myOffers/ArchivedOfferItem.vue')['default']
     BaseIcon: typeof import('./ui/components/commons/BaseIcon.vue')['default']
+    Bridge: typeof import('./ui/pages/Bridge.vue')['default']
+    BridgeForm: typeof import('./ui/components/bridge/BridgeForm.vue')['default']
     ChainSelector: typeof import('./ui/components/commons/ChainSelector.vue')['default']
     CollapsedMakerOffer: typeof import('./ui/components/maker/CollapsedMakerOffer.vue')['default']
     CollapsedMyOffer: typeof import('./ui/components/myOffers/CollapsedMyOffer.vue')['default']
@@ -51,7 +53,9 @@ declare module 'vue' {
     TradeHistoryItem: typeof import('./ui/components/trades/TradeHistoryItem.vue')['default']
     TradeOpenItem: typeof import('./ui/components/trades/TradeOpenItem.vue')['default']
     Trades: typeof import('./ui/pages/Trades.vue')['default']
+    TransactionStatus: typeof import('./ui/components/bridge/TransactionStatus.vue')['default']
     WalletButton: typeof import('./ui/components/commons/WalletButton.vue')['default']
+    WalletConnect: typeof import('./ui/components/bridge/WalletConnect.vue')['default']
     WalletWidget: typeof import('./ui/components/commons/WalletWidget.vue')['default']
   }
 }

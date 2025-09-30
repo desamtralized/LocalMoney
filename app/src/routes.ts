@@ -47,6 +47,11 @@ const routes = [
     name: 'Arbitration',
     component: Arbitration,
   },
+  {
+    path: '/bridge',
+    name: 'Bridge',
+    component: () => import('~/ui/pages/Bridge.vue'),
+  },
 ]
 
 export default routes
