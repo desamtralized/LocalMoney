@@ -69,6 +69,10 @@ export default defineConfig({
   ssgOptions: {
     script: 'async',
     formatting: 'minify',
+    includedRoutes(paths) {
+      // Exclude the bridge route from SSG as it requires browser APIs
+      return paths.filter(i => !i.includes('/bridge'))
+    },
     onFinished() {
       generateSitemap()
     },
