@@ -7,9 +7,8 @@
       <input
         id="amount"
         v-model="amount"
-        type="number"
-        step="0.000001"
-        min="1"
+        type="text"
+        inputmode="decimal"
         placeholder="1.00"
         :disabled="!canUseForm"
         @input="validateForm"
@@ -276,7 +275,7 @@ const handleBridge = async () => {
   font-weight: $bold;
   cursor: pointer;
   transition: background 0.2s;
-  height: auto;
+  height: 34px;
 
   &:hover:not(:disabled) {
     background: $secondary;
@@ -301,7 +300,7 @@ const handleBridge = async () => {
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
-  height: auto;
+  height: 34px;
 
   &:hover:not(:disabled) {
     background: $bg-hover;
