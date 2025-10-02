@@ -32,7 +32,7 @@ export const BSC_TOKEN_ADDRESS = import.meta.env.VITE_BSC_TOKEN_ADDRESS || '0x00
 
 // Bridge fee (in basis points, 100 = 1%)
 export const BRIDGE_FEE_BPS = 0 // 0% - No fee
-export const ESTIMATED_TIME_MINUTES = 10
+export const ESTIMATED_TIME_MINUTES = 1
 
 // Minimum bridge amount (1 LOCAL token)
 export const MIN_BRIDGE_AMOUNT = 1

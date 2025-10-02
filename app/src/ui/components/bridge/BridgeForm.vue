@@ -2,6 +2,12 @@
   <div class="bridge-form card">
     <h2>Bridge LOCAL to BSC</h2>
 
+    <div class="health-status" :class="{ 'health-ok': bridgeStore.isMonitorHealthy, 'health-error': !bridgeStore.isMonitorHealthy && !bridgeStore.isCheckingHealth, 'health-checking': bridgeStore.isCheckingHealth }">
+      <span v-if="bridgeStore.isCheckingHealth" class="status-indicator">⏳ Checking bridge monitor status...</span>
+      <span v-else-if="bridgeStore.isMonitorHealthy" class="status-indicator">✅ Bridge monitor is operational</span>
+      <span v-else class="status-indicator">❌ Bridge monitor is unavailable</span>
+    </div>
+
     <div class="form-group">
       <label for="amount">Amount (LOCAL)</label>
       <input
@@ -82,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMetaMaskStore } from '~/stores/metamask'
 import { useBridgeStore } from '~/stores/bridge'
 import { isValidAmount, isBSCAddress } from '~/utils/bridge-validation'
@@ -90,6 +96,11 @@ import { MIN_BRIDGE_AMOUNT } from '~/utils/bridge-constants'
 
 const metamaskStore = useMetaMaskStore()
 const bridgeStore = useBridgeStore()
+
+onMounted(async () => {
+  // Check monitor health on mount
+  await bridgeStore.checkMonitorHealth()
+})
 
 const amount = ref('')
 const bscAddress = ref('')
@@ -116,7 +127,8 @@ const canBridge = computed(() => {
     canUseForm.value &&
     isValid.value &&
     metamaskStore.isConnected &&
-    metamaskStore.isCorrectNetwork
+    metamaskStore.isCorrectNetwork &&
+    bridgeStore.isMonitorHealthy
   )
 })
 
@@ -136,6 +148,8 @@ const estimatedTime = computed(() => {
 
 const bridgeButtonText = computed(() => {
   if (bridging.value) return 'Processing...'
+  if (bridgeStore.isCheckingHealth) return 'Checking Monitor Status...'
+  if (!bridgeStore.isMonitorHealthy) return 'Bridge Monitor Unavailable'
   if (!bridgeStore.isKujiraConnected) return 'Connect Kujira Wallet'
   if (!metamaskStore.isConnected) return 'Connect MetaMask'
   if (!metamaskStore.isCorrectNetwork) return 'Switch to BSC Network'
@@ -182,6 +196,13 @@ const useMetaMaskAddress = () => {
 const handleBridge = async () => {
   if (!canBridge.value) return
 
+  // Double-check monitor health before proceeding
+  const isHealthy = await bridgeStore.checkMonitorHealth()
+  if (!isHealthy) {
+    error.value = 'Bridge monitor is unavailable. Please try again later.'
+    return
+  }
+
   error.value = ''
   bridging.value = true
 
@@ -215,11 +236,45 @@ const handleBridge = async () => {
 
   h2 {
     margin-top: 0;
-    margin-bottom: 24px;
+    margin-bottom: 16px;
     color: $base-text;
     text-align: center;
     font-size: 24px;
     font-weight: $bold;
+  }
+}
+
+.health-status {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: $semi-bold;
+  transition: all 0.3s ease;
+
+  &.health-ok {
+    background-color: rgba(40, 167, 69, 0.1);
+    border: 1px solid rgba(40, 167, 69, 0.3);
+    color: #28a745;
+  }
+
+  &.health-error {
+    background-color: rgba(220, 53, 69, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+    color: #dc3545;
+  }
+
+  &.health-checking {
+    background-color: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    color: #ffc107;
+  }
+
+  .status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
 }
 

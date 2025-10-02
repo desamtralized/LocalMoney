@@ -18,6 +18,8 @@ export const useBridgeStore = defineStore('bridge', () => {
   const transactions = ref<BridgeTransaction[]>([])
   const currentTransaction = ref<BridgeTransaction | null>(null)
   const pollingIntervals = ref<Map<string, NodeJS.Timeout>>(new Map())
+  const isMonitorHealthy = ref<boolean>(false)
+  const isCheckingHealth = ref<boolean>(false)
 
   // Computed
   const pendingTransactions = computed(() =>
@@ -279,6 +281,24 @@ export const useBridgeStore = defineStore('bridge', () => {
   }
 
   /**
+   * Check monitor health
+   */
+  const checkMonitorHealth = async (): Promise<boolean> => {
+    isCheckingHealth.value = true
+    try {
+      const healthy = await monitorService.checkHealth()
+      isMonitorHealthy.value = healthy
+      return healthy
+    } catch (error) {
+      console.error('Error checking monitor health:', error)
+      isMonitorHealthy.value = false
+      return false
+    } finally {
+      isCheckingHealth.value = false
+    }
+  }
+
+  /**
    * Reset store state and cleanup resources
    * Clears all polling intervals to prevent memory leaks
    */
@@ -305,6 +325,8 @@ export const useBridgeStore = defineStore('bridge', () => {
     isKujiraConnected,
     transactions,
     currentTransaction,
+    isMonitorHealthy,
+    isCheckingHealth,
 
     // Computed
     pendingTransactions,
@@ -322,6 +344,7 @@ export const useBridgeStore = defineStore('bridge', () => {
     calculateFee,
     calculateAmountAfterFee,
     getEstimatedTime,
+    checkMonitorHealth,
     $reset,
   }
 })

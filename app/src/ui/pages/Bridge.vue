@@ -70,10 +70,12 @@ onMounted(() => {
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: 140px 24px 40px;
+  overflow-x: hidden;
 
   @include responsive(mobile) {
     padding: 24px 16px;
+    min-width: 0;
   }
 }
 
@@ -87,12 +89,16 @@ onMounted(() => {
 
   h1 {
     font-size: 48px;
+    margin-top: 0;
     margin-bottom: 16px;
     color: $base-text;
     font-weight: $extra-bold;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 
     @include responsive(mobile) {
-      font-size: 32px;
+      font-size: 28px;
+      padding: 0 8px;
     }
   }
 
