@@ -8,7 +8,14 @@ const algorithm = {
   },
 }
 
-const vector = window.crypto.getRandomValues(new Uint8Array(16))
+let vector: Uint8Array | null = null
+
+function getVector(): Uint8Array {
+  if (!vector && typeof window !== 'undefined') {
+    vector = window.crypto.getRandomValues(new Uint8Array(16))
+  }
+  return vector!
+}
 
 export async function generateKeys(): Promise<Secrets> {
   const keys = await window.crypto.subtle.generateKey(algorithm, true, ['encrypt', 'decrypt'])
@@ -19,13 +26,13 @@ export async function encryptData(publicKey: string, data: string): Promise<stri
   if (!publicKey || typeof publicKey !== 'string') {
     throw new Error('Invalid public key: empty or not a string')
   }
-  
+
   try {
     const key = await importPublicKey(publicKey)
     const encryptedData = await window.crypto.subtle.encrypt(
       {
         name: 'RSA-OAEP',
-        iv: vector,
+        iv: getVector(),
       },
       key,
       textToArrayBuffer(data)
@@ -43,7 +50,7 @@ export async function decryptData(privateKey: string, encryptedData: string): Pr
     const decryptedData = await window.crypto.subtle.decrypt(
       {
         name: 'RSA-OAEP',
-        iv: vector,
+        iv: getVector(),
       },
       key,
       base64ToArrayBuffer(encryptedData)

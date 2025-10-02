@@ -1,5 +1,4 @@
 import { ViteSSG } from 'vite-ssg'
-import { createWebHistory } from 'vue-router'
 import App from './App.vue'
 import routes from '~/routes'
 
@@ -9,7 +8,6 @@ export const createApp = ViteSSG(
   {
     routes,
     base: import.meta.env.BASE_URL,
-    history: createWebHistory(process.env.BASE_URL),
   },
   async (ctx) => {
     // install all modules under `modules/`
