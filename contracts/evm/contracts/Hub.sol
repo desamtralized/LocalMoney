@@ -7,6 +7,9 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/governance/TimelockController.sol";
 import "./interfaces/IHub.sol";
+import "./crosschain/interfaces/IAxelarBridge.sol";
+import "./interfaces/IOffer.sol";
+import "./interfaces/ITrade.sol";
 
 /**
  * @title Hub
@@ -75,8 +78,22 @@ contract Hub is
     uint256 public lastEmergencyPauseTime;
     string public lastPauseReason;
 
+    // Cross-chain integration
+    IAxelarBridge public axelarBridge;
+    mapping(uint256 => string) public chainIdToName;
+    mapping(string => uint256) public chainNameToId;
+    mapping(bytes32 => bool) public processedCrossChainMessages;
+    uint256 public crossChainMessageNonce;
+
+    // Cross-chain events
+    event AxelarBridgeUpdated(address indexed oldBridge, address indexed newBridge);
+    event ChainRegistered(uint256 indexed chainId, string chainName);
+    event CrossChainOfferCreated(bytes32 indexed offerId, string indexed sourceChain, address indexed creator);
+    event CrossChainTradeCreated(bytes32 indexed tradeId, string indexed sourceChain, address indexed taker);
+    event CrossChainMessageProcessed(bytes32 indexed messageId, string sourceChain, bool success);
+
     // Storage gap for future upgrades (reduced to accommodate new storage)
-    uint256[45] private __gap;
+    uint256[40] private __gap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -101,6 +118,14 @@ contract Hub is
         if (isPausedByType(pauseType)) {
             revert SystemPaused(pauseType);
         }
+        _;
+    }
+
+    /**
+     * @notice Modifier to restrict access to AxelarBridge only
+     */
+    modifier onlyAxelarBridge() {
+        require(msg.sender == address(axelarBridge), "Not authorized: only AxelarBridge");
         _;
     }
 
@@ -432,16 +457,16 @@ contract Hub is
      * @return withdrawalsPaused Withdrawals pause status
      * @return lastPauseTime Last emergency pause timestamp
      */
-    function getCircuitBreakerStatus() 
-        external 
-        view 
+    function getCircuitBreakerStatus()
+        external
+        view
         returns (
             bool globalPause,
             bool newTradesPaused,
             bool depositsPaused,
             bool withdrawalsPaused,
             uint256 lastPauseTime
-        ) 
+        )
     {
         return (
             _config.globalPause,
@@ -450,6 +475,197 @@ contract Hub is
             _config.pauseWithdrawals,
             lastEmergencyPauseTime
         );
+    }
+
+    // Cross-chain Functions
+
+    /**
+     * @notice Set the AxelarBridge contract address
+     * @param _bridge Address of AxelarBridge contract
+     * @dev Only callable by ADMIN_ROLE
+     */
+    function setAxelarBridge(address _bridge) external onlyRole(ADMIN_ROLE) {
+        require(_bridge != address(0), "Invalid bridge address");
+        address oldBridge = address(axelarBridge);
+        axelarBridge = IAxelarBridge(_bridge);
+        emit AxelarBridgeUpdated(oldBridge, _bridge);
+    }
+
+    /**
+     * @notice Register a supported chain for cross-chain operations
+     * @param chainId Chain ID (e.g., 137 for Polygon)
+     * @param chainName Axelar chain name (e.g., "Polygon")
+     */
+    function registerChain(uint256 chainId, string calldata chainName)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
+        require(chainId != 0, "Invalid chain ID");
+        require(bytes(chainName).length > 0, "Invalid chain name");
+
+        chainIdToName[chainId] = chainName;
+        chainNameToId[chainName] = chainId;
+
+        emit ChainRegistered(chainId, chainName);
+    }
+
+    /**
+     * @notice Handle cross-chain offer creation from satellite chain
+     * @param sourceChain Name of source chain
+     * @param creator Original offer creator address
+     * @param offerId Unique offer ID from satellite
+     * @param token Token address
+     * @param amount Offer amount
+     * @param price Price in fiat cents
+     * @param isBuy Whether this is a buy offer
+     * @param fiatCurrency Fiat currency code
+     * @return localOfferId The local offer ID created on hub
+     */
+    function handleCrossChainOfferCreation(
+        string memory sourceChain,
+        address creator,
+        bytes32 offerId,
+        address token,
+        uint256 amount,
+        uint256 price,
+        bool isBuy,
+        string memory fiatCurrency
+    ) external onlyAxelarBridge nonReentrant whenNotPaused returns (uint256 localOfferId) {
+        // Validate parameters
+        require(chainNameToId[sourceChain] != 0, "Unsupported chain");
+        require(creator != address(0), "Invalid creator");
+        require(amount > 0, "Invalid amount");
+        require(price > 0, "Invalid price");
+        require(bytes(fiatCurrency).length > 0, "Invalid currency");
+
+        // Prevent replay
+        bytes32 messageId = keccak256(abi.encodePacked(
+            sourceChain,
+            creator,
+            offerId,
+            crossChainMessageNonce++
+        ));
+        require(!processedCrossChainMessages[messageId], "Already processed");
+        processedCrossChainMessages[messageId] = true;
+
+        // Create offer via Offer contract
+        IOffer offerContract = IOffer(_config.offerContract);
+        localOfferId = offerContract.createOffer(
+            isBuy ? IOffer.OfferType.Buy : IOffer.OfferType.Sell,
+            fiatCurrency,
+            token,
+            0, // minAmount - use default for now
+            amount, // maxAmount
+            price,
+            string(abi.encodePacked("Cross-chain offer from ", sourceChain))
+        );
+
+        emit CrossChainOfferCreated(offerId, sourceChain, creator);
+        emit CrossChainMessageProcessed(messageId, sourceChain, true);
+
+        return localOfferId;
+    }
+
+    /**
+     * @notice Handle cross-chain trade creation from satellite chain
+     * @param sourceChain Name of source chain
+     * @param taker Trade taker address
+     * @param tradeId Unique trade ID from satellite
+     * @param offerId Offer ID being accepted
+     * @param amount Trade amount
+     * @return localTradeId The local trade ID created on hub
+     */
+    function handleCrossChainTradeCreation(
+        string memory sourceChain,
+        address taker,
+        bytes32 tradeId,
+        uint256 offerId,
+        uint256 amount
+    ) external onlyAxelarBridge nonReentrant whenNotPaused returns (uint256 localTradeId) {
+        // Validate parameters
+        require(chainNameToId[sourceChain] != 0, "Unsupported chain");
+        require(taker != address(0), "Invalid taker");
+        require(offerId > 0, "Invalid offer ID");
+        require(amount > 0, "Invalid amount");
+
+        // Prevent replay
+        bytes32 messageId = keccak256(abi.encodePacked(
+            sourceChain,
+            taker,
+            tradeId,
+            crossChainMessageNonce++
+        ));
+        require(!processedCrossChainMessages[messageId], "Already processed");
+        processedCrossChainMessages[messageId] = true;
+
+        // Create trade via Trade contract
+        ITrade tradeContract = ITrade(_config.tradeContract);
+        localTradeId = tradeContract.createTrade(
+            offerId,
+            amount,
+            string(abi.encodePacked("Contact via ", sourceChain))
+        );
+
+        emit CrossChainTradeCreated(tradeId, sourceChain, taker);
+        emit CrossChainMessageProcessed(messageId, sourceChain, true);
+
+        return localTradeId;
+    }
+
+    /**
+     * @notice Handle cross-chain escrow funding notification
+     * @param sourceChain Name of source chain
+     * @param tradeId Trade ID
+     * @param amount Amount funded
+     */
+    function handleCrossChainEscrowFunding(
+        string memory sourceChain,
+        bytes32 tradeId,
+        uint256 amount
+    ) external onlyAxelarBridge nonReentrant whenNotPaused returns (bool) {
+        require(chainNameToId[sourceChain] != 0, "Unsupported chain");
+        require(amount > 0, "Invalid amount");
+
+        // Store the funding information for cross-chain tracking
+        bytes32 messageId = keccak256(abi.encodePacked(
+            sourceChain,
+            tradeId,
+            amount,
+            crossChainMessageNonce++
+        ));
+        processedCrossChainMessages[messageId] = true;
+
+        emit CrossChainMessageProcessed(messageId, sourceChain, true);
+
+        return true;
+    }
+
+    /**
+     * @notice Handle cross-chain fund release request
+     * @param sourceChain Name of source chain
+     * @param tradeId Trade ID
+     * @param recipient Recipient address
+     */
+    function handleCrossChainFundRelease(
+        string memory sourceChain,
+        bytes32 tradeId,
+        address recipient
+    ) external onlyAxelarBridge nonReentrant whenNotPaused returns (bool) {
+        require(chainNameToId[sourceChain] != 0, "Unsupported chain");
+        require(recipient != address(0), "Invalid recipient");
+
+        // Store the release information for cross-chain tracking
+        bytes32 messageId = keccak256(abi.encodePacked(
+            sourceChain,
+            tradeId,
+            recipient,
+            crossChainMessageNonce++
+        ));
+        processedCrossChainMessages[messageId] = true;
+
+        emit CrossChainMessageProcessed(messageId, sourceChain, true);
+
+        return true;
     }
 
     /**
