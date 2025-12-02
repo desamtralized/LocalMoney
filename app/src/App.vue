@@ -8,7 +8,9 @@ import './ui/style/reset.scss'
 import 'vue-toastification/dist/index.css'
 
 const client = useClientStore()
-client.setClient(ChainClient.bscMainnet) // required to properly init chain
+// In dev mode, default to Solana Devnet for testing
+const defaultChain = import.meta.env.DEV ? ChainClient.solanaDevnet : ChainClient.bscMainnet
+client.setClient(defaultChain) // required to properly init chain
 const loading = computed(() => client.loadingState)
 
 let title: string

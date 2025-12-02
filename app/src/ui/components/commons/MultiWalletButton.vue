@@ -26,11 +26,16 @@ watch(userWallet, async (wallet) => {
 const availableWallets = computed(() => {
   const chainType = client.client.getChainType()
   const allWallets = WalletService.detectAvailableWallets()
-  
+
+  console.log('[MultiWalletButton] Chain type:', chainType, '| Detected wallets:', allWallets)
+
   // Filter wallets compatible with current chain
+  // Use String() to ensure consistent comparison between enum and string
   return allWallets.filter(wallet => {
-    const walletChainType = WalletService.getChainTypeForWallet(wallet)
-    return walletChainType === chainType
+    const walletChainType = String(WalletService.getChainTypeForWallet(wallet))
+    const matches = walletChainType === chainType
+    console.log(`[MultiWalletButton] Wallet ${wallet}: chainType=${walletChainType}, matches=${matches}`)
+    return matches
   })
 })
 
@@ -49,6 +54,9 @@ async function connectWithWallet(provider: WalletProvider) {
       // For EVM chains, pass the wallet type to the connect function
       const walletType = provider === WalletProvider.METAMASK ? WalletType.METAMASK : WalletType.PHANTOM
       await client.connectWallet(walletType)
+    } else if (chainType === 'solana' && provider === WalletProvider.PHANTOM_SOLANA) {
+      // For Solana chains, SolanaChain.connectWallet() handles Phantom detection internally
+      await client.connectWallet()
     }
   } catch (error) {
     console.error('Failed to connect wallet:', error)
@@ -105,7 +113,16 @@ function handleClickOutside(event: MouseEvent) {
       
       <div v-if="availableWallets.length === 0" class="no-wallets">
         <p>No compatible wallets detected</p>
-        <small>Please install a wallet extension compatible with {{ client.client.getChainType() }} chains</small>
+        <small v-if="client.client.getChainType() === 'solana'">
+          <a href="https://phantom.app/" target="_blank" rel="noopener noreferrer" class="install-link">Install Phantom</a> to connect to Solana
+        </small>
+        <small v-else-if="client.client.getChainType() === 'cosmos'">
+          <a href="https://www.keplr.app/" target="_blank" rel="noopener noreferrer" class="install-link">Install Keplr</a> to connect to Cosmos chains
+        </small>
+        <small v-else-if="client.client.getChainType() === 'evm'">
+          <a href="https://metamask.io/" target="_blank" rel="noopener noreferrer" class="install-link">Install MetaMask</a> or <a href="https://phantom.app/" target="_blank" rel="noopener noreferrer" class="install-link">Phantom</a> to connect to EVM chains
+        </small>
+        <small v-else>Please install a wallet extension compatible with {{ client.client.getChainType() }} chains</small>
       </div>
       
       <button
@@ -191,7 +208,7 @@ button.wallet {
   .no-wallets {
     padding: 24px 16px;
     text-align: center;
-    
+
     p {
       color: $text-primary;
       margin-bottom: 8px;
@@ -201,6 +218,16 @@ button.wallet {
     small {
       color: $text-secondary;
       font-size: 12px;
+    }
+
+    .install-link {
+      color: $primary;
+      text-decoration: none;
+      font-weight: 500;
+
+      &:hover {
+        text-decoration: underline;
+      }
     }
   }
 

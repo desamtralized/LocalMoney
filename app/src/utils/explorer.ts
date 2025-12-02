@@ -5,13 +5,21 @@ export function getExplorerUrl(chainClient: ChainClient, address: string): strin
   // Check if this is an EVM chain
   const evmChains = [ChainClient.bscMainnet, ChainClient.bscTestnet]
   if (evmChains.includes(chainClient)) {
-    // Get the chain instance to access the config
+    // Get the chain instance to access the config (EVM chains always return non-null)
     const chain = chainFactory(chainClient) as EVMChain
     return `${chain.config.blockExplorerUrl}/address/${address}`
   }
-  
-  // Handle Cosmos chains
+
+  // Handle chains by type
   switch (chainClient) {
+    // Solana chains
+    case ChainClient.solanaMainnet:
+      return `https://explorer.solana.com/address/${address}`
+    case ChainClient.solanaDevnet:
+      return `https://explorer.solana.com/address/${address}?cluster=devnet`
+    case ChainClient.solanaLocalnet:
+      return `https://explorer.solana.com/address/${address}?cluster=custom&customUrl=http://localhost:8899`
+    // Cosmos chains
     case ChainClient.kujiraMainnet:
       return `https://finder.kujira.app/kaiyo-1/address/${address}`
     case ChainClient.kujiraTestnet:

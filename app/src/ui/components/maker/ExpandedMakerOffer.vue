@@ -140,7 +140,7 @@ async function newTrade() {
   }
   
   const telegramHandle = removeTelegramHandlePrefix(telegram.value) as string
-  await client.openTrade(props.offerResponse, telegramHandle, cryptoAmount.value)
+  await client.openTrade(props.offerResponse, telegramHandle, cryptoAmount.value, fiatAmount.value)
 }
 
 function focus() {
@@ -191,8 +191,11 @@ watch(cryptoAmount, (newCryptoAmount) => {
 
 async function refreshExchangeRate() {
   const offer = props.offerResponse.offer
-  const denomFiatPrice = await client.fetchFiatPriceForDenom(offer.fiat_currency, offer.denom)
-  const price = calculateFiatPriceByRate(denomFiatPrice.price, props.offerResponse.offer.rate)
+  const priceResponse = await client.fetchFiatPriceForDenom(offer.fiat_currency, offer.denom)
+  // Convert the raw price to decimal value using the chain's formatter, then to cents
+  const formattedPrice = client.client.formatFiatPrice(priceResponse.price)
+  const priceInCents = Math.round(formattedPrice * 100)
+  const price = calculateFiatPriceByRate(priceInCents, props.offerResponse.offer.rate)
   fiatPriceByRate.value = price
   fiatAmount.value = parseFloat(cryptoAmount.value.toString()) * (fiatPriceByRate.value / 100)
 }
@@ -230,7 +233,9 @@ onMounted(async () => {
   // If price is not cached, fetch it
   if (!denomFiatPrice) {
     const priceResponse = await client.fetchFiatPriceForDenom(offer.fiat_currency, offer.denom)
-    denomFiatPrice = priceResponse.price
+    // Convert the raw price to decimal value using the chain's formatter, then to cents
+    const formattedPrice = client.client.formatFiatPrice(priceResponse.price)
+    denomFiatPrice = Math.round(formattedPrice * 100)
   }
   
   const price = calculateFiatPriceByRate(denomFiatPrice, offer.rate)

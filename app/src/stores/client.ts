@@ -3,7 +3,7 @@ import { useLocalStorage } from '@vueuse/core'
 import type { Coin } from '@cosmjs/stargate'
 import axios from 'axios'
 import { ListResult } from './ListResult'
-import { ChainClient, chainFactory } from '~/network/Chain'
+import { ChainClient, chainFactory, chainFactoryAsync, isSolanaChain } from '~/network/Chain'
 import type { ChainError } from '~/network/chain-error'
 import { WalletNotConnected } from '~/network/chain-error'
 import { showCustomToast } from '~/utils/toast'
@@ -36,8 +36,9 @@ export const useClientStore = defineStore({
   id: 'client',
   state: () => {
     return {
-      chainClient: ChainClient.cosmoshub,
-      client: chainFactory(ChainClient.cosmoshub),
+      chainClient: ChainClient.bscMainnet,
+      // Default to BSC for sync init, will auto-switch to Solana Devnet in dev mode
+      client: chainFactory(ChainClient.bscMainnet)!,
       hubInitialized: false,
       applicationConnected: useLocalStorage('walletAlreadyConnected', false),
       userWallet: <UserWallet>{ isConnected: false, address: 'undefined' },
@@ -60,7 +61,14 @@ export const useClientStore = defineStore({
     // Helper method to show errors as toasts
     showError(e: any) {
       const message = (e as ChainError).message || e?.message || 'An unexpected error occurred'
-      console.error(message, e)
+      // Log message separately to avoid Proxy cloning issues
+      console.error('Error:', message)
+      try {
+        console.error('Details:', JSON.stringify(e, null, 2))
+      } catch {
+        // Error object may not be serializable
+        console.error('Details: [non-serializable error object]')
+      }
       
       // Try to use toast from window if available
       const toast = (window as any).__vueToast
@@ -68,7 +76,7 @@ export const useClientStore = defineStore({
         toast.error(message)
       } else {
         // Fallback to custom toast implementation
-        this.showCustomToast(message, 'error')
+        showCustomToast(message, 'error')
       }
     },
     // Helper method to show success messages
@@ -92,7 +100,8 @@ export const useClientStore = defineStore({
       this.$reset()
       // TODO disconnect old chain adapter
       this.chainClient = chainClient
-      this.client = chainFactory(this.chainClient)
+      // Use async factory to support Solana's dynamic imports
+      this.client = await chainFactoryAsync(this.chainClient)
       
       try {
         await this.client.init()
@@ -273,9 +282,12 @@ export const useClientStore = defineStore({
     }) {
       this.loadingState = LoadingState.show('Creating Offer...')
       try {
-        // Encrypt contact to save on the profile when an offer is created
-        const owner_encryption_key = this.getSecrets().publicKey
-        const owner_contact = await encryptData(owner_encryption_key, param.telegram_handle)
+        // For Solana, skip encryption due to 280 char limit (RSA produces 344 chars)
+        // For other chains, encrypt contact to save on the profile
+        const owner_encryption_key = isSolanaChain(this.chainClient) ? '' : this.getSecrets().publicKey
+        const owner_contact = isSolanaChain(this.chainClient)
+          ? param.telegram_handle  // Plaintext for Solana
+          : await encryptData(owner_encryption_key, param.telegram_handle)
         // Use BigInt to avoid floating point precision issues; amounts use micro-units (1e6)
         const decimalPlaces = CRYPTO_DECIMAL_PLACES
         const minAmountInMicroUnits = BigInt(Math.round(param.min_amount * decimalPlaces))
@@ -322,17 +334,22 @@ export const useClientStore = defineStore({
         this.loadingState = LoadingState.dismiss()
       }
     },
-    async openTrade(offerResponse: OfferResponse, telegramHandle: string, amount: number) {
+    async openTrade(offerResponse: OfferResponse, telegramHandle: string, amount: number, fiatAmount?: number) {
       this.loadingState = LoadingState.show('Opening trade...')
       try {
-        const profile_taker_encryption_key = this.getSecrets().publicKey
-        if (!profile_taker_encryption_key) {
+        // For Solana, skip encryption due to 280 char limit (RSA produces 344 chars)
+        const usePlaintext = isSolanaChain(this.chainClient)
+
+        const profile_taker_encryption_key = usePlaintext ? '' : this.getSecrets().publicKey
+        if (!usePlaintext && !profile_taker_encryption_key) {
           throw new Error('Your profile does not have an encryption key. Please reconnect your wallet.')
         }
-        
+
         // Handle cases where the offer creator's profile doesn't have an encryption key
         let taker_contact: string
-        if (offerResponse.profile?.encryption_key) {
+        if (usePlaintext) {
+          taker_contact = telegramHandle
+        } else if (offerResponse.profile?.encryption_key) {
           try {
             taker_contact = await encryptData(offerResponse.profile.encryption_key, telegramHandle)
           } catch (e) {
@@ -345,15 +362,26 @@ export const useClientStore = defineStore({
           // If no encryption key, use plaintext
           taker_contact = telegramHandle
         }
-        
-        const profile_taker_contact = await encryptData(profile_taker_encryption_key, telegramHandle)
+
+        const profile_taker_contact = usePlaintext
+          ? telegramHandle
+          : await encryptData(profile_taker_encryption_key, telegramHandle)
         // Use BigInt to avoid floating point precision issues; amounts use micro-units (1e6)
         const decimalPlaces = CRYPTO_DECIMAL_PLACES
         const amountInMicroUnits = BigInt(Math.round(amount * decimalPlaces))
+        // Calculate fiat amount in micro-units (using same decimal places as crypto for consistency)
+        const fiatAmountInMicroUnits = fiatAmount ? BigInt(Math.round(fiatAmount * decimalPlaces)) : BigInt(0)
+
+        console.log('[openTrade] Creating trade with:', {
+          amount,
+          fiatAmount,
+          amountInMicroUnits: amountInMicroUnits.toString(),
+          fiatAmountInMicroUnits: fiatAmountInMicroUnits.toString(),
+        })
         const newTrade: NewTrade = {
           offer_id: offerResponse.offer.id,
           amount: amountInMicroUnits.toString(),
-          price: offerResponse.offer.rate,
+          price: fiatAmountInMicroUnits.toString(), // Pass the calculated fiat amount, not the rate margin
           taker: `${this.userWallet.address}`,
           profile_taker_contact,
           taker_contact,
