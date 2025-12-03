@@ -15,6 +15,12 @@ export function denomsAvailable(chainClient: ChainClient): Map<string, MicroDeno
       return new Map<string, MicroDenom>(Object.entries(denomList.cosmos_hub))
     case ChainClient.bscMainnet:
       return new Map<string, MicroDenom>(Object.entries(denomList.bsc))
+    case ChainClient.solanaDevnet:
+      return new Map<string, MicroDenom>(Object.entries(denomList.solana_devnet))
+    case ChainClient.solanaMainnet:
+      return new Map<string, MicroDenom>(Object.entries(denomList.solana_mainnet))
+    case ChainClient.solanaLocalnet:
+      return new Map<string, MicroDenom>(Object.entries(denomList.solana_localnet))
     default:
       return new Map<string, MicroDenom>(Object.entries(denomList.kujira_testnet))
   }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ChainClient } from '~/network/Chain'
 import { useClientStore } from '~/stores/client'
 import { ChainType, WalletService } from '~/services/wallet'
@@ -20,6 +20,10 @@ const chainOptions: ChainOption[] = [
   { id: ChainClient.cosmoshub, name: 'Cosmos Hub', type: ChainType.COSMOS, icon: '/tokens/cosmos.png', isTestnet: false },
   // EVM chains
   { id: ChainClient.bscMainnet, name: 'BNB Smart Chain', type: ChainType.EVM, icon: '/tokens/bnb.png', isTestnet: false },
+  // Solana chains - using USDC icon as placeholder until Solana icon is added
+  { id: ChainClient.solanaMainnet, name: 'Solana', type: ChainType.SOLANA, icon: '/tokens/usdc.png', isTestnet: false },
+  { id: ChainClient.solanaDevnet, name: 'Solana Devnet', type: ChainType.SOLANA, icon: '/tokens/usdc.png', isTestnet: true },
+  { id: ChainClient.solanaLocalnet, name: 'Solana Localnet', type: ChainType.SOLANA, icon: '/tokens/usdc.png', isTestnet: true },
 ]
 
 const selectedChain = computed(() => {
@@ -101,6 +105,24 @@ function handleClickOutside(event: MouseEvent) {
         <div class="group-label">Mainnet</div>
         <button
           v-for="chain in chainOptions.filter(c => !c.isTestnet)"
+          :key="chain.id"
+          class="chain-option"
+          :class="{ 'selected': chain.id === selectedChain.id }"
+          @click="selectChain(chain)"
+        >
+          <img class="chain-icon" :src="chain.icon" :alt="chain.name" />
+          <span class="chain-name">{{ chain.name }}</span>
+          <span class="chain-type">{{ chain.type.toUpperCase() }}</span>
+          <svg v-if="chain.id === selectedChain.id" class="check-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M13.5 4.5L6 12L2.5 8.5" stroke="#4CAF50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <div v-if="chainOptions.some(c => c.isTestnet)" class="chain-group">
+        <div class="group-label">Testnet</div>
+        <button
+          v-for="chain in chainOptions.filter(c => c.isTestnet)"
           :key="chain.id"
           class="chain-option"
           :class="{ 'selected': chain.id === selectedChain.id }"

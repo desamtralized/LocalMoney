@@ -1,3 +1,9 @@
+// Polyfill Buffer for Solana libraries (must be first!)
+import { Buffer } from 'buffer'
+if (typeof window !== 'undefined') {
+  window.Buffer = Buffer
+}
+
 import { ViteSSG } from 'vite-ssg'
 import App from './App.vue'
 import routes from '~/routes'

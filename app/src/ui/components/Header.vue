@@ -3,6 +3,7 @@ import NavDesktop from './NavDesktop.vue'
 import NavMobile from './NavMobile.vue'
 import ChainSelector from './commons/ChainSelector.vue'
 import MultiWalletButton from './commons/MultiWalletButton.vue'
+import DevWalletSelector from './commons/DevWalletSelector.vue'
 import { useClientStore } from '~/stores/client'
 
 const client = useClientStore()
@@ -37,6 +38,7 @@ const isMobile = computed(() => width.value <= 550)
       <NavMobile v-if="isMobile" />
       <NavDesktop v-else />
       <div class="header-actions">
+        <DevWalletSelector />
         <ChainSelector />
         <MultiWalletButton />
       </div>

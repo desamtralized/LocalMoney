@@ -144,7 +144,7 @@ async function newTrade() {
     if (!telegramHandle) {
       throw new Error('Please enter a valid Telegram handle')
     }
-    await client.openTrade(props.offerResponse, telegramHandle, cryptoAmount.value)
+    await client.openTrade(props.offerResponse, telegramHandle, cryptoAmount.value, fiatAmount.value)
   } catch (error) {
     console.error('Failed to open trade:', error)
     // The error will be displayed through the loading state in the client store

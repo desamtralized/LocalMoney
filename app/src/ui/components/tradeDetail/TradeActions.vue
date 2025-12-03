@@ -5,6 +5,7 @@ import { useClientStore } from '~/stores/client'
 import { formatAddress } from '~/shared'
 import { decryptData, encryptData } from '~/utils/crypto'
 import { formatTimer } from '~/utils/formatters'
+import { isSolanaChain } from '~/network/Chain'
 
 const props = defineProps<{
   tradeInfo: TradeInfo
@@ -56,11 +57,12 @@ function getTaker(): string {
 
 async function acceptTradeRequest(id: number) {
   try {
-    // Check if we're on an EVM chain (encryption not yet implemented for EVM)
+    // Check if we're on an EVM chain or Solana (encryption not yet implemented/different for these)
     const isEVM = client.chainClient.includes('BSC') || client.chainClient.includes('ETH') || client.chainClient.includes('POLYGON')
-    
-    if (isEVM) {
-      // For EVM chains, skip encryption for now
+    const isSolana = isSolanaChain(client.chainClient)
+
+    if (isEVM || isSolana) {
+      // For EVM/Solana chains, skip encryption (Solana uses plaintext contacts due to 280 char limit)
       await client.acceptTradeRequest(id, '')
     } else {
       // For Cosmos chains, use encryption
@@ -85,11 +87,12 @@ async function cancelTradeRequest(id: number) {
 
 async function fundEscrow(tradeInfo: TradeInfo) {
   try {
-    // Check if we're on an EVM chain (encryption not yet implemented for EVM)
+    // Check if we're on an EVM chain or Solana (encryption not yet implemented/different for these)
     const isEVM = client.chainClient.includes('BSC') || client.chainClient.includes('ETH') || client.chainClient.includes('POLYGON')
-    
-    if (isEVM) {
-      // For EVM chains, skip encryption for now
+    const isSolana = isSolanaChain(client.chainClient)
+
+    if (isEVM || isSolana) {
+      // For EVM/Solana chains, skip encryption (Solana uses plaintext contacts due to 280 char limit)
       await client.fundEscrow(tradeInfo, '')
     } else {
       // For Cosmos chains, use encryption

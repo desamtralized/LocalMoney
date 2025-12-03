@@ -50,5 +50,35 @@
       "display": "USDC",
       "icon": "/tokens/usdc.png"
     }
+  },
+  "solana_devnet": {
+    "DxGBS8nbU9EvQHJ6U5LYqnHTDbNbxoe6vdWbCuaQXnSB": {
+      "display": "USDC",
+      "icon": "/tokens/usdc.png"
+    },
+    "So11111111111111111111111111111111111111112": {
+      "display": "SOL",
+      "icon": "/tokens/sol.png"
+    }
+  },
+  "solana_mainnet": {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+      "display": "USDC",
+      "icon": "/tokens/usdc.png"
+    },
+    "So11111111111111111111111111111111111111112": {
+      "display": "SOL",
+      "icon": "/tokens/sol.png"
+    }
+  },
+  "solana_localnet": {
+    "5j3S2Ue2ZRpHTumpQ8ZEFBsjMjQJGqT9dAmpj1wc1LmS": {
+      "display": "USDC",
+      "icon": "/tokens/usdc.png"
+    },
+    "So11111111111111111111111111111111111111112": {
+      "display": "SOL",
+      "icon": "/tokens/sol.png"
+    }
   }
 }

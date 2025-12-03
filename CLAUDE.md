@@ -79,3 +79,4 @@ After making these changes:
 1. Build the frontend: `cd app && npm run build`
 2. Build the price aggregator: `cd fiat-prices-aggregator && cargo build`
 3. Build the CosmWasm contracts: `cd contracts/cosmwasm && cargo build --release --target wasm32-unknown-unknown`
+- create sort of a memory file for playwright actions on our page, and track and check there before every action

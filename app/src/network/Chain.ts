@@ -12,6 +12,7 @@ import { TERRA_CONFIG, TERRA_HUB_INFO } from './cosmos/config/terra'
 import { MANTRA_CONFIG, MANTRA_HUB_INFO } from './cosmos/config/mantra'
 import { COSMOSHUB_CONFIG, COSMOSHUB_HUB_INFO } from './cosmos/config/cosmoshub'
 import { BSC_MAINNET_CONFIG, BSC_MAINNET_HUB_INFO, BSC_TESTNET_CONFIG, BSC_TESTNET_HUB_INFO } from './evm/config/bsc'
+import { SOLANA_DEVNET_CONFIG, SOLANA_DEVNET_HUB_INFO, SOLANA_MAINNET_CONFIG, SOLANA_MAINNET_HUB_INFO, SOLANA_LOCALNET_CONFIG, SOLANA_LOCALNET_HUB_INFO } from './solana/config'
 import type {
   Addr,
   Arbitrator,
@@ -29,6 +30,7 @@ import type {
 } from '~/types/components.interface'
 import { CosmosChain } from '~/network/cosmos/CosmosChain'
 import { EVMChain } from '~/network/evm/EVMChain'
+// Note: SolanaChain is dynamically imported to avoid SSR issues with @coral-xyz/anchor
 
 export interface Chain {
   init(): void
@@ -125,10 +127,19 @@ export enum ChainClient {
   cosmoshub = 'COSMOSHUB',
   bscMainnet = 'BSC_MAINNET',
   bscTestnet = 'BSC_TESTNET',
+  solanaDevnet = 'SOLANA_DEVNET',
+  solanaMainnet = 'SOLANA_MAINNET',
+  solanaLocalnet = 'SOLANA_LOCALNET',
+}
+
+// Helper to check if a chain client is Solana
+export function isSolanaChain(client: ChainClient): boolean {
+  return client === ChainClient.solanaDevnet || client === ChainClient.solanaMainnet || client === ChainClient.solanaLocalnet
 }
 
 // Centralized place to instantiate chain client and inject dependencies if needed
-export function chainFactory(client: ChainClient): Chain {
+// Returns Chain directly for non-Solana chains, or null for Solana chains (use chainFactoryAsync)
+export function chainFactory(client: ChainClient): Chain | null {
   switch (client) {
     case ChainClient.kujiraTestnet:
       return new CosmosChain(KUJIRA_TESTNET_CONFIG, KUJIRA_TESTNET_HUB_INFO)
@@ -150,5 +161,34 @@ export function chainFactory(client: ChainClient): Chain {
       return new EVMChain(BSC_MAINNET_CONFIG, BSC_MAINNET_HUB_INFO)
     case ChainClient.bscTestnet:
       return new EVMChain(BSC_TESTNET_CONFIG, BSC_TESTNET_HUB_INFO)
+    case ChainClient.solanaDevnet:
+    case ChainClient.solanaMainnet:
+    case ChainClient.solanaLocalnet:
+      // Solana chains require async initialization due to dynamic imports
+      // Use chainFactoryAsync for Solana chains
+      return null
+  }
+}
+
+// Async factory for all chains - handles Solana's dynamic import requirement
+export async function chainFactoryAsync(client: ChainClient): Promise<Chain> {
+  // For non-Solana chains, use the sync factory
+  const syncChain = chainFactory(client)
+  if (syncChain) {
+    return syncChain
+  }
+
+  // Dynamically import SolanaChain to avoid SSR issues with @coral-xyz/anchor
+  const { SolanaChain } = await import('~/network/solana/SolanaChain')
+
+  switch (client) {
+    case ChainClient.solanaDevnet:
+      return new SolanaChain(SOLANA_DEVNET_CONFIG, SOLANA_DEVNET_HUB_INFO)
+    case ChainClient.solanaMainnet:
+      return new SolanaChain(SOLANA_MAINNET_CONFIG, SOLANA_MAINNET_HUB_INFO)
+    case ChainClient.solanaLocalnet:
+      return new SolanaChain(SOLANA_LOCALNET_CONFIG, SOLANA_LOCALNET_HUB_INFO)
+    default:
+      throw new Error(`Unknown chain client: ${client}`)
   }
 }
